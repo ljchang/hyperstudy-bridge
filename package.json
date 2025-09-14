@@ -1,0 +1,24 @@
+{
+  "name": "hyperstudy-bridge",
+  "version": "1.0.0",
+  "description": "A unified, high-performance desktop application for bridging HyperStudy web experiments with research hardware devices.",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^6.2.0",
+    "@tauri-apps/cli": "^2.8.4",
+    "svelte": "^5.38.10",
+    "vite": "^7.1.5"
+  }
+}
