@@ -6,8 +6,10 @@
 
   // Form state using $state rune
   let formData = $state({});
+  let lslConfig = $state({});
   let errors = $state({});
   let isSubmitting = $state(false);
+  let activeTab = $state('device'); // 'device' or 'lsl'
 
   // Device configuration templates with validation rules
   const deviceConfigs = {
@@ -123,6 +125,62 @@
         default: 1000,
         required: true
       }
+    },
+    lsl: {
+      enableOutlet: {
+        label: 'Enable LSL Outlet',
+        type: 'checkbox',
+        default: false
+      },
+      streamName: {
+        label: 'Stream Name',
+        type: 'text',
+        placeholder: 'HyperStudy_Device',
+        required: false,
+        default: 'HyperStudy_Bridge'
+      },
+      streamType: {
+        label: 'Stream Type',
+        type: 'select',
+        options: ['Markers', 'EEG', 'fNIRS', 'Gaze', 'Audio', 'Accelerometer', 'Other'],
+        default: 'Markers',
+        required: false
+      },
+      sourceId: {
+        label: 'Source ID',
+        type: 'text',
+        placeholder: 'hyperstudy-bridge-001',
+        required: false,
+        default: 'hyperstudy-bridge'
+      },
+      chunkSize: {
+        label: 'Chunk Size',
+        type: 'number',
+        min: 1,
+        max: 1000,
+        default: 32,
+        required: false,
+        errorMessage: 'Chunk size must be between 1-1000'
+      },
+      bufferSize: {
+        label: 'Buffer Size (samples)',
+        type: 'number',
+        min: 100,
+        max: 10000,
+        default: 1000,
+        required: false,
+        errorMessage: 'Buffer size must be between 100-10000'
+      },
+      enableTimestamp: {
+        label: 'Include Timestamps',
+        type: 'checkbox',
+        default: true
+      },
+      enableMetadata: {
+        label: 'Include Metadata',
+        type: 'checkbox',
+        default: true
+      }
     }
   };
 
@@ -149,7 +207,23 @@
     });
 
     formData = newFormData;
+
+    // Initialize LSL configuration
+    const lslConfigTemplate = deviceConfigs.lsl;
+    const newLslConfig = {};
+    const existingLslConfig = device.lslConfig || {};
+
+    Object.entries(lslConfigTemplate).forEach(([key, fieldConfig]) => {
+      if (fieldConfig.type === 'checkbox') {
+        newLslConfig[key] = existingLslConfig[key] ?? fieldConfig.default ?? false;
+      } else {
+        newLslConfig[key] = existingLslConfig[key] ?? fieldConfig.default ?? '';
+      }
+    });
+
+    lslConfig = newLslConfig;
     errors = {};
+    activeTab = 'device';
   }
 
   function validateField(fieldName, value) {
@@ -202,8 +276,12 @@
     return !hasErrors;
   }
 
-  function handleFieldChange(fieldName, value) {
-    formData[fieldName] = value;
+  function handleFieldChange(fieldName, value, isLsl = false) {
+    if (isLsl) {
+      lslConfig[fieldName] = value;
+    } else {
+      formData[fieldName] = value;
+    }
 
     // Clear error for this field when user starts typing
     if (errors[fieldName]) {
@@ -235,7 +313,22 @@
         }
       });
 
-      await onSave(device.id, processedConfig);
+      // Process LSL configuration
+      const processedLslConfig = {};
+      const lslConfigTemplate = deviceConfigs.lsl;
+
+      Object.entries(lslConfig).forEach(([key, value]) => {
+        const fieldConfig = lslConfigTemplate[key];
+        if (fieldConfig.type === 'number') {
+          processedLslConfig[key] = value === '' ? fieldConfig.default : Number(value);
+        } else if (fieldConfig.type === 'checkbox') {
+          processedLslConfig[key] = Boolean(value);
+        } else {
+          processedLslConfig[key] = value;
+        }
+      });
+
+      await onSave(device.id, processedConfig, processedLslConfig);
       handleClose();
     } catch (error) {
       console.error('Failed to save configuration:', error);
@@ -247,8 +340,10 @@
 
   function handleClose() {
     formData = {};
+    lslConfig = {};
     errors = {};
     isSubmitting = false;
+    activeTab = 'device';
     onClose();
   }
 
@@ -312,63 +407,168 @@
           Configure settings for your {device.name}. Use <kbd>Ctrl+Enter</kbd> to save quickly.
         </p>
 
-        <form class="config-form" onsubmit={(e) => { e.preventDefault(); handleSave(); }}>
-          {#if deviceConfigs[device.id]}
-            {#each Object.entries(deviceConfigs[device.id]) as [fieldName, fieldConfig]}
-              <div class="form-group">
-                <label for={fieldName} class="form-label">
-                  {fieldConfig.label}
-                  {#if fieldConfig.required}
-                    <span class="required">*</span>
-                  {/if}
-                </label>
+        <!-- Tab Navigation -->
+        <div class="tab-nav">
+          <button
+            class="tab-btn"
+            class:active={activeTab === 'device'}
+            onclick={() => activeTab = 'device'}
+          >
+            Device Settings
+          </button>
+          <button
+            class="tab-btn"
+            class:active={activeTab === 'lsl'}
+            onclick={() => activeTab = 'lsl'}
+          >
+            LSL Configuration
+          </button>
+        </div>
 
-                {#if fieldConfig.type === 'select'}
-                  <select
-                    id={fieldName}
-                    class="form-input"
-                    class:error={errors[fieldName]}
-                    value={formData[fieldName]}
-                    onchange={(e) => handleFieldChange(fieldName, e.target.value)}
-                  >
-                    <option value="">Select {fieldConfig.label}</option>
-                    {#each fieldConfig.options as option}
-                      <option value={option}>{option}</option>
-                    {/each}
-                  </select>
-                {:else if fieldConfig.type === 'checkbox'}
-                  <label class="checkbox-wrapper">
+        <form class="config-form" onsubmit={(e) => { e.preventDefault(); handleSave(); }}>
+          {#if activeTab === 'device'}
+            <!-- Device Configuration Tab -->
+            {#if deviceConfigs[device.id]}
+              {#each Object.entries(deviceConfigs[device.id]) as [fieldName, fieldConfig]}
+                <div class="form-group">
+                  <label for={fieldName} class="form-label">
+                    {fieldConfig.label}
+                    {#if fieldConfig.required}
+                      <span class="required">*</span>
+                    {/if}
+                  </label>
+
+                  {#if fieldConfig.type === 'select'}
+                    <select
+                      id={fieldName}
+                      class="form-input"
+                      class:error={errors[fieldName]}
+                      value={formData[fieldName]}
+                      onchange={(e) => handleFieldChange(fieldName, e.target.value)}
+                    >
+                      <option value="">Select {fieldConfig.label}</option>
+                      {#each fieldConfig.options as option}
+                        <option value={option}>{option}</option>
+                      {/each}
+                    </select>
+                  {:else if fieldConfig.type === 'checkbox'}
+                    <label class="checkbox-wrapper">
+                      <input
+                        id={fieldName}
+                        type="checkbox"
+                        class="form-checkbox"
+                        checked={formData[fieldName]}
+                        onchange={(e) => handleFieldChange(fieldName, e.target.checked)}
+                      />
+                      <span class="checkbox-label">Enable {fieldConfig.label}</span>
+                    </label>
+                  {:else}
                     <input
                       id={fieldName}
-                      type="checkbox"
-                      class="form-checkbox"
-                      checked={formData[fieldName]}
-                      onchange={(e) => handleFieldChange(fieldName, e.target.checked)}
+                      type={fieldConfig.type}
+                      class="form-input"
+                      class:error={errors[fieldName]}
+                      placeholder={fieldConfig.placeholder || ''}
+                      min={fieldConfig.min}
+                      max={fieldConfig.max}
+                      value={formData[fieldName]}
+                      oninput={(e) => handleFieldChange(fieldName, e.target.value)}
                     />
-                    <span class="checkbox-label">Enable {fieldConfig.label}</span>
-                  </label>
-                {:else}
-                  <input
-                    id={fieldName}
-                    type={fieldConfig.type}
-                    class="form-input"
-                    class:error={errors[fieldName]}
-                    placeholder={fieldConfig.placeholder || ''}
-                    min={fieldConfig.min}
-                    max={fieldConfig.max}
-                    value={formData[fieldName]}
-                    oninput={(e) => handleFieldChange(fieldName, e.target.value)}
-                  />
-                {/if}
+                  {/if}
 
-                {#if errors[fieldName]}
-                  <div class="form-error">{errors[fieldName]}</div>
-                {/if}
+                  {#if errors[fieldName]}
+                    <div class="form-error">{errors[fieldName]}</div>
+                  {/if}
+                </div>
+              {/each}
+            {:else}
+              <div class="no-config">
+                <p>No configuration options available for this device type.</p>
               </div>
-            {/each}
-          {:else}
-            <div class="no-config">
-              <p>No configuration options available for this device type.</p>
+            {/if}
+          {:else if activeTab === 'lsl'}
+            <!-- LSL Configuration Tab -->
+            <div class="lsl-config-section">
+              <p class="section-description">
+                Configure Lab Streaming Layer (LSL) output for this device. When enabled,
+                device data will be published as an LSL stream for use by other applications.
+              </p>
+
+              {#each Object.entries(deviceConfigs.lsl) as [fieldName, fieldConfig]}
+                <div class="form-group">
+                  <label for="lsl-{fieldName}" class="form-label">
+                    {fieldConfig.label}
+                    {#if fieldConfig.required}
+                      <span class="required">*</span>
+                    {/if}
+                  </label>
+
+                  {#if fieldConfig.type === 'select'}
+                    <select
+                      id="lsl-{fieldName}"
+                      class="form-input"
+                      class:error={errors[fieldName]}
+                      value={lslConfig[fieldName]}
+                      onchange={(e) => handleFieldChange(fieldName, e.target.value, true)}
+                    >
+                      <option value="">Select {fieldConfig.label}</option>
+                      {#each fieldConfig.options as option}
+                        <option value={option}>{option}</option>
+                      {/each}
+                    </select>
+                  {:else if fieldConfig.type === 'checkbox'}
+                    <label class="checkbox-wrapper">
+                      <input
+                        id="lsl-{fieldName}"
+                        type="checkbox"
+                        class="form-checkbox"
+                        checked={lslConfig[fieldName]}
+                        onchange={(e) => handleFieldChange(fieldName, e.target.checked, true)}
+                      />
+                      <span class="checkbox-label">
+                        {fieldConfig.label === 'Enable LSL Outlet' ? fieldConfig.label : `Enable ${fieldConfig.label}`}
+                      </span>
+                    </label>
+                  {:else}
+                    <input
+                      id="lsl-{fieldName}"
+                      type={fieldConfig.type}
+                      class="form-input"
+                      class:error={errors[fieldName]}
+                      placeholder={fieldConfig.placeholder || ''}
+                      min={fieldConfig.min}
+                      max={fieldConfig.max}
+                      value={lslConfig[fieldName]}
+                      oninput={(e) => handleFieldChange(fieldName, e.target.value, true)}
+                      disabled={!lslConfig.enableOutlet && fieldName !== 'enableOutlet'}
+                    />
+                  {/if}
+
+                  {#if errors[fieldName]}
+                    <div class="form-error">{errors[fieldName]}</div>
+                  {/if}
+                </div>
+              {/each}
+
+              {#if lslConfig.enableOutlet}
+                <div class="lsl-info">
+                  <h4>Stream Preview</h4>
+                  <div class="stream-preview">
+                    <div class="preview-item">
+                      <strong>Name:</strong> {lslConfig.streamName || 'HyperStudy_Bridge'}
+                    </div>
+                    <div class="preview-item">
+                      <strong>Type:</strong> {lslConfig.streamType || 'Markers'}
+                    </div>
+                    <div class="preview-item">
+                      <strong>Source ID:</strong> {lslConfig.sourceId || 'hyperstudy-bridge'}
+                    </div>
+                    <div class="preview-item">
+                      <strong>Buffer Size:</strong> {lslConfig.bufferSize || 1000} samples
+                    </div>
+                  </div>
+                </div>
+              {/if}
             </div>
           {/if}
         </form>
@@ -615,6 +815,85 @@
   .cancel-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  /* Tab Navigation */
+  .tab-nav {
+    display: flex;
+    border-bottom: 1px solid var(--color-border);
+    margin-bottom: 1.5rem;
+  }
+
+  .tab-btn {
+    padding: 0.75rem 1.5rem;
+    border: none;
+    background: transparent;
+    color: var(--color-text-secondary);
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    border-bottom: 3px solid transparent;
+  }
+
+  .tab-btn:hover {
+    color: var(--color-text-primary);
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .tab-btn.active {
+    color: var(--color-primary);
+    border-bottom-color: var(--color-primary);
+  }
+
+  /* LSL Configuration Section */
+  .lsl-config-section {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  .section-description {
+    color: var(--color-text-secondary);
+    font-size: 0.9rem;
+    margin: 0;
+    padding: 1rem;
+    background: var(--color-background);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+  }
+
+  .lsl-info {
+    margin-top: 1rem;
+    padding: 1rem;
+    background: var(--color-background);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+  }
+
+  .lsl-info h4 {
+    margin: 0 0 0.75rem 0;
+    color: var(--color-text-primary);
+    font-size: 1rem;
+    font-weight: 600;
+  }
+
+  .stream-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .preview-item {
+    display: flex;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--color-text-secondary);
+  }
+
+  .preview-item strong {
+    color: var(--color-text-primary);
+    min-width: 100px;
   }
 
   /* Custom select styling */

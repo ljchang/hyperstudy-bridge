@@ -1,0 +1,24 @@
+# Cargo configuration for LSL testing
+
+[env]
+# Test environment variables
+RUST_TEST_THREADS = "1"  # Run tests sequentially to avoid resource conflicts
+RUST_BACKTRACE = "1"     # Enable backtraces for debugging
+
+[target.'cfg(test)']
+# Test-specific compiler flags
+rustflags = [
+    "-C", "debug-assertions=on",  # Enable debug assertions in tests
+    "-C", "overflow-checks=on",   # Enable overflow checks
+]
+
+# Benchmark configuration
+[profile.bench]
+opt-level = 3
+debug = false
+lto = true
+codegen-units = 1
+
+[profile.test]
+opt-level = 1  # Some optimization for faster test execution
+debug = true   # Keep debug info for better error messages

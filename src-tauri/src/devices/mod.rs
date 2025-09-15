@@ -2,6 +2,7 @@ pub mod ttl;
 pub mod kernel;
 pub mod pupil;
 pub mod biopac;
+pub mod lsl;
 pub mod mock;
 
 use async_trait::async_trait;

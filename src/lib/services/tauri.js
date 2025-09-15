@@ -268,6 +268,103 @@ export async function resetPerformanceMetrics(deviceId = null) {
     }
 }
 
+// LSL-specific commands
+export async function discoverLslStreams() {
+    try {
+        return await invoke('discover_lsl_streams');
+    } catch (error) {
+        console.error('Failed to discover LSL streams:', error);
+        return [];
+    }
+}
+
+export async function connectLslInlet(streamInfo) {
+    try {
+        return await invoke('connect_lsl_inlet', { streamInfo });
+    } catch (error) {
+        console.error('Failed to connect LSL inlet:', error);
+        throw error;
+    }
+}
+
+export async function disconnectLslInlet(inletId) {
+    try {
+        return await invoke('disconnect_lsl_inlet', { inletId });
+    } catch (error) {
+        console.error('Failed to disconnect LSL inlet:', error);
+        throw error;
+    }
+}
+
+export async function createLslOutlet(deviceType, outletConfig) {
+    try {
+        return await invoke('create_lsl_outlet', {
+            deviceType,
+            config: outletConfig
+        });
+    } catch (error) {
+        console.error('Failed to create LSL outlet:', error);
+        throw error;
+    }
+}
+
+export async function removeLslOutlet(outletId) {
+    try {
+        return await invoke('remove_lsl_outlet', { outletId });
+    } catch (error) {
+        console.error('Failed to remove LSL outlet:', error);
+        throw error;
+    }
+}
+
+export async function getLslSyncStatus() {
+    try {
+        return await invoke('get_lsl_sync_status');
+    } catch (error) {
+        console.error('Failed to get LSL sync status:', error);
+        return { quality: 0, offset: 0, jitter: 0 };
+    }
+}
+
+export async function configureLslOutlet(deviceId, config) {
+    try {
+        return await invoke('configure_lsl_outlet', {
+            deviceId,
+            config
+        });
+    } catch (error) {
+        console.error('Failed to configure LSL outlet:', error);
+        throw error;
+    }
+}
+
+export async function getLslStreamInfo(streamUid) {
+    try {
+        return await invoke('get_lsl_stream_info', { streamUid });
+    } catch (error) {
+        console.error('Failed to get LSL stream info:', error);
+        return null;
+    }
+}
+
+export async function setLslBufferSize(inletId, bufferSize) {
+    try {
+        return await invoke('set_lsl_buffer_size', { inletId, bufferSize });
+    } catch (error) {
+        console.error('Failed to set LSL buffer size:', error);
+        throw error;
+    }
+}
+
+export async function getLslMetrics() {
+    try {
+        return await invoke('get_lsl_metrics');
+    } catch (error) {
+        console.error('Failed to get LSL metrics:', error);
+        return null;
+    }
+}
+
 // Export all functions as a service object for convenience
 export const tauriService = {
     startBridgeServer,
@@ -289,5 +386,16 @@ export const tauriService = {
     exportLogs,
     setLogLevel,
     getPerformanceMetrics,
-    resetPerformanceMetrics
+    resetPerformanceMetrics,
+    // LSL functions
+    discoverLslStreams,
+    connectLslInlet,
+    disconnectLslInlet,
+    createLslOutlet,
+    removeLslOutlet,
+    getLslSyncStatus,
+    configureLslOutlet,
+    getLslStreamInfo,
+    setLslBufferSize,
+    getLslMetrics
 };

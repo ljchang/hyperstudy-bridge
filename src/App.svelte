@@ -5,6 +5,7 @@
   import AddDeviceModal from './lib/components/AddDeviceModal.svelte';
   import LogViewer from './lib/components/LogViewer.svelte';
   import SettingsPanel from './lib/components/SettingsPanel.svelte';
+  import LslConfigPanel from './lib/components/LslConfigPanel.svelte';
   import * as bridgeStore from './lib/stores/websocket.svelte.js';
   import logo from './assets/hyperstudy-logo.svg';
 
@@ -12,6 +13,7 @@
   let showAddDeviceModal = $state(false);
   let showLogViewer = $state(false);
   let showSettingsPanel = $state(false);
+  let showLslPanel = $state(false);
 
   // Selected devices - user has explicitly added these
   let selectedDevices = $state([]);
@@ -105,6 +107,18 @@
     <div class="header-actions">
       <button
         class="header-btn"
+        onclick={() => showLslPanel = true}
+        title="LSL Streams"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 12l2-2 4 4 8-8 2 2"></path>
+          <circle cx="12" cy="12" r="10"></circle>
+        </svg>
+        LSL
+      </button>
+
+      <button
+        class="header-btn"
         onclick={() => showLogViewer = true}
         title="View Logs"
       >
@@ -176,6 +190,10 @@
     bind:isOpen={showAddDeviceModal}
     onAdd={handleAddDevices}
     onClose={() => showAddDeviceModal = false}
+  />
+
+  <LslConfigPanel
+    bind:isOpen={showLslPanel}
   />
 
   <LogViewer

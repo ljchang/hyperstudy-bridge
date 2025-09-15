@@ -167,6 +167,41 @@ const STOP_ACQUISITION: &str = "STOP";
 const SET_MARKER: &str = "MARKER";
 ```
 
+### Lab Streaming Layer (LSL) Integration Tasks
+- [x] ✅ Add LSL dependencies to Cargo.toml
+- [x] ✅ Create LSL device module structure
+- [x] ✅ Implement LSL Device trait
+- [x] ✅ Create inlet management system
+- [x] ✅ Create outlet management system
+- [x] ✅ Implement stream discovery (resolver)
+- [x] ✅ Add time synchronization with LSL clock
+- [x] ✅ Create data transformation functions
+- [x] ✅ Implement stream routing architecture
+- [x] ✅ Add LSL configuration UI component
+- [x] ✅ Create stream visualization dashboard
+- [x] ✅ Extend WebSocket protocol for LSL
+- [x] ✅ Add LSL unit tests
+- [x] ✅ Create LSL integration tests
+- [x] ✅ Test multi-device synchronization
+- [x] ✅ Document LSL API and usage
+
+**LSL Module Specifications:**
+```rust
+pub struct LslDevice {
+    inlets: HashMap<String, StreamInlet>,
+    outlets: HashMap<String, StreamOutlet>,
+    resolver: StreamResolver,
+    time_sync: TimeSync,
+    config: LslConfig,
+}
+
+// Stream type mappings
+// TTL → Markers (string, irregular)
+// Kernel → fNIRS (float32, 10-100 Hz)
+// Pupil → Gaze (float32, 30-120 Hz)
+// Biopac → Biosignals (float32, 100-2000 Hz)
+```
+
 ## Phase 5: Integration and Testing
 
 ### Coordinator Agent Tasks
@@ -299,7 +334,7 @@ Target metrics to achieve:
 
 ---
 
-**Last Updated**: 2025-09-15 04:00 PST
+**Last Updated**: 2025-09-15 05:00 PST
 **Next Review**: [Coordinator sets review date]
 
 ## Agent Sign-off
