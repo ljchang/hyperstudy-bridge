@@ -56,7 +56,7 @@ struct NdtPacket {
 }
 
 #[derive(Debug, Clone)]
-struct ChannelData {
+pub struct ChannelData {
     channel_id: u8,
     timestamp: u64,
     value: f32,
@@ -64,7 +64,7 @@ struct ChannelData {
 }
 
 #[derive(Debug, Clone)]
-struct EventMarker {
+pub struct EventMarker {
     timestamp: u64,
     marker_id: String,
     metadata: HashMap<String, String>,

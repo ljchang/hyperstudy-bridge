@@ -61,7 +61,7 @@ function connect() {
             status = 'disconnected';
 
             // Clear device states
-            devices.forEach((device, id) => {
+            devices.forEach((device, _id) => {
                 device.status = 'disconnected';
             });
             devices = new Map(devices);

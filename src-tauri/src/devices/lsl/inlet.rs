@@ -241,7 +241,7 @@ impl StreamInlet {
 
     /// Start continuous data collection
     pub async fn start_collection(&self) -> Result<mpsc::UnboundedReceiver<Sample>, LslError> {
-        let (sender, receiver) = mpsc::unbounded_channel();
+        let (_sender, receiver) = mpsc::unbounded_channel();
 
         if !self.active.load(Ordering::Relaxed) {
             return Err(LslError::LslLibraryError("Inlet not open".to_string()));

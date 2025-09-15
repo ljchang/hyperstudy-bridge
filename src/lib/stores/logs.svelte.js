@@ -101,7 +101,7 @@ function getLogCounts() {
     };
 
     logs.forEach(log => {
-        if (counts.hasOwnProperty(log.level)) {
+        if (Object.prototype.hasOwnProperty.call(counts, log.level)) {
             counts[log.level]++;
         }
     });

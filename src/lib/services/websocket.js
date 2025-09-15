@@ -1,4 +1,5 @@
 // WebSocket client service without Svelte stores (for use with runes)
+import { writable } from 'svelte/store';
 
 class WebSocketClient {
     constructor() {
@@ -63,7 +64,7 @@ class WebSocketClient {
 
                 // Clear device states
                 this.devices.update(devices => {
-                    devices.forEach((device, id) => {
+                    devices.forEach((device, _id) => {
                         device.status = 'Disconnected';
                     });
                     return devices;

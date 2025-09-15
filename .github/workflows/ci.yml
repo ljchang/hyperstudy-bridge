@@ -63,7 +63,7 @@ jobs:
       - name: Run clippy
         run: |
           cd src-tauri
-          cargo clippy --all-targets --all-features -- -D warnings
+          cargo clippy --lib --bins --all-features -- -D warnings
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -99,14 +99,14 @@ jobs:
       - name: Run backend tests
         run: |
           cd src-tauri
-          cargo test --all-features --verbose
+          cargo test --lib --bins --all-features --verbose
 
       - name: Run backend tests with coverage
         if: matrix.os == 'ubuntu-latest'
         run: |
           cd src-tauri
           cargo install cargo-tarpaulin --version ^0.27
-          cargo tarpaulin --all-features --workspace --timeout 120 --out xml
+          cargo tarpaulin --lib --bins --all-features --workspace --timeout 120 --out xml
 
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest'

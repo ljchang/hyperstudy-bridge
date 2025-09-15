@@ -100,7 +100,7 @@ impl StreamResolver {
     pub async fn start_discovery(
         &self,
     ) -> Result<mpsc::UnboundedReceiver<DiscoveryEvent>, LslError> {
-        let (sender, receiver) = mpsc::unbounded_channel();
+        let (_sender, receiver) = mpsc::unbounded_channel();
 
         let mut is_discovering = self.is_discovering.write().await;
         if *is_discovering {
