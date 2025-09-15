@@ -261,6 +261,9 @@ jobs:
           echo "All available identities:"
           security find-identity -v -p codesigning
 
+          # Clean up
+          rm -f $CERTIFICATE_PATH
+
       - name: Build Tauri app
         run: npm run tauri:build -- --target ${{ matrix.target }}
         env:
