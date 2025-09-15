@@ -69,7 +69,7 @@ export interface LslCommand {
   action: 'discover' | 'connect_inlet' | 'disconnect_inlet' |
           'create_outlet' | 'remove_outlet' | 'get_sync_status' |
           'configure_outlet' | 'get_stream_info' | 'set_buffer_size';
-  payload: any;
+  payload: unknown;
   id?: string;
 }
 
@@ -78,7 +78,7 @@ export interface LslResponse {
         'outlet_created' | 'outlet_removed' | 'sync_status' |
         'stream_data' | 'error' | 'ack';
   device: 'lsl';
-  payload: any;
+  payload: unknown;
   id?: string;
   timestamp: number;
 }

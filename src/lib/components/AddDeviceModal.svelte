@@ -80,7 +80,7 @@
 
 {#if isOpen}
   <div class="modal-overlay" onclick={handleClose} onkeydown={handleKeydown}>
-    <div class="modal" onclick={(e) => e.stopPropagation()}>
+    <div class="modal" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()}>
       <div class="modal-header">
         <h2>Add Devices</h2>
         <button class="close-btn" onclick={handleClose}>×</button>
@@ -96,7 +96,16 @@
             <div
               class="device-item"
               class:selected={selectedDevices.has(device.id)}
+              role="button"
+              tabindex="0"
+              aria-pressed={selectedDevices.has(device.id)}
               onclick={(e) => toggleDevice(device.id, e)}
+              onkeydown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  toggleDevice(device.id, e);
+                }
+              }}
             >
               <div class="device-info">
                 <h3>{device.name}</h3>

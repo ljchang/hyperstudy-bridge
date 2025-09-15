@@ -86,8 +86,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Lint frontend
-        run: npm run lint || echo "ESLint found issues but continuing"
+      - name: Type check frontend
+        run: npm run type-check
 
   test-backend:
     name: Test Backend (Rust)

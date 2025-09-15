@@ -82,10 +82,6 @@
     showAddDeviceModal = false;
   }
 
-  // Remove a device from selected devices
-  function removeDevice(deviceId) {
-    selectedDevices = selectedDevices.filter(d => d.id !== deviceId);
-  }
 
   onMount(() => {
     // Bridge store auto-connects in constructor

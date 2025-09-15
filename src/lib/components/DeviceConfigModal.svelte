@@ -1,5 +1,4 @@
 <script>
-  import * as bridgeStore from '../stores/websocket.svelte.js';
 
   // Use Svelte 5 $props() rune
   let { isOpen = false, device = null, onSave = () => {}, onClose = () => {} } = $props();
@@ -355,48 +354,11 @@
     }
   }
 
-  function renderField(fieldName, fieldConfig) {
-    const value = formData[fieldName];
-    const error = errors[fieldName];
-
-    switch (fieldConfig.type) {
-      case 'text':
-        return {
-          type: 'text',
-          placeholder: fieldConfig.placeholder,
-          value,
-          oninput: (e) => handleFieldChange(fieldName, e.target.value)
-        };
-      case 'number':
-        return {
-          type: 'number',
-          min: fieldConfig.min,
-          max: fieldConfig.max,
-          value,
-          oninput: (e) => handleFieldChange(fieldName, e.target.value)
-        };
-      case 'select':
-        return {
-          type: 'select',
-          options: fieldConfig.options,
-          value,
-          onchange: (e) => handleFieldChange(fieldName, e.target.value)
-        };
-      case 'checkbox':
-        return {
-          type: 'checkbox',
-          checked: value,
-          onchange: (e) => handleFieldChange(fieldName, e.target.checked)
-        };
-      default:
-        return null;
-    }
-  }
 </script>
 
 {#if isOpen && device}
   <div class="modal-overlay" onclick={handleClose} onkeydown={handleKeydown}>
-    <div class="modal" onclick={(e) => e.stopPropagation()}>
+    <div class="modal" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()}>
       <div class="modal-header">
         <h2>Configure {device.name}</h2>
         <button class="close-btn" onclick={handleClose}>×</button>
@@ -496,27 +458,7 @@
 
               {#each Object.entries(deviceConfigs.lsl) as [fieldName, fieldConfig]}
                 <div class="form-group">
-                  <label for="lsl-{fieldName}" class="form-label">
-                    {fieldConfig.label}
-                    {#if fieldConfig.required}
-                      <span class="required">*</span>
-                    {/if}
-                  </label>
-
-                  {#if fieldConfig.type === 'select'}
-                    <select
-                      id="lsl-{fieldName}"
-                      class="form-input"
-                      class:error={errors[fieldName]}
-                      value={lslConfig[fieldName]}
-                      onchange={(e) => handleFieldChange(fieldName, e.target.value, true)}
-                    >
-                      <option value="">Select {fieldConfig.label}</option>
-                      {#each fieldConfig.options as option}
-                        <option value={option}>{option}</option>
-                      {/each}
-                    </select>
-                  {:else if fieldConfig.type === 'checkbox'}
+                  {#if fieldConfig.type === 'checkbox'}
                     <label class="checkbox-wrapper">
                       <input
                         id="lsl-{fieldName}"
@@ -526,22 +468,47 @@
                         onchange={(e) => handleFieldChange(fieldName, e.target.checked, true)}
                       />
                       <span class="checkbox-label">
-                        {fieldConfig.label === 'Enable LSL Outlet' ? fieldConfig.label : `Enable ${fieldConfig.label}`}
+                        {fieldConfig.label}
+                        {#if fieldConfig.required}
+                          <span class="required">*</span>
+                        {/if}
                       </span>
                     </label>
                   {:else}
-                    <input
-                      id="lsl-{fieldName}"
-                      type={fieldConfig.type}
-                      class="form-input"
-                      class:error={errors[fieldName]}
-                      placeholder={fieldConfig.placeholder || ''}
-                      min={fieldConfig.min}
-                      max={fieldConfig.max}
-                      value={lslConfig[fieldName]}
-                      oninput={(e) => handleFieldChange(fieldName, e.target.value, true)}
-                      disabled={!lslConfig.enableOutlet && fieldName !== 'enableOutlet'}
-                    />
+                    <label for="lsl-{fieldName}" class="form-label">
+                      {fieldConfig.label}
+                      {#if fieldConfig.required}
+                        <span class="required">*</span>
+                      {/if}
+                    </label>
+
+                    {#if fieldConfig.type === 'select'}
+                      <select
+                        id="lsl-{fieldName}"
+                        class="form-input"
+                        class:error={errors[fieldName]}
+                        value={lslConfig[fieldName]}
+                        onchange={(e) => handleFieldChange(fieldName, e.target.value, true)}
+                      >
+                        <option value="">Select {fieldConfig.label}</option>
+                        {#each fieldConfig.options as option}
+                          <option value={option}>{option}</option>
+                        {/each}
+                      </select>
+                    {:else}
+                      <input
+                        id="lsl-{fieldName}"
+                        type={fieldConfig.type}
+                        class="form-input"
+                        class:error={errors[fieldName]}
+                        placeholder={fieldConfig.placeholder || ''}
+                        min={fieldConfig.min}
+                        max={fieldConfig.max}
+                        value={lslConfig[fieldName]}
+                        oninput={(e) => handleFieldChange(fieldName, e.target.value, true)}
+                        disabled={!lslConfig.enableOutlet && fieldName !== 'enableOutlet'}
+                      />
+                    {/if}
                   {/if}
 
                   {#if errors[fieldName]}

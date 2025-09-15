@@ -12,8 +12,6 @@
   let syncStatus = $state({ quality: 0, offset: 0, jitter: 0 });
   let isRefreshing = $state(false);
   let isConnecting = $state(false);
-  let selectedStreamId = $state(null);
-  let showStreamDetails = $state(false);
   let streamFilter = $state('');
   let typeFilter = $state('all');
   let refreshInterval = $state(null);
@@ -142,25 +140,6 @@
     }
   }
 
-  // Toggle outlet for a device
-  async function toggleOutlet(deviceType, enabled) {
-    try {
-      const command = {
-        type: 'command',
-        device: 'lsl',
-        action: enabled ? 'create_outlet' : 'remove_outlet',
-        payload: {
-          device_type: deviceType,
-          enabled: enabled
-        },
-        id: `toggle_outlet_${Date.now()}`
-      };
-
-      bridgeStore.sendMessage(command);
-    } catch (error) {
-      console.error('Failed to toggle outlet:', error);
-    }
-  }
 
   // Get sync status
   async function getSyncStatus() {
@@ -257,8 +236,8 @@
 
 <!-- LSL Configuration Panel -->
 {#if isOpen}
-  <div class="lsl-modal-overlay" onclick={() => isOpen = false}>
-    <div class="lsl-modal" onclick={(e) => e.stopPropagation()}>
+  <div class="lsl-modal-overlay" role="dialog" aria-modal="true" tabindex="-1" onclick={() => isOpen = false} onkeydown={(e) => { if (e.key === 'Escape') isOpen = false; }}>
+    <div class="lsl-modal" role="document" onclick={(e) => e.stopPropagation()}>
       <div class="lsl-header">
         <div class="lsl-title">
           <h2>LSL Stream Management</h2>
@@ -292,7 +271,7 @@
             Refresh
           </button>
 
-          <button class="close-btn" onclick={() => isOpen = false}>
+          <button class="close-btn" aria-label="Close LSL panel" onclick={() => isOpen = false}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="18" y1="6" x2="6" y2="18"></line>
               <line x1="6" y1="6" x2="18" y2="18"></line>

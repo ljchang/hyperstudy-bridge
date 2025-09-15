@@ -120,8 +120,8 @@
 
 <!-- Log Viewer Modal -->
 {#if isOpen}
-  <div class="log-modal-overlay" onclick={() => isOpen = false}>
-    <div class="log-modal" onclick={(e) => e.stopPropagation()}>
+  <div class="log-modal-overlay" onclick={() => isOpen = false} onkeydown={(e) => { if (e.key === 'Escape') isOpen = false; }}>
+    <div class="log-modal" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()}>
       <div class="log-header">
         <div class="log-title">
           <h2>Log Viewer</h2>
@@ -141,6 +141,7 @@
             class="control-btn"
             class:active={showFilters}
             onclick={() => showFilters = !showFilters}
+            aria-label="Toggle filters"
             title="Toggle filters"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -152,6 +153,7 @@
             class="control-btn"
             class:active={autoScroll}
             onclick={toggleAutoScroll}
+            aria-label="Auto-scroll to bottom"
             title="Auto-scroll to bottom"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -164,6 +166,7 @@
             class="control-btn"
             class:active={isPolling}
             onclick={togglePolling}
+            aria-label="{isPolling ? 'Pause' : 'Resume'} log polling"
             title="{isPolling ? 'Pause' : 'Resume'} log polling"
           >
             {#if isPolling}
@@ -181,6 +184,7 @@
           <button
             class="control-btn"
             onclick={clearLogs}
+            aria-label="Clear all logs"
             title="Clear all logs"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -193,6 +197,7 @@
             class="control-btn export-btn"
             onclick={exportLogs}
             disabled={isExporting}
+            aria-label="Export logs"
             title="Export logs"
           >
             {#if isExporting}
@@ -209,7 +214,7 @@
             {/if}
           </button>
 
-          <button class="close-btn" onclick={() => isOpen = false}>
+          <button class="close-btn" aria-label="Close log viewer" onclick={() => isOpen = false}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="18" y1="6" x2="6" y2="18"></line>
               <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -222,8 +227,9 @@
       {#if showFilters}
         <div class="filters-panel">
           <div class="filter-group">
-            <label>Search:</label>
+            <label for="log-search">Search:</label>
             <input
+              id="log-search"
               type="text"
               bind:value={searchQuery}
               oninput={(e) => logsStore.setSearchQuery(e.target.value)}
@@ -233,8 +239,9 @@
           </div>
 
           <div class="filter-group">
-            <label>Level:</label>
+            <label for="log-level">Level:</label>
             <select
+              id="log-level"
               bind:value={levelFilter}
               onchange={(e) => logsStore.setLevelFilter(e.target.value)}
               class="filter-select"
@@ -248,8 +255,9 @@
           </div>
 
           <div class="filter-group">
-            <label>Device:</label>
+            <label for="log-device">Device:</label>
             <select
+              id="log-device"
               bind:value={deviceFilter}
               onchange={(e) => logsStore.setDeviceFilter(e.target.value)}
               class="filter-select"

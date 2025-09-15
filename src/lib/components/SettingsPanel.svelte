@@ -33,7 +33,6 @@
   });
 
   // State management
-  let isLoading = $state(false);
   let isSaving = $state(false);
   let hasUnsavedChanges = $state(false);
   let lastSaved = $state(null);
@@ -53,7 +52,6 @@
 
   // Load configuration
   async function loadSettings() {
-    isLoading = true;
     try {
       const config = await tauriService.loadConfiguration();
       if (config) {
@@ -63,8 +61,6 @@
     } catch (error) {
       console.error('Failed to load settings:', error);
       errors.load = 'Failed to load configuration';
-    } finally {
-      isLoading = false;
     }
   }
 
@@ -253,8 +249,8 @@
 
 <!-- Settings Panel Modal -->
 {#if isOpen}
-  <div class="settings-modal-overlay" onclick={() => isOpen = false}>
-    <div class="settings-modal" onclick={(e) => e.stopPropagation()}>
+  <div class="settings-modal-overlay" role="dialog" aria-modal="true" tabindex="-1" onclick={() => isOpen = false} onkeydown={(e) => { if (e.key === 'Escape') isOpen = false; }}>
+    <div class="settings-modal" role="document" onclick={(e) => e.stopPropagation()}>
       <div class="settings-header">
         <h2>Settings</h2>
         <div class="header-actions">
@@ -264,7 +260,7 @@
           {#if lastSaved}
             <span class="last-saved">Last saved: {formatTimestamp(lastSaved)}</span>
           {/if}
-          <button class="close-btn" onclick={() => isOpen = false}>
+          <button class="close-btn" aria-label="Close settings" onclick={() => isOpen = false}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="18" y1="6" x2="6" y2="18"></line>
               <line x1="6" y1="6" x2="18" y2="18"></line>
