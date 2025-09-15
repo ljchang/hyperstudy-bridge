@@ -31,6 +31,10 @@ lerna-debug.log*
 coverage/
 *.lcov
 .nyc_output
+test-*.js
+test-*.ts
+*.test.js
+*.test.ts
 
 # Environment files
 .env
@@ -45,6 +49,9 @@ coverage/
 *.deb
 *.AppImage
 *.rpm
+build/
+.vite/
+.svelte-kit/
 
 # Certificates (never commit these!)
 *.p12
@@ -57,3 +64,18 @@ coverage/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Rust
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# Database files
+*.sqlite
+*.sqlite3
+*.db
+
+# Backup files
+*.backup
+*.bak
+*~
