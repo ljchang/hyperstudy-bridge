@@ -27,6 +27,7 @@ pub struct StreamInlet {
     /// Sample counter
     sample_count: Arc<AtomicU64>,
     /// Data receiver for async processing
+    #[allow(dead_code)]
     data_receiver: Option<mpsc::UnboundedReceiver<Sample>>,
     /// Performance metrics
     bytes_received: Arc<AtomicU64>,
@@ -343,6 +344,7 @@ impl StreamInlet {
     }
 
     /// Continuous collection loop
+    #[allow(dead_code)]
     async fn collection_loop(&self, sender: mpsc::UnboundedSender<Sample>) {
         let mut interval = interval(Duration::from_millis(10)); // 100Hz polling
 

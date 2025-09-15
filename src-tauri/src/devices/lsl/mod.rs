@@ -21,6 +21,9 @@ pub use resolver::{DiscoveredStream, StreamFilter, StreamResolver};
 pub use sync::TimeSync;
 pub use types::*;
 
+/// Type alias for performance callback
+type PerformanceCallback = Box<dyn Fn(&str, Duration, u64, u64) + Send + Sync>;
+
 /// Main LSL device implementation
 pub struct LslDevice {
     /// Device configuration
@@ -40,8 +43,9 @@ pub struct LslDevice {
     /// Outlet manager for producing streams
     outlet_manager: Arc<OutletManager>,
     /// Performance monitoring callback
-    performance_callback: Option<Box<dyn Fn(&str, Duration, u64, u64) + Send + Sync>>,
+    performance_callback: Option<PerformanceCallback>,
     /// Command processing channel
+    #[allow(dead_code)]
     command_sender: Option<mpsc::UnboundedSender<LslCommand>>,
     command_receiver: Option<mpsc::UnboundedReceiver<LslCommand>>,
     /// Bridge device outlets (auto-created)
@@ -293,6 +297,7 @@ impl LslDevice {
     }
 
     /// Process LSL commands
+    #[allow(dead_code)]
     async fn process_command(&self, command: LslCommand) -> LslResponse {
         match command {
             LslCommand::DiscoverStreams {

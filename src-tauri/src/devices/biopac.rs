@@ -14,7 +14,9 @@ const DEFAULT_PORT: u16 = 5000;
 const NDT_HEADER_SIZE: usize = 8;
 const MAX_CHANNELS: usize = 16;
 const BUFFER_SIZE: usize = 65536; // 64KB buffer for high-frequency data
+#[allow(dead_code)]
 const RECONNECT_DELAY_MS: u64 = 1000;
+#[allow(dead_code)]
 const CONNECTION_TIMEOUT_MS: u64 = 5000;
 
 // NDT Protocol Commands
@@ -24,7 +26,9 @@ const NDT_SET_MARKER: u32 = 0x03;
 const NDT_GET_CHANNELS: u32 = 0x04;
 const NDT_SET_SAMPLING_RATE: u32 = 0x05;
 const NDT_DATA_PACKET: u32 = 0x10;
+#[allow(dead_code)]
 const NDT_STATUS_RESPONSE: u32 = 0x20;
+#[allow(dead_code)]
 const NDT_ERROR_RESPONSE: u32 = 0x30;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +60,7 @@ struct NdtPacket {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ChannelData {
     channel_id: u8,
     timestamp: u64,
@@ -64,11 +69,15 @@ pub struct ChannelData {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct EventMarker {
     timestamp: u64,
     marker_id: String,
     metadata: HashMap<String, String>,
 }
+
+/// Type alias for performance callback
+type PerformanceCallback = Box<dyn Fn(&str, Duration, u64, u64) + Send + Sync>;
 
 pub struct BiopacDevice {
     socket: Option<TcpStream>,
@@ -82,7 +91,7 @@ pub struct BiopacDevice {
     sequence_number: u32,
     last_heartbeat: SystemTime,
     reconnect_attempts: u32,
-    performance_callback: Option<Box<dyn Fn(&str, Duration, u64, u64) + Send + Sync>>,
+    performance_callback: Option<PerformanceCallback>,
 }
 
 impl std::fmt::Debug for BiopacDevice {
@@ -820,6 +829,7 @@ impl BiopacDevice {
         Ok(channel_data)
     }
 
+    #[allow(dead_code)]
     async fn attempt_reconnect(&mut self) -> Result<(), DeviceError> {
         if !self.device_config.auto_reconnect {
             return Err(DeviceError::ConnectionFailed(

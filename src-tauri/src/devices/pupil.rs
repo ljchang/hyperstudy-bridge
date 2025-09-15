@@ -9,7 +9,9 @@ use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, Web
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+#[allow(dead_code)]
 const DISCOVERY_PORT: u16 = 8080;
+#[allow(dead_code)]
 const WS_PORT: u16 = 8081;
 const DEFAULT_WS_ENDPOINT: &str = "/api/ws";
 

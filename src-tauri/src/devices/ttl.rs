@@ -28,6 +28,9 @@ impl Default for TtlConfig {
     }
 }
 
+/// Type alias for performance callback
+type PerformanceCallback = Box<dyn Fn(&str, Duration, u64, u64) + Send + Sync>;
+
 pub struct TtlDevice {
     port: Option<Mutex<Box<dyn SerialPort>>>,
     port_name: String,
@@ -35,7 +38,7 @@ pub struct TtlDevice {
     config: TtlConfig,
     device_config: DeviceConfig,
     /// Performance callback for recording metrics
-    performance_callback: Option<Box<dyn Fn(&str, Duration, u64, u64) + Send + Sync>>,
+    performance_callback: Option<PerformanceCallback>,
 }
 
 impl std::fmt::Debug for TtlDevice {

@@ -16,6 +16,7 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 const WS_PORT: u16 = 9000;
+#[allow(dead_code)]
 const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024; // 10MB
 
 pub struct BridgeServer {

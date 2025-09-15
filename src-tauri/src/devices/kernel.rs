@@ -9,6 +9,7 @@ use tracing::{debug, error, info, warn};
 
 const DEFAULT_PORT: u16 = 6767;
 const HEARTBEAT_COMMAND: &[u8] = b"PING\n";
+#[allow(dead_code)]
 const HEARTBEAT_RESPONSE: &[u8] = b"PONG\n";
 const HEARTBEAT_INTERVAL_MS: u64 = 10000; // 10 seconds
 const MAX_RECONNECT_ATTEMPTS: u32 = 10;
@@ -46,6 +47,9 @@ impl Default for KernelConfig {
     }
 }
 
+/// Type alias for performance callback
+type PerformanceCallback = Box<dyn Fn(&str, Duration, u64, u64) + Send + Sync>;
+
 pub struct KernelDevice {
     socket: Option<TcpStream>,
     status: DeviceStatus,
@@ -56,7 +60,7 @@ pub struct KernelDevice {
     last_heartbeat: Option<Instant>,
     last_successful_connection: Option<Instant>,
     /// Performance callback for recording metrics
-    performance_callback: Option<Box<dyn Fn(&str, Duration, u64, u64) + Send + Sync>>,
+    performance_callback: Option<PerformanceCallback>,
 }
 
 impl std::fmt::Debug for KernelDevice {

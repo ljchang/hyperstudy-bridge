@@ -18,6 +18,7 @@ pub struct StreamResolver {
     /// Active discovery flag
     is_discovering: RwLock<bool>,
     /// Discovery result sender
+    #[allow(dead_code)]
     discovery_sender: Option<mpsc::UnboundedSender<DiscoveryEvent>>,
 }
 
@@ -252,6 +253,7 @@ impl StreamResolver {
     }
 
     /// Internal discovery loop for continuous discovery
+    #[allow(dead_code)]
     async fn discovery_loop(&self, sender: mpsc::UnboundedSender<DiscoveryEvent>) {
         while *self.is_discovering.read().await {
             match self.discover_streams().await {

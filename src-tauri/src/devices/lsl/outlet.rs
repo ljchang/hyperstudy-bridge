@@ -26,6 +26,7 @@ pub struct StreamOutlet {
     /// Sample counter
     sample_count: Arc<AtomicU64>,
     /// Data sender for async processing
+    #[allow(dead_code)]
     data_sender: Option<mpsc::UnboundedSender<Sample>>,
     /// Performance metrics
     bytes_sent: Arc<AtomicU64>,
