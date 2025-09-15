@@ -5,6 +5,14 @@ description = "HyperStudy Bridge - Hardware Device Integration"
 authors = ["HyperStudy Team"]
 edition = "2021"
 
+[lib]
+name = "hyperstudy_bridge"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hyperstudy-bridge"
+path = "src/main.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -42,6 +50,15 @@ uuid = { version = "1", features = ["v4"] }
 
 # Testing utilities
 rand = "0.8"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+tokio-test = "0.4"
+
+[[bench]]
+name = "performance"
+harness = false
+
 
 [features]
 default = ["custom-protocol"]

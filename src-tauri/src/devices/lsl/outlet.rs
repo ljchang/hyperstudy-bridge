@@ -1,4 +1,4 @@
-use super::types::{LslError, StreamInfo, Sample, StreamStatus};
+use super::types::{LslError, StreamInfo, Sample, StreamStatus, SampleData};
 use super::sync::TimeSync;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;

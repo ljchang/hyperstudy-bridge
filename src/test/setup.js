@@ -1,5 +1,6 @@
 // Vitest setup file
 import { vi } from 'vitest';
+import '@testing-library/jest-dom';
 
 // Mock Tauri API for testing
 vi.mock('@tauri-apps/api', () => ({

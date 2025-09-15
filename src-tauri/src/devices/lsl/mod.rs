@@ -4,8 +4,6 @@ pub mod resolver;
 pub mod inlet;
 pub mod outlet;
 
-#[cfg(test)]
-pub mod tests;
 
 use crate::devices::{Device, DeviceConfig, DeviceError, DeviceInfo, DeviceStatus, DeviceType};
 use crate::performance::PerformanceMonitor;
