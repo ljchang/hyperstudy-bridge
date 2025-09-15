@@ -1,4 +1,5 @@
 use crate::devices::{BoxedDevice, DeviceInfo, DeviceStatus};
+use crate::performance::PerformanceMonitor;
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,6 +13,7 @@ pub struct AppState {
     pub devices: Arc<RwLock<HashMap<String, Arc<RwLock<BoxedDevice>>>>>,
     pub connections: Arc<DashMap<String, ConnectionInfo>>,
     pub metrics: Arc<RwLock<Metrics>>,
+    pub performance_monitor: Arc<PerformanceMonitor>,
     pub start_time: Instant,
     pub message_count: Arc<AtomicU64>,
     pub last_error: Arc<RwLock<Option<String>>>,
@@ -50,6 +52,7 @@ impl AppState {
             devices: Arc::new(RwLock::new(HashMap::new())),
             connections: Arc::new(DashMap::new()),
             metrics: Arc::new(RwLock::new(Metrics::default())),
+            performance_monitor: Arc::new(PerformanceMonitor::new()),
             start_time: Instant::now(),
             message_count: Arc::new(AtomicU64::new(0)),
             last_error: Arc::new(RwLock::new(None)),
@@ -58,12 +61,20 @@ impl AppState {
 
     pub async fn add_device(&self, id: String, device: BoxedDevice) {
         let mut devices = self.devices.write().await;
-        devices.insert(id, Arc::new(RwLock::new(device)));
+        devices.insert(id.clone(), Arc::new(RwLock::new(device)));
+
+        // Add device to performance monitoring
+        self.performance_monitor.add_device(id).await;
     }
 
     pub async fn remove_device(&self, id: &str) -> Option<Arc<RwLock<BoxedDevice>>> {
         let mut devices = self.devices.write().await;
-        devices.remove(id)
+        let result = devices.remove(id);
+
+        // Remove device from performance monitoring
+        self.performance_monitor.remove_device(id).await;
+
+        result
     }
 
     pub async fn get_device(&self, id: &str) -> Option<Arc<RwLock<BoxedDevice>>> {
@@ -107,10 +118,16 @@ impl AppState {
         };
 
         self.connections.insert(id, info);
+
+        // Record WebSocket connection in performance monitoring
+        self.performance_monitor.record_websocket_connection(true);
     }
 
     pub fn remove_connection(&self, id: &str) {
         self.connections.remove(id);
+
+        // Record WebSocket disconnection in performance monitoring
+        self.performance_monitor.record_websocket_connection(false);
     }
 
     pub fn update_connection_activity(&self, id: &str) {
@@ -166,6 +183,9 @@ impl AppState {
 
     pub fn increment_message_count(&self) {
         self.message_count.fetch_add(1, Ordering::Relaxed);
+
+        // Record bridge message in performance monitoring
+        self.performance_monitor.record_bridge_message();
     }
 
     pub async fn set_last_error(&self, error: Option<String>) {
@@ -182,5 +202,41 @@ impl AppState {
         metrics.device_metrics.iter()
             .find(|m| m.device_id == device_id)
             .cloned()
+    }
+
+    /// Record device operation with performance tracking
+    pub async fn record_device_operation(&self, device_id: &str, latency: Duration, bytes_sent: u64, bytes_received: u64) {
+        self.performance_monitor.record_device_operation(device_id, latency, bytes_sent, bytes_received).await;
+    }
+
+    /// Record device error with performance tracking
+    pub async fn record_device_error(&self, device_id: &str, error_msg: &str) {
+        self.performance_monitor.record_device_error(device_id, error_msg).await;
+        self.set_last_error(Some(error_msg.to_string())).await;
+    }
+
+    /// Record device connection attempt with performance tracking
+    pub async fn record_connection_attempt(&self, device_id: &str, success: bool) {
+        self.performance_monitor.record_connection_attempt(device_id, success).await;
+    }
+
+    /// Get comprehensive performance metrics
+    pub async fn get_performance_metrics(&self) -> crate::performance::PerformanceMetrics {
+        self.performance_monitor.get_metrics().await
+    }
+
+    /// Get device-specific performance metrics
+    pub async fn get_device_performance_metrics(&self, device_id: &str) -> Option<crate::performance::DevicePerformanceMetrics> {
+        self.performance_monitor.get_device_metrics(device_id).await
+    }
+
+    /// Get performance summary for monitoring dashboard
+    pub async fn get_performance_summary(&self) -> serde_json::Value {
+        self.performance_monitor.get_performance_summary().await
+    }
+
+    /// Check TTL latency compliance (<1ms)
+    pub async fn check_ttl_latency_compliance(&self, device_id: &str) -> Option<bool> {
+        self.performance_monitor.check_ttl_latency_compliance(device_id).await
     }
 }

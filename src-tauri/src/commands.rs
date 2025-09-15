@@ -121,7 +121,19 @@ pub async fn connect_device(
             let port = config.get("port")
                 .and_then(|v| v.as_str())
                 .unwrap_or("/dev/ttyUSB0");
-            Box::new(TtlDevice::new(port.to_string()))
+            let mut ttl_device = TtlDevice::new(port.to_string());
+
+            // Set up performance monitoring callback
+            let state_clone = state.inner().clone();
+            ttl_device.set_performance_callback(move |device_id, latency, bytes_sent, bytes_received| {
+                let state_clone = state_clone.clone();
+                let device_id = device_id.to_string();
+                tokio::spawn(async move {
+                    state_clone.record_device_operation(&device_id, latency, bytes_sent, bytes_received).await;
+                });
+            });
+
+            Box::new(ttl_device)
         }
         "kernel" => {
             let ip = config.get("ip")
@@ -152,10 +164,14 @@ pub async fn connect_device(
         }
     };
 
+    let device_id = device.get_info().id.clone();
+
     match device.connect().await {
         Ok(_) => {
             let info = device.get_info();
-            let device_id = info.id.clone();
+
+            // Record successful connection attempt
+            state.record_connection_attempt(&device_id, true).await;
 
             state.add_device(device_id.clone(), device).await;
 
@@ -169,6 +185,11 @@ pub async fn connect_device(
         }
         Err(e) => {
             error!("Failed to connect device: {}", e);
+
+            // Record failed connection attempt
+            state.record_connection_attempt(&device_id, false).await;
+            state.record_device_error(&device_id, &e.to_string()).await;
+
             Ok(CommandResult::error(e.to_string()))
         }
     }
@@ -221,6 +242,10 @@ pub async fn send_device_command(
             Ok(_) => Ok(CommandResult::success("Command sent".to_string())),
             Err(e) => {
                 error!("Failed to send command: {}", e);
+
+                // Record device error
+                state.record_device_error(&device_id, &e.to_string()).await;
+
                 Ok(CommandResult::error(e.to_string()))
             }
         }
@@ -258,6 +283,10 @@ pub async fn send_ttl_pulse(
             }
             Err(e) => {
                 error!("Failed to send TTL pulse: {}", e);
+
+                // Record device error
+                state.record_device_error(&device_id, &e.to_string()).await;
+
                 Ok(CommandResult::error(e.to_string()))
             }
         }
@@ -397,4 +426,64 @@ pub async fn save_configuration(config: serde_json::Value) -> Result<CommandResu
     // TODO: Save to config file
     info!("Saving configuration: {:?}", config);
     Ok(CommandResult::success("Configuration saved".to_string()))
+}
+
+// Performance monitoring commands
+
+#[tauri::command]
+pub async fn get_performance_metrics(
+    state: State<'_, Arc<AppState>>,
+) -> Result<crate::performance::PerformanceMetrics, ()> {
+    Ok(state.get_performance_metrics().await)
+}
+
+#[tauri::command]
+pub async fn get_device_performance_metrics(
+    device_id: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<CommandResult<crate::performance::DevicePerformanceMetrics>, ()> {
+    if let Some(metrics) = state.get_device_performance_metrics(&device_id).await {
+        Ok(CommandResult::success(metrics))
+    } else {
+        Ok(CommandResult::error(format!("No performance metrics available for device {}", device_id)))
+    }
+}
+
+#[tauri::command]
+pub async fn get_performance_summary(
+    state: State<'_, Arc<AppState>>,
+) -> Result<serde_json::Value, ()> {
+    Ok(state.get_performance_summary().await)
+}
+
+#[tauri::command]
+pub async fn check_ttl_latency_compliance(
+    device_id: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<CommandResult<bool>, ()> {
+    if let Some(is_compliant) = state.check_ttl_latency_compliance(&device_id).await {
+        Ok(CommandResult::success(is_compliant))
+    } else {
+        Ok(CommandResult::error(format!("No TTL latency data available for device {}", device_id)))
+    }
+}
+
+#[tauri::command]
+pub async fn reset_performance_metrics(
+    device_id: Option<String>,
+    state: State<'_, Arc<AppState>>,
+) -> Result<CommandResult<String>, ()> {
+    match device_id {
+        Some(id) => {
+            // Reset specific device metrics by removing and re-adding
+            state.performance_monitor.remove_device(&id).await;
+            state.performance_monitor.add_device(id.clone()).await;
+            Ok(CommandResult::success(format!("Performance metrics reset for device {}", id)))
+        }
+        None => {
+            // Create new performance monitor to reset all metrics
+            *state.performance_monitor.device_counters.write().await = std::collections::HashMap::new();
+            Ok(CommandResult::success("All performance metrics reset".to_string()))
+        }
+    }
 }

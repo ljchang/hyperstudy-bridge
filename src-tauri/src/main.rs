@@ -6,6 +6,7 @@
 mod bridge;
 mod devices;
 mod commands;
+mod performance;
 
 use std::sync::Arc;
 use tracing::{info, error};
@@ -50,7 +51,12 @@ async fn main() {
             get_device_metrics,
             get_system_diagnostics,
             load_configuration,
-            save_configuration
+            save_configuration,
+            get_performance_metrics,
+            get_device_performance_metrics,
+            get_performance_summary,
+            check_ttl_latency_compliance,
+            reset_performance_metrics
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

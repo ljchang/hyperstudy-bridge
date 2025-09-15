@@ -2,69 +2,156 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
 
 jobs:
-  test-backend:
-    name: Test Backend (Rust)
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+  check-format:
+    name: Check Code Format
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-        
+        with:
+          components: rustfmt
+
+      - name: Check Rust formatting
+        run: |
+          cd src-tauri
+          cargo fmt --all -- --check
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check frontend formatting
+        run: npx prettier --check "src/**/*.{js,ts,svelte,html,css,md}"
+
+  lint:
+    name: Lint Code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-      
-      - name: Run backend tests
-        run: |
-          cd src-tauri
-          cargo test --all-features
-      
+          shared-key: "rust-cache"
+
       - name: Run clippy
         run: |
           cd src-tauri
-          cargo clippy -- -D warnings
+          cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint frontend
+        run: npm run lint
+
+  test-backend:
+    name: Test Backend (Rust)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: "rust-cache"
+
+      - name: Run backend tests
+        run: |
+          cd src-tauri
+          cargo test --all-features --verbose
+
+      - name: Run backend tests with coverage
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cd src-tauri
+          cargo install cargo-tarpaulin --version ^0.27
+          cargo tarpaulin --all-features --workspace --timeout 120 --out xml
+
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest'
+        uses: codecov/codecov-action@v4
+        with:
+          file: src-tauri/cobertura.xml
+          flags: backend
+          name: backend-coverage
+          fail_ci_if_error: false
 
   test-frontend:
     name: Test Frontend (Svelte)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
-      
+
       - name: Install dependencies
         run: npm ci
-      
-      - name: Lint frontend
-        run: npm run lint || echo "Linting not configured yet"
-      
+
       - name: Run frontend tests
-        run: npm test || echo "Tests not configured yet"
-      
+        run: npm run test:coverage
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: coverage/lcov.info
+          flags: frontend
+          name: frontend-coverage
+          fail_ci_if_error: false
+
       - name: Build frontend
         run: npm run build
 
   build-app:
     name: Build Application
+    needs: [check-format, lint]
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -77,30 +164,44 @@ jobs:
             target: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
-      
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: "rust-cache"
+          cache-targets: false
+
       - name: Install dependencies
         run: npm ci
-      
+
       - name: Install Tauri dependencies (Ubuntu)
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-      
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            pkg-config
+
       - name: Build Tauri app
         run: npm run tauri:build -- --target ${{ matrix.target }}
-        
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -108,24 +209,48 @@ jobs:
           path: |
             src-tauri/target/*/release/bundle/
             !src-tauri/target/*/release/bundle/**/*.pdb
-            !src-tauri/target/*/release/bundle/**/*.lib
+          retention-days: 7
+          compression-level: 6
 
   security-audit:
     name: Security Audit
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-      
+
+      - name: Cache cargo audit binary
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ runner.os }}
+
       - name: Install cargo-audit
-        run: cargo install cargo-audit
-      
+        run: cargo install cargo-audit --version ^0.20
+
       - name: Run cargo audit
         run: |
           cd src-tauri
-          cargo audit
-      
+          cargo audit --ignore RUSTSEC-2020-0071
+
       - name: Run npm audit
-        run: npm audit --audit-level=moderate || true
+        run: |
+          npm audit --audit-level=high --omit=dev
+          npm audit --audit-level=moderate || true
+
+  dependency-check:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: moderate
+          allow-licenses: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD

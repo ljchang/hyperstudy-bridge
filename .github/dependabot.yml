@@ -1,0 +1,153 @@
+version: 2
+updates:
+  # Enable version updates for npm (frontend dependencies)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    target-branch: "main"
+    reviewers:
+      - "hyperstudy-team"
+    assignees:
+      - "hyperstudy-team"
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps-dev"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "javascript"
+    ignore:
+      # Ignore major version updates for core frameworks during active development
+      - dependency-name: "svelte"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@tauri-apps/*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      # Group Tauri updates together
+      tauri:
+        patterns:
+          - "@tauri-apps/*"
+      # Group development dependencies
+      dev-dependencies:
+        dependency-type: "development"
+        patterns:
+          - "vite"
+          - "prettier"
+          - "eslint*"
+          - "vitest"
+          - "@vitest/*"
+      # Group testing dependencies
+      testing:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
+          - "playwright"
+          - "@playwright/*"
+          - "jsdom"
+
+  # Enable version updates for Cargo (Rust dependencies)
+  - package-ecosystem: "cargo"
+    directory: "/src-tauri"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "10:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    target-branch: "main"
+    reviewers:
+      - "hyperstudy-team"
+    assignees:
+      - "hyperstudy-team"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "rust"
+    ignore:
+      # Ignore major version updates for core dependencies during active development
+      - dependency-name: "tauri"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "tauri-build"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "tokio"
+        update-types: ["version-update:semver-major"]
+    groups:
+      # Group Tauri core updates together
+      tauri-core:
+        patterns:
+          - "tauri"
+          - "tauri-build"
+      # Group async runtime dependencies
+      async-runtime:
+        patterns:
+          - "tokio"
+          - "tokio-*"
+          - "futures-*"
+      # Group serialization dependencies
+      serialization:
+        patterns:
+          - "serde"
+          - "serde_*"
+          - "serde-*"
+      # Group device communication dependencies
+      device-comm:
+        patterns:
+          - "serialport"
+          - "tokio-tungstenite"
+          - "tungstenite"
+      # Group utility dependencies
+      utilities:
+        patterns:
+          - "anyhow"
+          - "thiserror"
+          - "tracing"
+          - "tracing-*"
+          - "uuid"
+
+  # Enable version updates for GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "11:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    target-branch: "main"
+    reviewers:
+      - "hyperstudy-team"
+    assignees:
+      - "hyperstudy-team"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    groups:
+      # Group core actions together
+      core-actions:
+        patterns:
+          - "actions/checkout"
+          - "actions/setup-node"
+          - "actions/upload-artifact"
+          - "actions/download-artifact"
+          - "actions/cache"
+      # Group Rust-specific actions
+      rust-actions:
+        patterns:
+          - "dtolnay/rust-toolchain"
+          - "Swatinem/rust-cache"
+      # Group release actions
+      release-actions:
+        patterns:
+          - "softprops/action-gh-release"
+          - "actions/create-release"
+          - "actions/upload-release-asset"

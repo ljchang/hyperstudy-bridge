@@ -1,7 +1,11 @@
 <script>
   import * as bridgeStore from '../stores/websocket.svelte.js';
+  import DeviceConfigModal from './DeviceConfigModal.svelte';
 
   let { device } = $props();
+
+  // Modal state
+  let showConfigModal = $state(false);
 
   function getStatusColor(status) {
     switch(status) {
@@ -45,7 +49,30 @@
 
   async function configureDevice() {
     console.log(`Configuring ${device.name}...`);
-    // TODO: Open configuration dialog
+    showConfigModal = true;
+  }
+
+  async function handleConfigSave(deviceId, newConfig) {
+    console.log(`Saving configuration for ${deviceId}:`, newConfig);
+
+    try {
+      // Update the device config locally
+      device.config = { ...device.config, ...newConfig };
+
+      // If the device is currently connected, we might want to reconnect with new config
+      // This depends on your backend implementation
+      if (device.status === 'connected') {
+        await bridgeStore.disconnectDevice(deviceId);
+        // Small delay to ensure disconnection
+        await new Promise(resolve => setTimeout(resolve, 500));
+        await bridgeStore.connectDevice(deviceId, newConfig);
+      }
+
+      console.log(`Configuration saved successfully for ${device.name}`);
+    } catch (error) {
+      console.error(`Failed to save configuration for ${device.name}:`, error);
+      throw error; // Re-throw to let the modal handle the error display
+    }
   }
 </script>
 
@@ -113,6 +140,13 @@
     </button>
   </div>
 </div>
+
+<DeviceConfigModal
+  bind:isOpen={showConfigModal}
+  {device}
+  onSave={handleConfigSave}
+  onClose={() => showConfigModal = false}
+/>
 
 <style>
   .device-card {

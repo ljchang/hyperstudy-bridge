@@ -1,11 +1,12 @@
 use super::{Device, DeviceConfig, DeviceError, DeviceInfo, DeviceStatus, DeviceType};
+use crate::performance::measure_latency;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serialport::{self, SerialPort};
 use std::sync::Mutex;
 use std::time::Duration;
 use tokio::time::sleep;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 const PULSE_COMMAND: &[u8] = b"PULSE\n";
 const PULSE_DURATION_MS: u64 = 10;
@@ -27,13 +28,26 @@ impl Default for TtlConfig {
     }
 }
 
-#[derive(Debug)]
 pub struct TtlDevice {
     port: Option<Mutex<Box<dyn SerialPort>>>,
     port_name: String,
     status: DeviceStatus,
     config: TtlConfig,
     device_config: DeviceConfig,
+    /// Performance callback for recording metrics
+    performance_callback: Option<Box<dyn Fn(&str, Duration, u64, u64) + Send + Sync>>,
+}
+
+impl std::fmt::Debug for TtlDevice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TtlDevice")
+            .field("port_name", &self.port_name)
+            .field("status", &self.status)
+            .field("config", &self.config)
+            .field("device_config", &self.device_config)
+            .field("has_performance_callback", &self.performance_callback.is_some())
+            .finish()
+    }
 }
 
 impl TtlDevice {
@@ -47,7 +61,16 @@ impl TtlDevice {
                 ..Default::default()
             },
             device_config: DeviceConfig::default(),
+            performance_callback: None,
         }
+    }
+
+    /// Set performance callback for metrics recording
+    pub fn set_performance_callback<F>(&mut self, callback: F)
+    where
+        F: Fn(&str, Duration, u64, u64) + Send + Sync + 'static,
+    {
+        self.performance_callback = Some(Box::new(callback));
     }
 
     pub fn list_ports() -> Result<Vec<String>, DeviceError> {
@@ -62,23 +85,33 @@ impl TtlDevice {
 
     async fn send_pulse(&mut self) -> Result<(), DeviceError> {
         if let Some(ref port_mutex) = self.port {
-            let start = std::time::Instant::now();
-
-            {
+            let device_id = self.get_info().id;
+            let (result, latency) = measure_latency::<_, (), DeviceError>(async {
                 let mut port = port_mutex.lock().unwrap();
                 port.write_all(PULSE_COMMAND)
                     .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
 
                 port.flush()
                     .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
+
+                Ok(())
+            }).await;
+
+            // Record performance metrics
+            if let Some(ref callback) = self.performance_callback {
+                callback(&device_id, latency, PULSE_COMMAND.len() as u64, 0);
             }
 
-            let latency = start.elapsed();
             debug!("TTL pulse sent with latency: {:?}", latency);
 
+            // Check for compliance with <1ms requirement
             if latency > Duration::from_millis(1) {
-                tracing::warn!("TTL pulse latency exceeded 1ms: {:?}", latency);
+                warn!("TTL pulse latency exceeded 1ms: {:?} - Performance requirement not met!", latency);
+            } else if latency > Duration::from_micros(500) {
+                warn!("TTL pulse latency approaching limit: {:?}", latency);
             }
+
+            result?;
 
             sleep(Duration::from_millis(self.config.pulse_duration_ms)).await;
 
@@ -128,12 +161,22 @@ impl Device for TtlDevice {
         if data == PULSE_COMMAND || data == b"PULSE" {
             self.send_pulse().await
         } else if let Some(ref port_mutex) = self.port {
-            let mut port = port_mutex.lock().unwrap();
-            port.write_all(data)
-                .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
-            port.flush()
-                .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
-            Ok(())
+            let device_id = self.get_info().id;
+            let (result, latency) = measure_latency::<_, (), DeviceError>(async {
+                let mut port = port_mutex.lock().unwrap();
+                port.write_all(data)
+                    .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
+                port.flush()
+                    .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
+                Ok(())
+            }).await;
+
+            // Record performance metrics
+            if let Some(ref callback) = self.performance_callback {
+                callback(&device_id, latency, data.len() as u64, 0);
+            }
+
+            result
         } else {
             Err(DeviceError::NotConnected)
         }
@@ -141,19 +184,30 @@ impl Device for TtlDevice {
 
     async fn receive(&mut self) -> Result<Vec<u8>, DeviceError> {
         if let Some(ref port_mutex) = self.port {
-            let mut buffer = vec![0u8; 256];
+            let device_id = self.get_info().id;
+            let (result, latency) = measure_latency::<_, Vec<u8>, DeviceError>(async {
+                let mut buffer = vec![0u8; 256];
+                let mut port = port_mutex.lock().unwrap();
+                match port.read(&mut buffer) {
+                    Ok(bytes_read) => {
+                        buffer.truncate(bytes_read);
+                        Ok(buffer)
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                        Ok(Vec::new())
+                    }
+                    Err(e) => Err(DeviceError::CommunicationError(e.to_string())),
+                }
+            }).await;
 
-            let mut port = port_mutex.lock().unwrap();
-            match port.read(&mut buffer) {
-                Ok(bytes_read) => {
-                    buffer.truncate(bytes_read);
-                    Ok(buffer)
+            // Record performance metrics
+            if let Ok(ref data) = result {
+                if let Some(ref callback) = self.performance_callback {
+                    callback(&device_id, latency, 0, data.len() as u64);
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                    Ok(Vec::new())
-                }
-                Err(e) => Err(DeviceError::CommunicationError(e.to_string())),
             }
+
+            result
         } else {
             Err(DeviceError::NotConnected)
         }
