@@ -110,7 +110,8 @@ jobs:
             librsvg2-dev \
             patchelf \
             libssl-dev \
-            pkg-config
+            pkg-config \
+            libudev-dev
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -224,7 +225,8 @@ jobs:
             librsvg2-dev \
             patchelf \
             libssl-dev \
-            pkg-config
+            pkg-config \
+            libudev-dev
 
       - name: Import Apple Certificate
         if: runner.os == 'macOS'
@@ -250,14 +252,21 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | sed 's/\"//g')
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-      - name: Build Tauri app
+      - name: Build Tauri app (macOS with signing)
+        if: runner.os == 'macOS'
+        run: |
+          export APPLE_SIGNING_IDENTITY="${{ secrets.APPLE_SIGNING_IDENTITY }}"
+          export APPLE_ID="${{ secrets.APPLE_ID }}"
+          export APPLE_PASSWORD="${{ secrets.APPLE_ID_PASSWORD }}"
+          export APPLE_TEAM_ID="${{ secrets.APPLE_TEAM_ID }}"
+          export ENABLE_CODE_SIGNING=true
+          export CI=true
+          npm run tauri:build -- --target ${{ matrix.target }}
+
+      - name: Build Tauri app (non-macOS)
+        if: runner.os != 'macOS'
         run: npm run tauri:build -- --target ${{ matrix.target }}
         env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          ENABLE_CODE_SIGNING: ${{ runner.os == 'macOS' }}
           CI: true
 
       - name: Upload artifacts
