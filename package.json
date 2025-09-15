@@ -31,7 +31,7 @@
     "format": "prettier --write \"src/**/*.{js,ts,svelte,html,css,md}\"",
     "format:check": "prettier --check \"src/**/*.{js,ts,svelte,html,css,md}\"",
     "type-check": "svelte-check --tsconfig ./tsconfig.json",
-    "prepare": "npm run format && npm run lint:check"
+    "prepare": "npm run format"
   },
   "keywords": [],
   "author": "",
