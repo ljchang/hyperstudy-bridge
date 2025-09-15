@@ -34,6 +34,9 @@ export default [
         performance: 'readonly',
         __dirname: 'readonly',
         Buffer: 'readonly',
+        alert: 'readonly',
+        confirm: 'readonly',
+        requestAnimationFrame: 'readonly',
       },
     },
     plugins: {
@@ -69,6 +72,9 @@ export default [
         performance: 'readonly',
         __dirname: 'readonly',
         Buffer: 'readonly',
+        alert: 'readonly',
+        confirm: 'readonly',
+        requestAnimationFrame: 'readonly',
       },
     },
     plugins: {
@@ -107,6 +113,9 @@ export default [
         $inspect: 'readonly',
         WebSocket: 'readonly',
         performance: 'readonly',
+        alert: 'readonly',
+        confirm: 'readonly',
+        requestAnimationFrame: 'readonly',
       },
     },
     rules: {
