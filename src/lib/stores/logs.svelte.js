@@ -220,36 +220,33 @@ function cleanup() {
 // Auto-initialize when store is imported
 init();
 
-// Export public API
+// Export public API as functions
+export const getLogs = () => logs;
+export const getMaxLogs = () => maxLogs;
+export const getAutoScroll = () => autoScroll;
+export const getIsPolling = () => isPolling;
+export const getLastError = () => lastError;
+export const getLevelFilter = () => levelFilter;
+export const getDeviceFilter = () => deviceFilter;
+export const getSearchQuery = () => searchQuery;
+
+// Derived state exports
+export { getFilteredLogs, getDeviceList, getLogCounts };
+
+// Action exports
 export {
-    // State getters (for reactive access)
-    getLogs: () => logs,
-    getMaxLogs: () => maxLogs,
-    getAutoScroll: () => autoScroll,
-    getIsPolling: () => isPolling,
-    getLastError: () => lastError,
-    getLevelFilter: () => levelFilter,
-    getDeviceFilter: () => deviceFilter,
-    getSearchQuery: () => searchQuery,
-
-    // Derived state
-    getFilteredLogs,
-    getDeviceList,
-    getLogCounts,
-
-    // Actions
     log,
     clearLogs,
     exportLogs,
     startPolling,
     stopPolling,
     fetchLogs,
-    cleanup,
-
-    // Filter setters
-    setLevelFilter: (level) => levelFilter = level,
-    setDeviceFilter: (device) => deviceFilter = device,
-    setSearchQuery: (query) => searchQuery = query,
-    setAutoScroll: (enabled) => autoScroll = enabled,
-    setMaxLogs: (max) => maxLogs = max
+    cleanup
 };
+
+// Filter setter exports
+export const setLevelFilter = (level) => levelFilter = level;
+export const setDeviceFilter = (device) => deviceFilter = device;
+export const setSearchQuery = (query) => searchQuery = query;
+export const setAutoScroll = (enabled) => autoScroll = enabled;
+export const setMaxLogs = (max) => maxLogs = max;

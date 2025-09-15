@@ -1,7 +1,7 @@
 use crate::bridge::{AppState, BridgeCommand, BridgeResponse, MessageHandler};
 use crate::bridge::message::{CommandAction, QueryTarget};
 use crate::devices::{mock::MockDevice, ttl::TtlDevice, kernel::KernelDevice,
-                      pupil::PupilDevice, biopac::BiopacDevice, DeviceConfig};
+                      pupil::PupilDevice, biopac::BiopacDevice};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use std::net::SocketAddr;

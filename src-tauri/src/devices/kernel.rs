@@ -1,5 +1,4 @@
 use super::{Device, DeviceConfig, DeviceError, DeviceInfo, DeviceStatus, DeviceType};
-use crate::performance::measure_latency;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
@@ -205,11 +204,15 @@ impl KernelDevice {
 
     /// Send heartbeat ping
     async fn send_heartbeat(&mut self) -> Result<(), DeviceError> {
+        // Get device_id before mutable borrow
+        let device_id = self.get_info().id;
+
         if let Some(ref mut socket) = self.socket {
-            let device_id = self.get_info().id;
-            let result = socket.write_all(HEARTBEAT_COMMAND).await
-                .and_then(|_| socket.flush().await)
-                .map_err(|e| DeviceError::CommunicationError(format!("Heartbeat failed: {}", e)));
+            let result = match socket.write_all(HEARTBEAT_COMMAND).await {
+                Ok(_) => socket.flush().await
+                    .map_err(|e| DeviceError::CommunicationError(format!("Heartbeat failed: {}", e))),
+                Err(e) => Err(DeviceError::CommunicationError(format!("Heartbeat failed: {}", e))),
+            };
 
             // Record performance metrics (simplified for borrowing)
             if let Some(ref callback) = self.performance_callback {
@@ -342,9 +345,10 @@ impl Device for KernelDevice {
             }
         }
 
-        if let Some(ref mut socket) = self.socket {
-            let device_id = self.get_info().id;
+        // Get device_id before mutable borrow
+        let device_id = self.get_info().id;
 
+        if let Some(ref mut socket) = self.socket {
             // Measure latency for the operation
             let start = Instant::now();
             let result = socket.write_all(data).await;
@@ -399,9 +403,10 @@ impl Device for KernelDevice {
             }
         }
 
-        if let Some(ref mut socket) = self.socket {
-            let device_id = self.get_info().id;
+        // Get device_id before mutable borrow
+        let device_id = self.get_info().id;
 
+        if let Some(ref mut socket) = self.socket {
             // Prepare buffer for reading
             self.buffer.clear();
             self.buffer.resize(self.config.buffer_size, 0);

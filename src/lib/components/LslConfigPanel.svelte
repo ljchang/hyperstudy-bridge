@@ -258,7 +258,7 @@
 <!-- LSL Configuration Panel -->
 {#if isOpen}
   <div class="lsl-modal-overlay" onclick={() => isOpen = false}>
-    <div class="lsl-modal" onclick|stopPropagation>
+    <div class="lsl-modal" onclick={(e) => e.stopPropagation()}>
       <div class="lsl-header">
         <div class="lsl-title">
           <h2>LSL Stream Management</h2>

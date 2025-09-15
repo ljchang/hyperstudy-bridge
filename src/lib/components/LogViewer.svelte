@@ -11,14 +11,14 @@
   const deviceList = $derived(logsStore.getDeviceList());
   const isPolling = $derived(logsStore.getIsPolling());
   const autoScroll = $derived(logsStore.getAutoScroll());
-  const levelFilter = $derived(logsStore.getLevelFilter());
-  const deviceFilter = $derived(logsStore.getDeviceFilter());
-  const searchQuery = $derived(logsStore.getSearchQuery());
 
   // Local state
   let logContainer = $state(null);
   let isExporting = $state(false);
   let showFilters = $state(false);
+  let searchQuery = $state(logsStore.getSearchQuery());
+  let levelFilter = $state(logsStore.getLevelFilter());
+  let deviceFilter = $state(logsStore.getDeviceFilter());
 
   // Auto-scroll to bottom when new logs arrive and auto-scroll is enabled
   $effect(() => {
@@ -121,7 +121,7 @@
 <!-- Log Viewer Modal -->
 {#if isOpen}
   <div class="log-modal-overlay" onclick={() => isOpen = false}>
-    <div class="log-modal" onclick|stopPropagation>
+    <div class="log-modal" onclick={(e) => e.stopPropagation()}>
       <div class="log-header">
         <div class="log-title">
           <h2>Log Viewer</h2>

@@ -1,14 +1,13 @@
 use crate::bridge::{AppState, BridgeServer};
-use crate::devices::{Device, DeviceError, DeviceInfo, DeviceStatus, DeviceConfig};
+use crate::devices::{Device, DeviceInfo, DeviceStatus};
 use crate::devices::{ttl::TtlDevice, kernel::KernelDevice, pupil::PupilDevice, biopac::BiopacDevice, mock::MockDevice};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, State, Emitter};
-use tokio::sync::RwLock;
-use tracing::{info, error, warn};
-use chrono::{Utc, DateTime};
+use tracing::{info, error};
+use chrono::Utc;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CommandResult<T> {
@@ -533,7 +532,8 @@ pub async fn export_logs(
 ) -> Result<CommandResult<serde_json::Value>, ()> {
     use std::fs::File;
     use std::io::Write;
-    use tauri::api::dialog::FileDialogBuilder;
+    // Note: In Tauri v2, file dialog is handled differently
+    // For now, we'll write to a fixed location
 
     // Generate default filename with timestamp
     let timestamp = Utc::now().format("%Y%m%d_%H%M%S");

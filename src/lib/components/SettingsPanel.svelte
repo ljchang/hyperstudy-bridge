@@ -254,7 +254,7 @@
 <!-- Settings Panel Modal -->
 {#if isOpen}
   <div class="settings-modal-overlay" onclick={() => isOpen = false}>
-    <div class="settings-modal" onclick|stopPropagation>
+    <div class="settings-modal" onclick={(e) => e.stopPropagation()}>
       <div class="settings-header">
         <h2>Settings</h2>
         <div class="header-actions">

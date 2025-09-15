@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::devices::{DeviceType, DeviceStatus, DeviceInfo, DeviceConfig};
+use crate::devices::{DeviceType, DeviceStatus};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
