@@ -48,11 +48,11 @@
     }
   ]);
 
-  $: bridgeStatus = bridgeStore.status;
-  $: wsDevices = bridgeStore.devices;
+  let bridgeStatus = $derived(bridgeStore.status);
+  let wsDevices = $derived(bridgeStore.devices);
 
   // Update device statuses from WebSocket store
-  $: {
+  $effect(() => {
     devices = devices.map(device => {
       const wsDevice = wsDevices.get(device.id);
       if (wsDevice) {
@@ -60,7 +60,7 @@
       }
       return device;
     });
-  }
+  });
 
   // Connect all devices
   async function connectAll() {
