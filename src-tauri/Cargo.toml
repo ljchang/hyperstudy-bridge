@@ -26,7 +26,7 @@ tokio = { version = "1", features = ["full"] }
 # Device Communication
 serialport = "4.5"
 tokio-tungstenite = "0.24"
-tungstenite = "0.24"
+tungstenite = "0.27"
 
 # Utilities
 anyhow = "1"
