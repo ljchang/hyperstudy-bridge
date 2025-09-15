@@ -10,7 +10,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 # Core
-tauri = { version = "2", features = ["macos-private-api"] }
+tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
@@ -31,6 +31,7 @@ async-trait = "0.1"
 # State Management
 parking_lot = "0.12"
 dashmap = "6"
+uuid = { version = "1", features = ["v4"] }
 
 [features]
 default = ["custom-protocol"]

@@ -227,9 +227,9 @@ Target metrics to achieve:
 |--------|------------|-------------|-----|----------|
 | Core Bridge | ⏳ | ⏳ | ⏳ | 0% |
 | TTL Device | ⏳ | ⏳ | ⏳ | 0% |
-| Kernel Device | ⏳ | ⏳ | ⏳ | 0% |
-| Pupil Device | ⏳ | ⏳ | ⏳ | 0% |
-| Biopac Device | ⏳ | ⏳ | ⏳ | 0% |
+| Kernel Device | ✅ | ⏳ | ⏳ | 60% |
+| Pupil Device | ✅ | ⏳ | ⏳ | 60% |
+| Biopac Device | ✅ | ⏳ | ⏳ | 60% |
 | Frontend | ⏳ | ⏳ | ⏳ | 0% |
 
 ## Dependencies
