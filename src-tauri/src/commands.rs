@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager, State, Emitter};
 use tokio::sync::RwLock;
 use tracing::{info, error, warn};
+use chrono::{Utc, DateTime};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CommandResult<T> {
@@ -486,4 +487,96 @@ pub async fn reset_performance_metrics(
             Ok(CommandResult::success("All performance metrics reset".to_string()))
         }
     }
+}
+
+// Logging commands
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct LogEntry {
+    pub timestamp: String,
+    pub level: String,
+    pub message: String,
+    pub device: Option<String>,
+    pub source: String,
+}
+
+#[tauri::command]
+pub async fn get_logs(
+    state: State<'_, Arc<AppState>>,
+) -> Result<CommandResult<Vec<LogEntry>>, ()> {
+    // TODO: Implement log collection from the actual logging system
+    // For now, return mock data or collect from tracing subscriber
+    let logs = vec![
+        LogEntry {
+            timestamp: Utc::now().to_rfc3339(),
+            level: "info".to_string(),
+            message: "Bridge server started successfully".to_string(),
+            device: None,
+            source: "bridge".to_string(),
+        },
+        LogEntry {
+            timestamp: Utc::now().to_rfc3339(),
+            level: "info".to_string(),
+            message: "Listening for WebSocket connections on port 9000".to_string(),
+            device: None,
+            source: "bridge".to_string(),
+        },
+    ];
+
+    Ok(CommandResult::success(logs))
+}
+
+#[tauri::command]
+pub async fn export_logs(
+    logs_data: Vec<serde_json::Value>,
+    app_handle: AppHandle,
+) -> Result<CommandResult<serde_json::Value>, ()> {
+    use std::fs::File;
+    use std::io::Write;
+    use tauri::api::dialog::FileDialogBuilder;
+
+    // Generate default filename with timestamp
+    let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
+    let default_filename = format!("hyperstudy_bridge_logs_{}.json", timestamp);
+
+    // For now, save to a default location (in production, use file dialog)
+    let app_data_dir = app_handle.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let logs_dir = app_data_dir.join("logs");
+
+    // Create logs directory if it doesn't exist
+    if let Err(e) = std::fs::create_dir_all(&logs_dir) {
+        return Ok(CommandResult::error(format!("Failed to create logs directory: {}", e)));
+    }
+
+    let file_path = logs_dir.join(&default_filename);
+
+    match File::create(&file_path) {
+        Ok(mut file) => {
+            let json_data = serde_json::to_string_pretty(&logs_data)
+                .map_err(|e| format!("Failed to serialize logs: {}", e));
+
+            match json_data {
+                Ok(json_str) => {
+                    if let Err(e) = file.write_all(json_str.as_bytes()) {
+                        Ok(CommandResult::error(format!("Failed to write log file: {}", e)))
+                    } else {
+                        Ok(CommandResult::success(json!({
+                            "path": file_path.to_string_lossy(),
+                            "filename": default_filename,
+                            "count": logs_data.len()
+                        })))
+                    }
+                }
+                Err(e) => Ok(CommandResult::error(e)),
+            }
+        }
+        Err(e) => Ok(CommandResult::error(format!("Failed to create log file: {}", e))),
+    }
+}
+
+#[tauri::command]
+pub async fn set_log_level(level: String) -> Result<CommandResult<String>, ()> {
+    // TODO: Implement dynamic log level changes
+    info!("Log level change requested: {}", level);
+    Ok(CommandResult::success(format!("Log level set to {}", level)))
 }

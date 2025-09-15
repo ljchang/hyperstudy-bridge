@@ -56,7 +56,10 @@ async fn main() {
             get_device_performance_metrics,
             get_performance_summary,
             check_ttl_latency_compliance,
-            reset_performance_metrics
+            reset_performance_metrics,
+            get_logs,
+            export_logs,
+            set_log_level
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

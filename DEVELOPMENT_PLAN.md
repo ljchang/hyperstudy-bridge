@@ -55,8 +55,8 @@ This document tracks development progress across all agents. Each agent should u
 - [x] ✅ Build ConnectionButton component
 - [x] ✅ Create AddDeviceModal component
 - [x] ✅ Implement DeviceConfigModal component
-- [ ] ⏳ Implement LogViewer component
-- [ ] ⏳ Create SettingsPanel component
+- [x] ✅ Implement LogViewer component
+- [x] ✅ Create SettingsPanel component
 - [x] ✅ Add real-time WebSocket connection
 - [x] ✅ Implement state management stores
 - [ ] ⏳ Add notification system
@@ -94,16 +94,16 @@ const PULSE_DURATION_MS: u64 = 10;
 ```
 
 ### Kernel Agent Tasks (Kernel Flow2)
-- [ ] ⏳ Implement TCP socket connection
-- [ ] ⏳ Create connection with retry logic
-- [ ] ⏳ Implement bidirectional data streaming
-- [ ] ⏳ Add exponential backoff for reconnection
-- [ ] ⏳ Create status monitoring
-- [ ] ⏳ Implement heartbeat mechanism
-- [ ] ⏳ Add data buffering
+- [x] ✅ Implement TCP socket connection
+- [x] ✅ Create connection with retry logic
+- [x] ✅ Implement bidirectional data streaming
+- [x] ✅ Add exponential backoff for reconnection
+- [x] ✅ Create status monitoring
+- [x] ✅ Implement heartbeat mechanism
+- [x] ✅ Add data buffering
 - [ ] ⏳ Create unit tests
 - [ ] ⏳ Add integration tests
-- [ ] ⏳ Document Kernel protocol
+- [x] ✅ Document Kernel protocol
 
 **Kernel Module Specifications:**
 ```rust
@@ -116,16 +116,16 @@ pub struct KernelDevice {
 ```
 
 ### Pupil Agent Tasks (Pupil Labs Neon)
-- [ ] ⏳ Implement WebSocket client
-- [ ] ⏳ Create device discovery mechanism
-- [ ] ⏳ Implement gaze data streaming
-- [ ] ⏳ Add recording control commands
-- [ ] ⏳ Create event annotation system
-- [ ] ⏳ Implement calibration triggers
-- [ ] ⏳ Add data transformation pipeline
+- [x] ✅ Implement WebSocket client
+- [x] ✅ Create device discovery mechanism
+- [x] ✅ Implement gaze data streaming
+- [x] ✅ Add recording control commands
+- [x] ✅ Create event annotation system
+- [x] ✅ Implement calibration triggers
+- [x] ✅ Add data transformation pipeline
 - [ ] ⏳ Create unit tests
 - [ ] ⏳ Add integration tests
-- [ ] ⏳ Document Pupil API integration
+- [x] ✅ Document Pupil API integration
 
 **Pupil Module Specifications:**
 ```rust
@@ -141,16 +141,16 @@ const WS_PORT: u16 = 8081;
 ```
 
 ### Biopac Agent Tasks (MP150/MP160)
-- [ ] ⏳ Implement NDT protocol client
-- [ ] ⏳ Create TCP connection to AcqKnowledge
-- [ ] ⏳ Implement data streaming parser
-- [ ] ⏳ Add channel configuration
-- [ ] ⏳ Create event marker system
-- [ ] ⏳ Implement sampling rate configuration
-- [ ] ⏳ Add data filtering options
+- [x] ✅ Implement NDT protocol client
+- [x] ✅ Create TCP connection to AcqKnowledge
+- [x] ✅ Implement data streaming parser
+- [x] ✅ Add channel configuration
+- [x] ✅ Create event marker system
+- [x] ✅ Implement sampling rate configuration
+- [x] ✅ Add data filtering options
 - [ ] ⏳ Create unit tests
 - [ ] ⏳ Add integration tests
-- [ ] ⏳ Document NDT protocol
+- [x] ✅ Document NDT protocol
 
 **Biopac Module Specifications:**
 ```rust
@@ -299,7 +299,7 @@ Target metrics to achieve:
 
 ---
 
-**Last Updated**: 2025-09-15 03:00 PST
+**Last Updated**: 2025-09-15 04:00 PST
 **Next Review**: [Coordinator sets review date]
 
 ## Agent Sign-off

@@ -221,6 +221,53 @@ export async function saveConfiguration(config) {
     }
 }
 
+// Logging commands
+export async function getLogs() {
+    try {
+        return await invoke('get_logs');
+    } catch (error) {
+        console.error('Failed to get logs:', error);
+        throw error;
+    }
+}
+
+export async function exportLogs(logsData) {
+    try {
+        return await invoke('export_logs', { logsData });
+    } catch (error) {
+        console.error('Failed to export logs:', error);
+        throw error;
+    }
+}
+
+export async function setLogLevel(level) {
+    try {
+        return await invoke('set_log_level', { level });
+    } catch (error) {
+        console.error('Failed to set log level:', error);
+        throw error;
+    }
+}
+
+// Performance monitoring commands
+export async function getPerformanceMetrics() {
+    try {
+        return await invoke('get_performance_metrics');
+    } catch (error) {
+        console.error('Failed to get performance metrics:', error);
+        throw error;
+    }
+}
+
+export async function resetPerformanceMetrics(deviceId = null) {
+    try {
+        return await invoke('reset_performance_metrics', { deviceId });
+    } catch (error) {
+        console.error('Failed to reset performance metrics:', error);
+        throw error;
+    }
+}
+
 // Export all functions as a service object for convenience
 export const tauriService = {
     startBridgeServer,
@@ -237,5 +284,10 @@ export const tauriService = {
     setupEventListeners,
     cleanupEventListeners,
     loadConfiguration,
-    saveConfiguration
+    saveConfiguration,
+    getLogs,
+    exportLogs,
+    setLogLevel,
+    getPerformanceMetrics,
+    resetPerformanceMetrics
 };

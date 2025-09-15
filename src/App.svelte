@@ -3,11 +3,15 @@
   import DeviceCard from './lib/components/DeviceCard.svelte';
   import StatusIndicator from './lib/components/StatusIndicator.svelte';
   import AddDeviceModal from './lib/components/AddDeviceModal.svelte';
+  import LogViewer from './lib/components/LogViewer.svelte';
+  import SettingsPanel from './lib/components/SettingsPanel.svelte';
   import * as bridgeStore from './lib/stores/websocket.svelte.js';
   import logo from './assets/hyperstudy-logo.svg';
 
   // Modal state
   let showAddDeviceModal = $state(false);
+  let showLogViewer = $state(false);
+  let showSettingsPanel = $state(false);
 
   // Selected devices - user has explicitly added these
   let selectedDevices = $state([]);
@@ -97,7 +101,37 @@
       <img src={logo} alt="HyperStudy" class="logo" />
       <h1>HyperStudy Device Bridge</h1>
     </div>
-    <StatusIndicator status={bridgeStatus} />
+
+    <div class="header-actions">
+      <button
+        class="header-btn"
+        onclick={() => showLogViewer = true}
+        title="View Logs"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+          <polyline points="14,2 14,8 20,8"></polyline>
+          <line x1="16" y1="13" x2="8" y2="13"></line>
+          <line x1="16" y1="17" x2="8" y2="17"></line>
+          <polyline points="10,9 9,9 8,9"></polyline>
+        </svg>
+        Logs
+      </button>
+
+      <button
+        class="header-btn"
+        onclick={() => showSettingsPanel = true}
+        title="Settings"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="m12 1 2.1 3.6 3.9.9-2.8 3.4.7 3.9-3.9-2.1-3.9 2.1.7-3.9L5 7.5l3.9-.9L12 1z"></path>
+        </svg>
+        Settings
+      </button>
+
+      <StatusIndicator status={bridgeStatus} />
+    </div>
   </header>
   
   <main>
@@ -143,7 +177,15 @@
     onAdd={handleAddDevices}
     onClose={() => showAddDeviceModal = false}
   />
-  
+
+  <LogViewer
+    bind:isOpen={showLogViewer}
+  />
+
+  <SettingsPanel
+    bind:isOpen={showSettingsPanel}
+  />
+
   <footer>
     <p>WebSocket: ws://localhost:9000</p>
     <p>Version: 0.1.0</p>
@@ -166,6 +208,12 @@
     background: var(--color-surface);
     border-bottom: 1px solid var(--color-border);
     color: var(--color-text-primary);
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
   }
 
   .logo-container {
@@ -248,6 +296,33 @@
     background: #dc2626;
     transform: translateY(-1px);
     box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+  }
+
+  .header-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    background: var(--color-surface-elevated);
+    color: var(--color-text-secondary);
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .header-btn:hover {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: white;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(76, 175, 80, 0.2);
+  }
+
+  .header-btn svg {
+    flex-shrink: 0;
   }
   
   .devices {
