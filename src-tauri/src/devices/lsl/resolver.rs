@@ -35,8 +35,7 @@ pub struct DiscoveredStream {
 }
 
 /// Stream discovery filter criteria
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StreamFilter {
     /// Filter by stream name (regex pattern)
     pub name_pattern: Option<String>,
@@ -53,7 +52,6 @@ pub struct StreamFilter {
     /// Required channel format
     pub channel_format: Option<ChannelFormat>,
 }
-
 
 /// Discovery events
 #[derive(Debug, Clone)]
@@ -241,9 +239,7 @@ impl StreamResolver {
 
         let mut stats_by_type = HashMap::new();
         for stream in cache.values() {
-            *stats_by_type
-                .entry(stream.info.stream_type)
-                .or_insert(0) += 1;
+            *stats_by_type.entry(stream.info.stream_type).or_insert(0) += 1;
         }
 
         serde_json::json!({

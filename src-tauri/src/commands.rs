@@ -560,7 +560,9 @@ pub struct LogEntry {
 }
 
 #[tauri::command]
-pub async fn get_logs(_state: State<'_, Arc<AppState>>) -> Result<CommandResult<Vec<LogEntry>>, ()> {
+pub async fn get_logs(
+    _state: State<'_, Arc<AppState>>,
+) -> Result<CommandResult<Vec<LogEntry>>, ()> {
     // TODO: Implement log collection from the actual logging system
     // For now, return mock data or collect from tracing subscriber
     let logs = vec![
