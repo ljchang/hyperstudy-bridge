@@ -2,10 +2,11 @@
   let { status = 'disconnected', size = 'medium', showLabel = true } = $props();
 
   const statusConfig = {
-    connected: { color: '#10b981', label: 'Connected' },
-    connecting: { color: '#f59e0b', label: 'Connecting...' },
-    disconnected: { color: '#6b7280', label: 'Disconnected' },
-    error: { color: '#ef4444', label: 'Error' }
+    connected: { color: 'var(--color-success)', label: 'Connected' },
+    connecting: { color: 'var(--color-warning)', label: 'Connecting...' },
+    disconnected: { color: 'var(--color-text-disabled)', label: 'Disconnected' },
+    error: { color: 'var(--color-error)', label: 'Error' },
+    ready: { color: 'var(--color-primary)', label: 'Ready' }
   };
 
   const sizeMap = {
@@ -34,9 +35,10 @@
     align-items: center;
     gap: 0.5rem;
     padding: 0.5rem 1rem;
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.05);
     border-radius: 20px;
     backdrop-filter: blur(10px);
+    border: 1px solid var(--color-border);
   }
   
   .status-light {
@@ -62,6 +64,6 @@
   .status-label {
     font-size: 0.875rem;
     font-weight: 500;
-    color: white;
+    color: var(--color-text-primary);
   }
 </style>

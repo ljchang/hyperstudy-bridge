@@ -3,11 +3,11 @@
   
   function getStatusColor(status) {
     switch(status) {
-      case 'connected': return '#10b981';
-      case 'connecting': return '#f59e0b';
-      case 'disconnected': return '#6b7280';
-      case 'error': return '#ef4444';
-      default: return '#6b7280';
+      case 'connected': return 'var(--color-success)';
+      case 'connecting': return 'var(--color-warning)';
+      case 'disconnected': return 'var(--color-text-disabled)';
+      case 'error': return 'var(--color-error)';
+      default: return 'var(--color-text-disabled)';
     }
   }
   
@@ -104,15 +104,16 @@
 
 <style>
   .device-card {
-    background: white;
+    background: var(--color-surface);
     border-radius: 12px;
     padding: 1.5rem;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    border: 1px solid var(--color-border);
     transition: all 0.2s;
   }
   
   .device-card:hover {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    background: var(--color-surface-elevated);
+    border-color: var(--color-border-hover);
     transform: translateY(-2px);
   }
   
@@ -122,14 +123,14 @@
     align-items: center;
     margin-bottom: 1rem;
     padding-bottom: 0.75rem;
-    border-bottom: 2px solid #f3f4f6;
+    border-bottom: 1px solid var(--color-border);
   }
   
   h3 {
     margin: 0;
     font-size: 1.125rem;
     font-weight: 600;
-    color: #1f2937;
+    color: var(--color-text-primary);
   }
   
   .status-dot {
@@ -160,12 +161,12 @@
   }
   
   .label {
-    color: #6b7280;
+    color: var(--color-text-secondary);
     font-weight: 500;
   }
   
   .value {
-    color: #1f2937;
+    color: var(--color-text-primary);
     font-family: 'SF Mono', Monaco, monospace;
     font-size: 0.813rem;
   }
@@ -176,9 +177,10 @@
   
   .device-config {
     padding: 0.75rem;
-    background: #f9fafb;
+    background: var(--color-background);
     border-radius: 6px;
     margin: 1rem 0;
+    border: 1px solid var(--color-border);
   }
   
   .device-actions {
@@ -203,21 +205,23 @@
   }
   
   .connect-btn {
-    background: #3b82f6;
+    background: var(--color-primary);
     color: white;
   }
   
   .connect-btn:hover:not(:disabled) {
-    background: #2563eb;
+    background: var(--color-primary-hover);
   }
   
   .config-btn {
-    background: #f3f4f6;
-    color: #4b5563;
+    background: var(--color-surface-elevated);
+    color: var(--color-text-secondary);
+    border: 1px solid var(--color-border);
   }
   
   .config-btn:hover {
-    background: #e5e7eb;
-    color: #1f2937;
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--color-text-primary);
+    border-color: var(--color-border-hover);
   }
 </style>

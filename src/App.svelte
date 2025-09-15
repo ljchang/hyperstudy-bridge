@@ -140,7 +140,7 @@
     display: flex;
     flex-direction: column;
     height: 100vh;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background: var(--color-background);
   }
   
   header {
@@ -148,9 +148,9 @@
     justify-content: space-between;
     align-items: center;
     padding: 1rem 2rem;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+    color: var(--color-text-primary);
   }
 
   .logo-container {
@@ -169,13 +169,14 @@
     margin: 0;
     font-size: 1.5rem;
     font-weight: 600;
+    color: var(--color-primary);
   }
   
   main {
     flex: 1;
     padding: 2rem;
     overflow-y: auto;
-    background: #f7f8fa;
+    background: var(--color-background);
   }
   
   .controls {
@@ -200,18 +201,18 @@
   }
   
   .connect-btn {
-    background: #10b981;
+    background: var(--color-primary);
     color: white;
   }
   
   .connect-btn:hover:not(:disabled) {
-    background: #059669;
+    background: var(--color-primary-hover);
     transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+    box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
   }
   
   .disconnect-btn {
-    background: #ef4444;
+    background: var(--color-error);
     color: white;
   }
   
@@ -231,9 +232,9 @@
     display: flex;
     justify-content: space-between;
     padding: 1rem 2rem;
-    background: white;
-    border-top: 1px solid #e5e7eb;
-    color: #6b7280;
+    background: var(--color-surface);
+    border-top: 1px solid var(--color-border);
+    color: var(--color-text-secondary);
     font-size: 0.875rem;
   }
 </style>
