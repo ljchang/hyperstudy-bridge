@@ -14,8 +14,8 @@
     large: 12
   };
 
-  $: config = statusConfig[status] || statusConfig.disconnected;
-  $: dotSize = sizeMap[size] || sizeMap.medium;
+  let config = $derived(statusConfig[status] || statusConfig.disconnected);
+  let dotSize = $derived(sizeMap[size] || sizeMap.medium);
 </script>
 
 <div class="status-indicator">

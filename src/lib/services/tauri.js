@@ -1,0 +1,241 @@
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import { writable } from 'svelte/store';
+
+// Store for backend events
+export const backendEvents = writable([]);
+
+// Tauri command wrappers
+export async function startBridgeServer() {
+    try {
+        const result = await invoke('start_bridge_server');
+        console.log('Bridge server started:', result);
+        return result;
+    } catch (error) {
+        console.error('Failed to start bridge server:', error);
+        throw error;
+    }
+}
+
+export async function stopBridgeServer() {
+    try {
+        const result = await invoke('stop_bridge_server');
+        console.log('Bridge server stopped:', result);
+        return result;
+    } catch (error) {
+        console.error('Failed to stop bridge server:', error);
+        throw error;
+    }
+}
+
+export async function getBridgeStatus() {
+    try {
+        return await invoke('get_bridge_status');
+    } catch (error) {
+        console.error('Failed to get bridge status:', error);
+        throw error;
+    }
+}
+
+// Direct device commands via Tauri (bypassing WebSocket)
+export async function connectDeviceDirect(deviceType, config = {}) {
+    try {
+        return await invoke('connect_device', {
+            deviceType,
+            config
+        });
+    } catch (error) {
+        console.error(`Failed to connect ${deviceType}:`, error);
+        throw error;
+    }
+}
+
+export async function disconnectDeviceDirect(deviceId) {
+    try {
+        return await invoke('disconnect_device', { deviceId });
+    } catch (error) {
+        console.error(`Failed to disconnect ${deviceId}:`, error);
+        throw error;
+    }
+}
+
+export async function sendDeviceCommand(deviceId, command) {
+    try {
+        return await invoke('send_device_command', {
+            deviceId,
+            command
+        });
+    } catch (error) {
+        console.error(`Failed to send command to ${deviceId}:`, error);
+        throw error;
+    }
+}
+
+// TTL-specific commands for low-latency operations
+export async function sendTtlPulse(port) {
+    try {
+        const startTime = performance.now();
+        const result = await invoke('send_ttl_pulse', { port });
+        const latency = performance.now() - startTime;
+
+        console.log(`TTL pulse sent in ${latency.toFixed(2)}ms`);
+        return { result, latency };
+    } catch (error) {
+        console.error('Failed to send TTL pulse:', error);
+        throw error;
+    }
+}
+
+export async function listSerialPorts() {
+    try {
+        return await invoke('list_serial_ports');
+    } catch (error) {
+        console.error('Failed to list serial ports:', error);
+        return [];
+    }
+}
+
+// Device discovery
+export async function discoverDevices() {
+    try {
+        return await invoke('discover_devices');
+    } catch (error) {
+        console.error('Failed to discover devices:', error);
+        return [];
+    }
+}
+
+// Metrics and diagnostics
+export async function getDeviceMetrics(deviceId) {
+    try {
+        return await invoke('get_device_metrics', { deviceId });
+    } catch (error) {
+        console.error(`Failed to get metrics for ${deviceId}:`, error);
+        return null;
+    }
+}
+
+export async function getSystemDiagnostics() {
+    try {
+        return await invoke('get_system_diagnostics');
+    } catch (error) {
+        console.error('Failed to get system diagnostics:', error);
+        return null;
+    }
+}
+
+// Event listeners for backend updates
+let eventUnlisteners = [];
+
+export async function setupEventListeners() {
+    // Clean up existing listeners
+    cleanupEventListeners();
+
+    // Device status updates
+    const unlistenStatus = await listen('device_status_changed', (event) => {
+        console.log('Device status changed:', event.payload);
+        backendEvents.update(events => [...events, {
+            type: 'status',
+            ...event.payload,
+            timestamp: Date.now()
+        }]);
+    });
+
+    // Device data events
+    const unlistenData = await listen('device_data', (event) => {
+        console.log('Device data received:', event.payload);
+        backendEvents.update(events => [...events, {
+            type: 'data',
+            ...event.payload,
+            timestamp: Date.now()
+        }]);
+    });
+
+    // Error events
+    const unlistenError = await listen('device_error', (event) => {
+        console.error('Device error:', event.payload);
+        backendEvents.update(events => [...events, {
+            type: 'error',
+            ...event.payload,
+            timestamp: Date.now()
+        }]);
+    });
+
+    // Connection events
+    const unlistenConnection = await listen('bridge_connection', (event) => {
+        console.log('Bridge connection event:', event.payload);
+        backendEvents.update(events => [...events, {
+            type: 'connection',
+            ...event.payload,
+            timestamp: Date.now()
+        }]);
+    });
+
+    // Performance metrics
+    const unlistenMetrics = await listen('performance_metrics', (event) => {
+        console.log('Performance metrics:', event.payload);
+        backendEvents.update(events => [...events, {
+            type: 'metrics',
+            ...event.payload,
+            timestamp: Date.now()
+        }]);
+    });
+
+    eventUnlisteners = [
+        unlistenStatus,
+        unlistenData,
+        unlistenError,
+        unlistenConnection,
+        unlistenMetrics
+    ];
+
+    console.log('Backend event listeners setup complete');
+}
+
+export function cleanupEventListeners() {
+    eventUnlisteners.forEach(unlisten => {
+        if (typeof unlisten === 'function') {
+            unlisten();
+        }
+    });
+    eventUnlisteners = [];
+    console.log('Event listeners cleaned up');
+}
+
+// Configuration management
+export async function loadConfiguration() {
+    try {
+        return await invoke('load_configuration');
+    } catch (error) {
+        console.error('Failed to load configuration:', error);
+        return {};
+    }
+}
+
+export async function saveConfiguration(config) {
+    try {
+        return await invoke('save_configuration', { config });
+    } catch (error) {
+        console.error('Failed to save configuration:', error);
+        throw error;
+    }
+}
+
+// Export all functions as a service object for convenience
+export const tauriService = {
+    startBridgeServer,
+    stopBridgeServer,
+    getBridgeStatus,
+    connectDeviceDirect,
+    disconnectDeviceDirect,
+    sendDeviceCommand,
+    sendTtlPulse,
+    listSerialPorts,
+    discoverDevices,
+    getDeviceMetrics,
+    getSystemDiagnostics,
+    setupEventListeners,
+    cleanupEventListeners,
+    loadConfiguration,
+    saveConfiguration
+};

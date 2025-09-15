@@ -2,10 +2,11 @@
   import { onMount, onDestroy } from 'svelte';
   import DeviceCard from './lib/components/DeviceCard.svelte';
   import StatusIndicator from './lib/components/StatusIndicator.svelte';
-  import { bridgeStore } from './lib/stores/websocket.svelte.js';
+  import * as bridgeStore from './lib/stores/websocket.svelte.js';
+  import logo from './assets/hyperstudy-logo.svg';
 
-  // Device configuration
-  let devices = $state([
+  // Device configuration - base devices without status
+  const baseDevices = [
     {
       id: 'ttl',
       name: 'TTL Pulse Generator',
@@ -46,21 +47,22 @@
       status: 'disconnected',
       config: {}
     }
-  ]);
+  ];
 
-  let bridgeStatus = $derived(bridgeStore.status);
-  let wsDevices = $derived(bridgeStore.devices);
+  // Import reactive state from store using getters
+  const bridgeStatus = $derived(bridgeStore.getStatus());
+  const wsDevices = $derived(bridgeStore.getDevices());
 
-  // Update device statuses from WebSocket store
-  $effect(() => {
-    devices = devices.map(device => {
+  // Derive device list with updated statuses from WebSocket
+  let devices = $derived(
+    baseDevices.map(device => {
       const wsDevice = wsDevices.get(device.id);
       if (wsDevice) {
         return { ...device, status: wsDevice.status || 'disconnected' };
       }
       return device;
-    });
-  });
+    })
+  );
 
   // Connect all devices
   async function connectAll() {
@@ -95,7 +97,10 @@
 
 <div class="app">
   <header>
-    <h1>HyperStudy Bridge</h1>
+    <div class="logo-container">
+      <img src={logo} alt="HyperStudy" class="logo" />
+      <h1>Bridge</h1>
+    </div>
     <StatusIndicator status={bridgeStatus} />
   </header>
   
@@ -146,6 +151,18 @@
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
+
+  .logo-container {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .logo {
+    height: 2rem;
+    width: auto;
+    object-fit: contain;
   }
   
   h1 {

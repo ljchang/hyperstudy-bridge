@@ -336,6 +336,24 @@ pub struct AppState {
    - Ensure device drivers installed
    - Check USB/network connectivity
 
+## AI Assistant Tools and Context
+
+### Context7 MCP Integration
+When working with libraries and frameworks in this project, use Context7 to get up-to-date documentation:
+- **Usage**: Include "use context7" in prompts when working with Tauri, Svelte 5, Rust crates, etc.
+- **Benefits**: Provides current, version-specific documentation and code examples
+- **Example**: "use context7 to show me how to implement Tauri commands with async Rust"
+
+### Development Reminders
+When implementing features or fixing bugs:
+1. Always fetch current library documentation using Context7 for accuracy
+2. Verify API compatibility with the exact versions in `package.json` and `Cargo.toml`
+3. Use Context7 especially for:
+   - Svelte 5 runes syntax (rapidly evolving)
+   - Tauri API changes between versions
+   - Rust async patterns with Tokio
+   - Device-specific SDKs and protocols
+
 ## Resources
 
 - [Tauri Documentation](https://tauri.app)

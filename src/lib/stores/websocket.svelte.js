@@ -1,252 +1,321 @@
-import { writable, derived } from 'svelte/store';
+// Svelte 5 runes-based WebSocket store
+// This file uses .svelte.js extension to enable runes
 
-const WS_URL = 'ws://localhost:9000';
-const RECONNECT_INTERVAL = 3000;
+import { tauriService } from '../services/tauri.js';
 
-class WebSocketStore {
-    constructor() {
-        this.ws = $state(null);
-        this.status = $state('disconnected');
-        this.messages = $state([]);
-        this.devices = $state(new Map());
-        this.reconnectTimer = null;
-        this.messageQueue = [];
-        this.requestCallbacks = new Map();
+// State using Svelte 5 runes
+let status = $state('disconnected');
+let devices = $state(new Map());
+let lastError = $state(null);
+let metrics = $state({});
+let ws = $state(null);
+let reconnectAttempts = $state(0);
+const maxReconnectAttempts = 5;
+const reconnectDelay = 1000;
 
-        this.connect();
+// Message handlers and callbacks
+const messageHandlers = new Map();
+const requestCallbacks = new Map();
+
+// WebSocket connection management
+function connect() {
+    if (ws?.readyState === WebSocket.OPEN) {
+        console.log('WebSocket already connected');
+        return;
     }
 
-    connect() {
-        if (this.ws?.readyState === WebSocket.OPEN) {
-            return;
-        }
+    status = 'connecting';
 
-        this.status = 'connecting';
+    try {
+        const socket = new WebSocket('ws://localhost:9000');
 
-        try {
-            this.ws = new WebSocket(WS_URL);
+        socket.onopen = () => {
+            console.log('WebSocket connected to bridge server');
+            ws = socket;
+            status = 'ready';
+            lastError = null;
+            reconnectAttempts = 0;
 
-            this.ws.onopen = () => {
-                console.log('WebSocket connected to bridge');
-                this.status = 'connected';
-                this.clearReconnectTimer();
-
-                // Send queued messages
-                while (this.messageQueue.length > 0) {
-                    const message = this.messageQueue.shift();
-                    this.ws.send(JSON.stringify(message));
-                }
-
-                // Query initial device list
-                this.queryDevices();
-            };
-
-            this.ws.onmessage = (event) => {
-                try {
-                    const message = JSON.parse(event.data);
-                    this.handleMessage(message);
-                } catch (error) {
-                    console.error('Failed to parse message:', error);
-                }
-            };
-
-            this.ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-                this.status = 'error';
-            };
-
-            this.ws.onclose = () => {
-                console.log('WebSocket disconnected');
-                this.status = 'disconnected';
-                this.ws = null;
-                this.scheduleReconnect();
-            };
-        } catch (error) {
-            console.error('Failed to create WebSocket:', error);
-            this.status = 'error';
-            this.scheduleReconnect();
-        }
-    }
-
-    scheduleReconnect() {
-        this.clearReconnectTimer();
-        this.reconnectTimer = setTimeout(() => {
-            console.log('Attempting to reconnect...');
-            this.connect();
-        }, RECONNECT_INTERVAL);
-    }
-
-    clearReconnectTimer() {
-        if (this.reconnectTimer) {
-            clearTimeout(this.reconnectTimer);
-            this.reconnectTimer = null;
-        }
-    }
-
-    handleMessage(message) {
-        // Add to message history
-        this.messages = [...this.messages, message];
-
-        // Handle different message types
-        switch (message.type) {
-            case 'status':
-                this.updateDeviceStatus(message.device, message.status);
-                break;
-
-            case 'data':
-                this.handleDeviceData(message.device, message.payload);
-                break;
-
-            case 'error':
-                console.error('Bridge error:', message.message);
-                if (message.device) {
-                    this.updateDeviceStatus(message.device, 'error');
-                }
-                break;
-
-            case 'ack':
-                this.handleAck(message);
-                break;
-
-            case 'query_result':
-                this.handleQueryResult(message);
-                break;
-
-            case 'event':
-                this.handleEvent(message);
-                break;
-        }
-    }
-
-    updateDeviceStatus(deviceId, status) {
-        const device = this.devices.get(deviceId);
-        if (device) {
-            device.status = status;
-            this.devices = new Map(this.devices);
-        }
-    }
-
-    handleDeviceData(deviceId, data) {
-        const device = this.devices.get(deviceId);
-        if (device) {
-            device.lastData = data;
-            device.lastUpdate = Date.now();
-            this.devices = new Map(this.devices);
-        }
-    }
-
-    handleAck(message) {
-        const callback = this.requestCallbacks.get(message.id);
-        if (callback) {
-            callback(message);
-            this.requestCallbacks.delete(message.id);
-        }
-    }
-
-    handleQueryResult(message) {
-        if (message.id) {
-            const callback = this.requestCallbacks.get(message.id);
-            if (callback) {
-                callback(message.data);
-                this.requestCallbacks.delete(message.id);
-            }
-        } else if (Array.isArray(message.data)) {
-            // Device list query result
-            const deviceMap = new Map();
-            for (const device of message.data) {
-                deviceMap.set(device.device_type || device.id, {
-                    ...device,
-                    lastUpdate: Date.now()
-                });
-            }
-            this.devices = deviceMap;
-        }
-    }
-
-    handleEvent(message) {
-        console.log('Event:', message.event, message.payload);
-    }
-
-    send(message) {
-        if (this.ws?.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify(message));
-        } else {
-            this.messageQueue.push(message);
-        }
-    }
-
-    sendCommand(device, action, payload = null) {
-        const id = Math.random().toString(36).substr(2, 9);
-        const message = {
-            type: 'command',
-            device,
-            action,
-            payload,
-            id
+            // Query initial state
+            query('devices');
+            query('status');
         };
 
-        return new Promise((resolve) => {
-            this.requestCallbacks.set(id, resolve);
-            this.send(message);
-
-            // Timeout after 10 seconds
-            setTimeout(() => {
-                if (this.requestCallbacks.has(id)) {
-                    this.requestCallbacks.delete(id);
-                    resolve({ success: false, message: 'Request timeout' });
-                }
-            }, 10000);
-        });
-    }
-
-    queryDevices() {
-        this.send({
-            type: 'query',
-            target: 'devices'
-        });
-    }
-
-    queryMetrics() {
-        const id = Math.random().toString(36).substr(2, 9);
-        const message = {
-            type: 'query',
-            target: 'metrics',
-            id
+        socket.onmessage = (event) => {
+            try {
+                const message = JSON.parse(event.data);
+                handleMessage(message);
+            } catch (error) {
+                console.error('Failed to parse message:', error);
+            }
         };
 
-        return new Promise((resolve) => {
-            this.requestCallbacks.set(id, resolve);
-            this.send(message);
+        socket.onerror = (error) => {
+            console.error('WebSocket error:', error);
+            lastError = 'Connection error occurred';
+        };
 
-            setTimeout(() => {
-                if (this.requestCallbacks.has(id)) {
-                    this.requestCallbacks.delete(id);
-                    resolve(null);
-                }
-            }, 5000);
-        });
-    }
+        socket.onclose = () => {
+            console.log('WebSocket disconnected');
+            ws = null;
+            status = 'disconnected';
 
-    async connectDevice(deviceType, config = {}) {
-        return this.sendCommand(deviceType, 'connect', config);
-    }
+            // Clear device states
+            devices.forEach((device, id) => {
+                device.status = 'disconnected';
+            });
+            devices = new Map(devices);
 
-    async disconnectDevice(deviceType) {
-        return this.sendCommand(deviceType, 'disconnect');
-    }
-
-    async sendDeviceCommand(deviceType, command) {
-        return this.sendCommand(deviceType, 'send', { command });
-    }
-
-    disconnect() {
-        this.clearReconnectTimer();
-        if (this.ws) {
-            this.ws.close();
-            this.ws = null;
-        }
-        this.status = 'disconnected';
+            // Attempt reconnection
+            if (reconnectAttempts < maxReconnectAttempts) {
+                reconnectAttempts++;
+                const delay = reconnectDelay * Math.pow(2, reconnectAttempts - 1);
+                console.log(`Reconnecting in ${delay}ms... (attempt ${reconnectAttempts})`);
+                setTimeout(() => connect(), delay);
+            }
+        };
+    } catch (error) {
+        console.error('Failed to create WebSocket:', error);
+        status = 'error';
+        lastError = error.message;
     }
 }
 
-export const bridgeStore = new WebSocketStore();
+function handleMessage(message) {
+    console.log('Received message:', message);
+
+    switch (message.type) {
+        case 'status':
+            updateDeviceStatus(message.device, message.payload);
+            break;
+        case 'data':
+            handleDeviceData(message.device, message.payload);
+            break;
+        case 'error':
+            handleError(message);
+            break;
+        case 'ack':
+            handleAck(message);
+            break;
+        case 'query_result':
+            handleQueryResult(message);
+            break;
+        case 'event':
+            handleEvent(message);
+            break;
+        default:
+            console.warn('Unknown message type:', message.type);
+    }
+}
+
+function updateDeviceStatus(deviceId, deviceStatus) {
+    const device = devices.get(deviceId) || {
+        id: deviceId,
+        name: getDeviceName(deviceId),
+        type: deviceId
+    };
+    device.status = deviceStatus;
+    device.lastUpdate = Date.now();
+    devices.set(deviceId, device);
+    devices = new Map(devices); // Trigger reactivity
+}
+
+function handleDeviceData(deviceId, data) {
+    const handlers = messageHandlers.get(deviceId);
+    if (handlers) {
+        handlers.forEach(handler => handler(data));
+    }
+}
+
+function handleError(message) {
+    console.error('Bridge error:', message);
+    lastError = message.payload || 'Unknown error';
+    if (message.device) {
+        updateDeviceStatus(message.device, 'Error');
+    }
+}
+
+function handleAck(message) {
+    const callback = requestCallbacks.get(message.id);
+    if (callback) {
+        callback(message.success, message.message);
+        requestCallbacks.delete(message.id);
+    }
+}
+
+function handleQueryResult(message) {
+    if (message.payload) {
+        if (Array.isArray(message.payload)) {
+            // Device list
+            devices.clear();
+            message.payload.forEach(device => {
+                devices.set(device.id, device);
+            });
+            devices = new Map(devices); // Trigger reactivity
+        } else if (message.payload.server === 'running') {
+            // Status update
+            metrics = message.payload;
+        }
+    }
+}
+
+function handleEvent(message) {
+    console.log('Event received:', message);
+}
+
+function getDeviceName(deviceId) {
+    const names = {
+        'ttl': 'TTL Pulse Generator',
+        'kernel': 'Kernel Flow2',
+        'pupil': 'Pupil Labs Neon',
+        'biopac': 'Biopac',
+        'lsl': 'Lab Streaming Layer',
+        'mock': 'Mock Device'
+    };
+    return names[deviceId] || deviceId;
+}
+
+function generateId() {
+    return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+}
+
+function send(message) {
+    if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(message));
+        return true;
+    } else {
+        console.error('WebSocket not connected');
+        lastError = 'Not connected to bridge server';
+        return false;
+    }
+}
+
+function query(target) {
+    const message = {
+        type: 'query',
+        target
+    };
+
+    if (target.startsWith('device:')) {
+        message.target = {
+            device: target.split(':')[1]
+        };
+    }
+
+    send(message);
+}
+
+// Public API functions
+export async function connectDevice(deviceId, config = {}) {
+    return new Promise((resolve, reject) => {
+        const id = generateId();
+
+        requestCallbacks.set(id, (success, message) => {
+            if (success) {
+                resolve(message);
+            } else {
+                reject(new Error(message || 'Failed to connect device'));
+            }
+        });
+
+        const sent = send({
+            type: 'command',
+            device: deviceId,
+            action: 'connect',
+            payload: config,
+            id
+        });
+
+        if (!sent) {
+            requestCallbacks.delete(id);
+            reject(new Error('Failed to send command'));
+        }
+
+        // Timeout after 10 seconds
+        setTimeout(() => {
+            if (requestCallbacks.has(id)) {
+                requestCallbacks.delete(id);
+                reject(new Error('Request timeout'));
+            }
+        }, 10000);
+    });
+}
+
+export async function disconnectDevice(deviceId) {
+    return new Promise((resolve, reject) => {
+        const id = generateId();
+
+        requestCallbacks.set(id, (success, message) => {
+            if (success) {
+                resolve(message);
+            } else {
+                reject(new Error(message || 'Failed to disconnect device'));
+            }
+        });
+
+        const sent = send({
+            type: 'command',
+            device: deviceId,
+            action: 'disconnect',
+            id
+        });
+
+        if (!sent) {
+            requestCallbacks.delete(id);
+            reject(new Error('Failed to send command'));
+        }
+    });
+}
+
+export async function sendCommand(deviceId, command) {
+    // For TTL, use direct Tauri command for lowest latency
+    if (deviceId === 'ttl' && command === 'PULSE') {
+        const result = await tauriService.sendTtlPulse();
+        console.log('TTL pulse latency:', result.latency);
+        return result;
+    }
+
+    return new Promise((resolve, reject) => {
+        const id = generateId();
+
+        requestCallbacks.set(id, (success, message) => {
+            if (success) {
+                resolve(message);
+            } else {
+                reject(new Error(message || 'Failed to send command'));
+            }
+        });
+
+        const sent = send({
+            type: 'command',
+            device: deviceId,
+            action: 'send',
+            payload: { command },
+            id
+        });
+
+        if (!sent) {
+            requestCallbacks.delete(id);
+            reject(new Error('Failed to send command'));
+        }
+    });
+}
+
+export function disconnect() {
+    if (ws) {
+        reconnectAttempts = maxReconnectAttempts; // Prevent auto-reconnect
+        ws.close();
+        ws = null;
+    }
+    tauriService.cleanupEventListeners();
+}
+
+// Initialize connection and Tauri listeners
+connect();
+tauriService.setupEventListeners();
+
+// Export getters for reactive state (Svelte 5 pattern for reassigned state)
+export function getStatus() { return status; }
+export function getDevices() { return devices; }
+export function getLastError() { return lastError; }
+export function getMetrics() { return metrics; }
