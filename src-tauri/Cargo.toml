@@ -40,7 +40,7 @@ chrono = { version = "0.4", features = ["serde"] }
 # Performance Monitoring
 metrics = "0.22"
 metrics-exporter-prometheus = "0.13"
-sysinfo = "0.30"
+sysinfo = "0.37"
 histogram = "0.8"
 
 # State Management
