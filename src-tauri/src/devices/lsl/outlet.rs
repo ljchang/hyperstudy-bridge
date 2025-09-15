@@ -445,6 +445,7 @@ impl OutletManager {
 mod tests {
     use super::*;
     use crate::devices::lsl::sync::TimeSync;
+    use crate::devices::lsl::types::SampleData;
 
     #[tokio::test]
     async fn test_outlet_creation() {
