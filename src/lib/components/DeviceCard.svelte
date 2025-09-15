@@ -1,6 +1,8 @@
 <script>
+  import * as bridgeStore from '../stores/websocket.svelte.js';
+
   let { device } = $props();
-  
+
   function getStatusColor(status) {
     switch(status) {
       case 'connected': return 'var(--color-success)';
@@ -10,7 +12,7 @@
       default: return 'var(--color-text-disabled)';
     }
   }
-  
+
   function getStatusLabel(status) {
     switch(status) {
       case 'connected': return 'Connected';
@@ -20,17 +22,27 @@
       default: return 'Unknown';
     }
   }
-  
+
   async function toggleConnection() {
-    if (device.status === 'disconnected') {
-      // TODO: Connect device
+    if (device.status === 'disconnected' || device.status === 'error') {
       console.log(`Connecting ${device.name}...`);
+      try {
+        await bridgeStore.connectDevice(device.id, device.config);
+        console.log(`Successfully connected ${device.name}`);
+      } catch (error) {
+        console.error(`Failed to connect ${device.name}:`, error);
+      }
     } else if (device.status === 'connected') {
-      // TODO: Disconnect device
       console.log(`Disconnecting ${device.name}...`);
+      try {
+        await bridgeStore.disconnectDevice(device.id);
+        console.log(`Successfully disconnected ${device.name}`);
+      } catch (error) {
+        console.error(`Failed to disconnect ${device.name}:`, error);
+      }
     }
   }
-  
+
   async function configureDevice() {
     console.log(`Configuring ${device.name}...`);
     // TODO: Open configuration dialog

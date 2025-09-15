@@ -86,7 +86,8 @@ function handleMessage(message) {
 
     switch (message.type) {
         case 'status':
-            updateDeviceStatus(message.device, message.payload);
+            // Handle both message.status and message.payload for backwards compatibility
+            updateDeviceStatus(message.device, message.status || message.payload);
             break;
         case 'data':
             handleDeviceData(message.device, message.payload);
@@ -114,7 +115,8 @@ function updateDeviceStatus(deviceId, deviceStatus) {
         name: getDeviceName(deviceId),
         type: deviceId
     };
-    device.status = deviceStatus;
+    // Normalize status to lowercase for consistent UI display
+    device.status = typeof deviceStatus === 'string' ? deviceStatus.toLowerCase() : 'disconnected';
     device.lastUpdate = Date.now();
     devices.set(deviceId, device);
     devices = new Map(devices); // Trigger reactivity
@@ -180,11 +182,16 @@ function generateId() {
 }
 
 function send(message) {
+    console.log('Attempting to send message:', message);
+    console.log('WebSocket state:', ws?.readyState, 'OPEN=', WebSocket.OPEN);
+
     if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(message));
+        const messageStr = JSON.stringify(message);
+        console.log('Sending to WebSocket:', messageStr);
+        ws.send(messageStr);
         return true;
     } else {
-        console.error('WebSocket not connected');
+        console.error('WebSocket not connected. Current state:', ws?.readyState);
         lastError = 'Not connected to bridge server';
         return false;
     }
@@ -209,8 +216,10 @@ function query(target) {
 export async function connectDevice(deviceId, config = {}) {
     return new Promise((resolve, reject) => {
         const id = generateId();
+        console.log(`connectDevice called for ${deviceId} with id ${id}`);
 
         requestCallbacks.set(id, (success, message) => {
+            console.log(`Callback for ${deviceId}: success=${success}, message=${message}`);
             if (success) {
                 resolve(message);
             } else {
@@ -229,15 +238,17 @@ export async function connectDevice(deviceId, config = {}) {
         if (!sent) {
             requestCallbacks.delete(id);
             reject(new Error('Failed to send command'));
+            return;
         }
 
-        // Timeout after 10 seconds
+        // Timeout after 2 seconds instead of 10
         setTimeout(() => {
             if (requestCallbacks.has(id)) {
+                console.log(`Timeout for ${deviceId} - no response received`);
                 requestCallbacks.delete(id);
-                reject(new Error('Request timeout'));
+                reject(new Error(`Request timeout for ${deviceId}`));
             }
-        }, 10000);
+        }, 2000);
     });
 }
 

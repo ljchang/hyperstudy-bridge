@@ -2,60 +2,23 @@
   import { onMount, onDestroy } from 'svelte';
   import DeviceCard from './lib/components/DeviceCard.svelte';
   import StatusIndicator from './lib/components/StatusIndicator.svelte';
+  import AddDeviceModal from './lib/components/AddDeviceModal.svelte';
   import * as bridgeStore from './lib/stores/websocket.svelte.js';
   import logo from './assets/hyperstudy-logo.svg';
 
-  // Device configuration - base devices without status
-  const baseDevices = [
-    {
-      id: 'ttl',
-      name: 'TTL Pulse Generator',
-      type: 'Adafruit RP2040',
-      connection: 'USB Serial',
-      status: 'disconnected',
-      config: { port: '/dev/ttyUSB0' }
-    },
-    {
-      id: 'kernel',
-      name: 'Kernel Flow2',
-      type: 'fNIRS',
-      connection: 'TCP Socket',
-      status: 'disconnected',
-      config: { ip: '192.168.1.100', port: 6767 }
-    },
-    {
-      id: 'pupil',
-      name: 'Pupil Labs Neon',
-      type: 'Eye Tracker',
-      connection: 'WebSocket',
-      status: 'disconnected',
-      config: { url: 'localhost:8081' }
-    },
-    {
-      id: 'biopac',
-      name: 'Biopac MP150/160',
-      type: 'Physiological',
-      connection: 'TCP (NDT)',
-      status: 'disconnected',
-      config: { ip: 'localhost', port: 5000 }
-    },
-    {
-      id: 'mock',
-      name: 'Mock Device',
-      type: 'Testing',
-      connection: 'Virtual',
-      status: 'disconnected',
-      config: {}
-    }
-  ];
+  // Modal state
+  let showAddDeviceModal = $state(false);
+
+  // Selected devices - user has explicitly added these
+  let selectedDevices = $state([]);
 
   // Import reactive state from store using getters
   const bridgeStatus = $derived(bridgeStore.getStatus());
   const wsDevices = $derived(bridgeStore.getDevices());
 
-  // Derive device list with updated statuses from WebSocket
+  // Derive device list with updated statuses from WebSocket - only show selected devices
   let devices = $derived(
-    baseDevices.map(device => {
+    selectedDevices.map(device => {
       const wsDevice = wsDevices.get(device.id);
       if (wsDevice) {
         return { ...device, status: wsDevice.status || 'disconnected' };
@@ -64,25 +27,58 @@
     })
   );
 
-  // Connect all devices
+  // Connect all selected devices
   async function connectAll() {
-    console.log('Connecting all devices...');
-    for (const device of devices) {
-      if (device.status === 'disconnected') {
+    console.log('Connect All button clicked');
+    console.log('Bridge status:', bridgeStatus);
+    console.log('Selected devices:', selectedDevices);
+
+    // Only connect devices that user has selected
+    for (const device of selectedDevices) {
+      console.log(`Connecting device: ${device.id}`);
+      try {
         await bridgeStore.connectDevice(device.id, device.config);
+        console.log(`Successfully sent connect command for ${device.id}`);
         await new Promise(resolve => setTimeout(resolve, 500)); // Small delay between connections
+      } catch (error) {
+        console.error(`Failed to connect ${device.id}:`, error);
       }
     }
   }
 
-  // Disconnect all devices
+  // Disconnect all selected devices
   async function disconnectAll() {
-    console.log('Disconnecting all devices...');
-    for (const device of devices) {
-      if (device.status === 'connected') {
-        await bridgeStore.disconnectDevice(device.id);
+    console.log('Disconnect All button clicked');
+
+    // Get current device statuses from the store
+    const currentDevices = bridgeStore.getDevices();
+
+    for (const device of selectedDevices) {
+      const wsDevice = currentDevices.get(device.id);
+      if (wsDevice && wsDevice.status === 'connected') {
+        console.log(`Disconnecting device: ${device.id}`);
+        try {
+          await bridgeStore.disconnectDevice(device.id);
+          console.log(`Successfully sent disconnect command for ${device.id}`);
+        } catch (error) {
+          console.error(`Failed to disconnect ${device.id}:`, error);
+        }
       }
     }
+  }
+
+  // Handle adding devices from modal
+  function handleAddDevices(devicesToAdd) {
+    console.log('Adding devices:', devicesToAdd);
+    selectedDevices = [...selectedDevices, ...devicesToAdd.filter(d =>
+      !selectedDevices.some(existing => existing.id === d.id)
+    )];
+    showAddDeviceModal = false;
+  }
+
+  // Remove a device from selected devices
+  function removeDevice(deviceId) {
+    selectedDevices = selectedDevices.filter(d => d.id !== deviceId);
   }
 
   onMount(() => {
@@ -99,35 +95,54 @@
   <header>
     <div class="logo-container">
       <img src={logo} alt="HyperStudy" class="logo" />
-      <h1>Bridge</h1>
+      <h1>HyperStudy Device Bridge</h1>
     </div>
     <StatusIndicator status={bridgeStatus} />
   </header>
   
   <main>
     <div class="controls">
-      <button 
+      <button
+        class="add-device-btn"
+        onclick={() => showAddDeviceModal = true}
+      >
+        Add Device
+      </button>
+      <button
         class="connect-btn"
         onclick={connectAll}
-        disabled={bridgeStatus !== 'ready'}
+        disabled={bridgeStatus !== 'ready' || selectedDevices.length === 0}
       >
         Connect All
       </button>
-      <button 
+      <button
         class="disconnect-btn"
         onclick={disconnectAll}
-        disabled={bridgeStatus !== 'ready'}
+        disabled={bridgeStatus !== 'ready' || selectedDevices.length === 0}
       >
         Disconnect All
       </button>
     </div>
     
     <div class="devices">
-      {#each devices as device}
-        <DeviceCard {device} />
-      {/each}
+      {#if selectedDevices.length === 0}
+        <div class="empty-state">
+          <p>No devices added yet</p>
+          <p class="hint">Click "Add Device" to get started</p>
+        </div>
+      {:else}
+        {#each devices as device}
+          <DeviceCard {device} />
+        {/each}
+      {/if}
     </div>
   </main>
+
+  <AddDeviceModal
+    bind:isOpen={showAddDeviceModal}
+    onAdd={handleAddDevices}
+    onClose={() => showAddDeviceModal = false}
+  />
   
   <footer>
     <p>WebSocket: ws://localhost:9000</p>
@@ -199,7 +214,20 @@
     opacity: 0.5;
     cursor: not-allowed;
   }
-  
+
+  .add-device-btn {
+    background: var(--color-surface-elevated);
+    color: var(--color-text-primary);
+    border: 1px solid var(--color-border);
+  }
+
+  .add-device-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.1);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(255, 255, 255, 0.1);
+    border-color: var(--color-border-hover);
+  }
+
   .connect-btn {
     background: var(--color-primary);
     color: white;
@@ -226,6 +254,23 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
     gap: 1.5rem;
+  }
+
+  .empty-state {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 3rem;
+    color: var(--color-text-secondary);
+  }
+
+  .empty-state p {
+    margin: 0.5rem 0;
+    font-size: 1.1rem;
+  }
+
+  .empty-state .hint {
+    font-size: 0.9rem;
+    opacity: 0.8;
   }
   
   footer {

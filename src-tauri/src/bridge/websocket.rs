@@ -81,9 +81,11 @@ async fn handle_connection(
             match msg {
                 Ok(Message::Text(text)) => {
                     state_clone.update_connection_activity(&connection_id_clone);
+                    info!("Received WebSocket message: {}", text);
 
                     match MessageHandler::parse_command(&text) {
                         Ok(command) => {
+                            info!("Parsed command successfully");
                             handle_command(
                                 command,
                                 &state_clone,
@@ -92,6 +94,7 @@ async fn handle_connection(
                             ).await;
                         }
                         Err(e) => {
+                            warn!("Failed to parse command: {}", e);
                             let _ = tx.send(BridgeResponse::error(e)).await;
                         }
                     }
@@ -170,11 +173,14 @@ async fn handle_device_command(
     id: Option<String>,
     tx: &mpsc::Sender<BridgeResponse>,
 ) {
+    info!("Handling device command: device={}, action={:?}", device_id, action);
     match action {
         CommandAction::Connect => {
+            info!("Processing connect for device: {}", device_id);
             let device_type = MessageHandler::validate_device_type(&device_id);
 
             if device_type.is_none() {
+                warn!("Invalid device type: {}", device_id);
                 let _ = tx.send(BridgeResponse::device_error(
                     device_id,
                     "Invalid device type".to_string()
@@ -198,7 +204,7 @@ async fn handle_device_command(
                 "kernel" => {
                     let ip = config.get("ip")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("192.168.1.100");
+                        .unwrap_or("127.0.0.1");
                     Box::new(KernelDevice::new(ip.to_string()))
                 }
                 "pupil" => {
