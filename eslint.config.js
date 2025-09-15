@@ -37,6 +37,8 @@ export default [
         alert: 'readonly',
         confirm: 'readonly',
         requestAnimationFrame: 'readonly',
+        URL: 'readonly',
+        Blob: 'readonly',
       },
     },
     plugins: {
@@ -75,6 +77,8 @@ export default [
         alert: 'readonly',
         confirm: 'readonly',
         requestAnimationFrame: 'readonly',
+        URL: 'readonly',
+        Blob: 'readonly',
       },
     },
     plugins: {
@@ -116,6 +120,8 @@ export default [
         alert: 'readonly',
         confirm: 'readonly',
         requestAnimationFrame: 'readonly',
+        URL: 'readonly',
+        Blob: 'readonly',
       },
     },
     rules: {

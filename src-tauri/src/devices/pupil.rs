@@ -1,12 +1,12 @@
 use super::{Device, DeviceConfig, DeviceError, DeviceInfo, DeviceStatus, DeviceType};
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
-use tokio_tungstenite::{connect_async, tungstenite::Message, WebSocketStream, MaybeTlsStream};
-use tokio::net::TcpStream;
-use tracing::{error, info, debug, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::net::TcpStream;
+use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 const DISCOVERY_PORT: u16 = 8080;
@@ -219,11 +219,11 @@ impl PupilDevice {
             serde_json::json!({
                 "data_type": "gaze",
                 "format": "json"
-            })
+            }),
         );
 
-        let json_str = serde_json::to_string(&message)
-            .map_err(|e| DeviceError::InvalidData(e.to_string()))?;
+        let json_str =
+            serde_json::to_string(&message).map_err(|e| DeviceError::InvalidData(e.to_string()))?;
 
         self.send(json_str.as_bytes()).await?;
         self.streaming_config.gaze = true;
@@ -241,11 +241,11 @@ impl PupilDevice {
             "stop_streaming",
             serde_json::json!({
                 "data_type": "gaze"
-            })
+            }),
         );
 
-        let json_str = serde_json::to_string(&message)
-            .map_err(|e| DeviceError::InvalidData(e.to_string()))?;
+        let json_str =
+            serde_json::to_string(&message).map_err(|e| DeviceError::InvalidData(e.to_string()))?;
 
         self.send(json_str.as_bytes()).await?;
         self.streaming_config.gaze = false;
@@ -263,11 +263,11 @@ impl PupilDevice {
             "recording.start",
             serde_json::json!({
                 "template": template
-            })
+            }),
         );
 
-        let json_str = serde_json::to_string(&message)
-            .map_err(|e| DeviceError::InvalidData(e.to_string()))?;
+        let json_str =
+            serde_json::to_string(&message).map_err(|e| DeviceError::InvalidData(e.to_string()))?;
 
         self.send(json_str.as_bytes()).await?;
         self.recording = true;
@@ -281,13 +281,10 @@ impl PupilDevice {
             return Err(DeviceError::NotConnected);
         }
 
-        let message = Self::create_message(
-            "recording.stop",
-            serde_json::json!({})
-        );
+        let message = Self::create_message("recording.stop", serde_json::json!({}));
 
-        let json_str = serde_json::to_string(&message)
-            .map_err(|e| DeviceError::InvalidData(e.to_string()))?;
+        let json_str =
+            serde_json::to_string(&message).map_err(|e| DeviceError::InvalidData(e.to_string()))?;
 
         self.send(json_str.as_bytes()).await?;
         self.recording = false;
@@ -303,12 +300,11 @@ impl PupilDevice {
 
         let message = Self::create_message(
             "event",
-            serde_json::to_value(&event)
-                .map_err(|e| DeviceError::InvalidData(e.to_string()))?
+            serde_json::to_value(&event).map_err(|e| DeviceError::InvalidData(e.to_string()))?,
         );
 
-        let json_str = serde_json::to_string(&message)
-            .map_err(|e| DeviceError::InvalidData(e.to_string()))?;
+        let json_str =
+            serde_json::to_string(&message).map_err(|e| DeviceError::InvalidData(e.to_string()))?;
 
         self.send(json_str.as_bytes()).await?;
         debug!("Sent event annotation: {}", event.label);
@@ -321,13 +317,10 @@ impl PupilDevice {
             return Err(DeviceError::NotConnected);
         }
 
-        let message = Self::create_message(
-            "device.info",
-            serde_json::json!({})
-        );
+        let message = Self::create_message("device.info", serde_json::json!({}));
 
-        let json_str = serde_json::to_string(&message)
-            .map_err(|e| DeviceError::InvalidData(e.to_string()))?;
+        let json_str =
+            serde_json::to_string(&message).map_err(|e| DeviceError::InvalidData(e.to_string()))?;
 
         self.send(json_str.as_bytes()).await?;
         debug!("Requested device information");
@@ -354,7 +347,9 @@ impl PupilDevice {
                         }
                     }
                     "device.info" => {
-                        if let Ok(device_info) = serde_json::from_value::<PupilDeviceInfo>(msg.payload) {
+                        if let Ok(device_info) =
+                            serde_json::from_value::<PupilDeviceInfo>(msg.payload)
+                        {
                             self.device_info = Some(device_info);
                             info!("Updated device information");
                         }
@@ -417,7 +412,8 @@ impl Device for PupilDevice {
         self.status = DeviceStatus::Connecting;
         self.connection_retry_count = 0;
 
-        let url = if !self.device_url.starts_with("ws://") && !self.device_url.starts_with("wss://") {
+        let url = if !self.device_url.starts_with("ws://") && !self.device_url.starts_with("wss://")
+        {
             format!("ws://{}", self.device_url)
         } else {
             self.device_url.clone()
@@ -451,8 +447,14 @@ impl Device for PupilDevice {
 
                 // Auto-retry if enabled and under retry limit
                 if self.config.auto_reconnect && self.connection_retry_count < self.max_retries {
-                    warn!("Retrying connection ({}/{})", self.connection_retry_count, self.max_retries);
-                    tokio::time::sleep(tokio::time::Duration::from_millis(self.config.reconnect_interval_ms)).await;
+                    warn!(
+                        "Retrying connection ({}/{})",
+                        self.connection_retry_count, self.max_retries
+                    );
+                    tokio::time::sleep(tokio::time::Duration::from_millis(
+                        self.config.reconnect_interval_ms,
+                    ))
+                    .await;
                     return self.connect().await;
                 }
 
@@ -464,8 +466,14 @@ impl Device for PupilDevice {
                 error!("Connection timeout to Pupil Labs Neon");
 
                 if self.config.auto_reconnect && self.connection_retry_count < self.max_retries {
-                    warn!("Retrying connection after timeout ({}/{})", self.connection_retry_count, self.max_retries);
-                    tokio::time::sleep(tokio::time::Duration::from_millis(self.config.reconnect_interval_ms)).await;
+                    warn!(
+                        "Retrying connection after timeout ({}/{})",
+                        self.connection_retry_count, self.max_retries
+                    );
+                    tokio::time::sleep(tokio::time::Duration::from_millis(
+                        self.config.reconnect_interval_ms,
+                    ))
+                    .await;
                     return self.connect().await;
                 }
 
@@ -512,7 +520,9 @@ impl Device for PupilDevice {
             // Apply send timeout
             let send_timeout = tokio::time::Duration::from_millis(self.config.timeout_ms);
 
-            match tokio::time::timeout(send_timeout, ws.send(Message::Text(message.to_string()))).await {
+            match tokio::time::timeout(send_timeout, ws.send(Message::Text(message.to_string())))
+                .await
+            {
                 Ok(Ok(())) => {
                     debug!("Sent message to Pupil: {}", message);
                     Ok(())
@@ -559,7 +569,9 @@ impl Device for PupilDevice {
                     self.ws_client = None;
                     self.recording = false;
                     self.streaming_config = StreamingConfig::default();
-                    Err(DeviceError::ConnectionFailed("WebSocket closed by remote".to_string()))
+                    Err(DeviceError::ConnectionFailed(
+                        "WebSocket closed by remote".to_string(),
+                    ))
                 }
                 Ok(Some(Ok(Message::Ping(data)))) => {
                     // Respond to ping with pong
@@ -587,7 +599,9 @@ impl Device for PupilDevice {
                     self.ws_client = None;
                     self.recording = false;
                     self.streaming_config = StreamingConfig::default();
-                    Err(DeviceError::ConnectionFailed("WebSocket stream ended".to_string()))
+                    Err(DeviceError::ConnectionFailed(
+                        "WebSocket stream ended".to_string(),
+                    ))
                 }
                 Err(_) => {
                     // Timeout occurred, this is not necessarily an error for receive operations
@@ -667,9 +681,14 @@ impl Device for PupilDevice {
 
             // Update streaming configuration if provided
             if let Some(streaming_config) = custom.get("streaming_config") {
-                if let Ok(stream_config) = serde_json::from_value::<StreamingConfig>(streaming_config.clone()) {
+                if let Ok(stream_config) =
+                    serde_json::from_value::<StreamingConfig>(streaming_config.clone())
+                {
                     self.streaming_config = stream_config;
-                    debug!("Updated streaming configuration: {:?}", self.streaming_config);
+                    debug!(
+                        "Updated streaming configuration: {:?}",
+                        self.streaming_config
+                    );
                 }
             }
         }
@@ -774,8 +793,14 @@ mod tests {
             label: "stimulus_onset".to_string(),
             duration: Some(2.5),
             extra_data: Some(HashMap::from([
-                ("condition".to_string(), serde_json::Value::String("experimental".to_string())),
-                ("trial_id".to_string(), serde_json::Value::Number(serde_json::Number::from(42))),
+                (
+                    "condition".to_string(),
+                    serde_json::Value::String("experimental".to_string()),
+                ),
+                (
+                    "trial_id".to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(42)),
+                ),
             ])),
         };
 
@@ -786,10 +811,8 @@ mod tests {
 
     #[test]
     fn test_pupil_message_creation() {
-        let message = PupilDevice::create_message(
-            "test_command",
-            serde_json::json!({"param": "value"})
-        );
+        let message =
+            PupilDevice::create_message("test_command", serde_json::json!({"param": "value"}));
 
         assert_eq!(message.msg_type, "test_command");
         assert!(message.id.is_some());

@@ -1,19 +1,24 @@
-use hyperstudy_bridge::bridge::{AppState, BridgeCommand, BridgeResponse, BridgeServer};
-use hyperstudy_bridge::bridge::state::Metrics;
-use hyperstudy_bridge::devices::{Device, DeviceError, DeviceStatus, DeviceType, DeviceInfo, DeviceConfig};
-use hyperstudy_bridge::performance::PerformanceMonitor;
 use async_trait::async_trait;
+use futures_util::{SinkExt, StreamExt};
+use hyperstudy_bridge::bridge::state::Metrics;
+use hyperstudy_bridge::bridge::{AppState, BridgeCommand, BridgeResponse, BridgeServer};
+use hyperstudy_bridge::devices::{
+    Device, DeviceConfig, DeviceError, DeviceInfo, DeviceStatus, DeviceType,
+};
+use hyperstudy_bridge::performance::PerformanceMonitor;
+use rand::Rng;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::{Arc, atomic::{AtomicU64, AtomicBool, Ordering}};
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc,
+};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::{RwLock, Mutex, mpsc};
 use tokio::net::TcpStream;
-use tokio_tungstenite::{WebSocketStream, MaybeTlsStream, connect_async, tungstenite::Message};
-use futures_util::{SinkExt, StreamExt};
-use rand::Rng;
+use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
-use tracing::{info, warn, debug};
 
 /// Mock device implementation for testing
 #[derive(Debug, Clone)]
@@ -102,7 +107,9 @@ impl TestMockDevice {
 impl Device for TestMockDevice {
     async fn connect(&mut self) -> Result<(), DeviceError> {
         if self.should_simulate_error() {
-            return Err(DeviceError::ConnectionFailed("Simulated connection failure".to_string()));
+            return Err(DeviceError::ConnectionFailed(
+                "Simulated connection failure".to_string(),
+            ));
         }
 
         tokio::time::sleep(self.connection_delay).await;
@@ -113,7 +120,9 @@ impl Device for TestMockDevice {
 
     async fn disconnect(&mut self) -> Result<(), DeviceError> {
         if self.should_simulate_error() {
-            return Err(DeviceError::CommunicationError("Simulated disconnect failure".to_string()));
+            return Err(DeviceError::CommunicationError(
+                "Simulated disconnect failure".to_string(),
+            ));
         }
 
         tokio::time::sleep(Duration::from_millis(5)).await;
@@ -123,7 +132,9 @@ impl Device for TestMockDevice {
 
     async fn send(&mut self, data: &[u8]) -> Result<(), DeviceError> {
         if self.should_simulate_error() {
-            return Err(DeviceError::CommunicationError("Simulated send failure".to_string()));
+            return Err(DeviceError::CommunicationError(
+                "Simulated send failure".to_string(),
+            ));
         }
 
         let status = *self.status.read().await;
@@ -139,7 +150,9 @@ impl Device for TestMockDevice {
 
     async fn receive(&mut self) -> Result<Vec<u8>, DeviceError> {
         if self.should_simulate_error() {
-            return Err(DeviceError::CommunicationError("Simulated receive failure".to_string()));
+            return Err(DeviceError::CommunicationError(
+                "Simulated receive failure".to_string(),
+            ));
         }
 
         let status = *self.status.read().await;
@@ -162,7 +175,10 @@ impl Device for TestMockDevice {
             id: self.id.clone(),
             name: self.name.clone(),
             device_type: self.device_type,
-            status: *self.status.try_read().unwrap_or_else(|_| DeviceStatus::Error.into()),
+            status: *self
+                .status
+                .try_read()
+                .unwrap_or_else(|_| DeviceStatus::Error.into()),
             metadata: json!({
                 "latency_ms": self.latency_ms,
                 "error_rate": self.error_rate,
@@ -172,12 +188,17 @@ impl Device for TestMockDevice {
     }
 
     fn get_status(&self) -> DeviceStatus {
-        *self.status.try_read().unwrap_or_else(|_| DeviceStatus::Error.into())
+        *self
+            .status
+            .try_read()
+            .unwrap_or_else(|_| DeviceStatus::Error.into())
     }
 
     fn configure(&mut self, config: DeviceConfig) -> Result<(), DeviceError> {
         if self.should_simulate_error() {
-            return Err(DeviceError::ConfigurationError("Simulated configuration failure".to_string()));
+            return Err(DeviceError::ConfigurationError(
+                "Simulated configuration failure".to_string(),
+            ));
         }
 
         tokio::task::block_in_place(|| {
@@ -223,14 +244,19 @@ impl TestWebSocketClient {
         })
     }
 
-    pub async fn send_command(&mut self, command: BridgeCommand) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn send_command(
+        &mut self,
+        command: BridgeCommand,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let json_str = serde_json::to_string(&command)?;
         self.sent_messages.write().await.push(json_str.clone());
         self.ws_stream.send(Message::Text(json_str)).await?;
         Ok(())
     }
 
-    pub async fn receive_response(&mut self) -> Result<Option<BridgeResponse>, Box<dyn std::error::Error>> {
+    pub async fn receive_response(
+        &mut self,
+    ) -> Result<Option<BridgeResponse>, Box<dyn std::error::Error>> {
         if let Some(msg) = self.ws_stream.next().await {
             match msg? {
                 Message::Text(text) => {
@@ -249,7 +275,10 @@ impl TestWebSocketClient {
         }
     }
 
-    pub async fn wait_for_response(&mut self, timeout: Duration) -> Result<Option<BridgeResponse>, Box<dyn std::error::Error>> {
+    pub async fn wait_for_response(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Option<BridgeResponse>, Box<dyn std::error::Error>> {
         tokio::time::timeout(timeout, self.receive_response()).await?
     }
 
@@ -464,33 +493,49 @@ impl TestFixture {
             device_type,
         );
 
-        self.app_state.add_device(device_id.clone(), Box::new(device)).await;
+        self.app_state
+            .add_device(device_id.clone(), Box::new(device))
+            .await;
         self.temp_devices.push(device_id.clone());
         device_id
     }
 
-    pub async fn add_high_latency_device(&mut self, device_type: DeviceType, latency_ms: u64) -> String {
+    pub async fn add_high_latency_device(
+        &mut self,
+        device_type: DeviceType,
+        latency_ms: u64,
+    ) -> String {
         let device_id = format!("test_{:?}_slow_{}", device_type, Uuid::new_v4());
         let device = TestMockDevice::new(
             device_id.clone(),
             format!("Slow Test {:?} Device", device_type),
             device_type,
-        ).with_latency(latency_ms);
+        )
+        .with_latency(latency_ms);
 
-        self.app_state.add_device(device_id.clone(), Box::new(device)).await;
+        self.app_state
+            .add_device(device_id.clone(), Box::new(device))
+            .await;
         self.temp_devices.push(device_id.clone());
         device_id
     }
 
-    pub async fn add_unreliable_device(&mut self, device_type: DeviceType, error_rate: f64) -> String {
+    pub async fn add_unreliable_device(
+        &mut self,
+        device_type: DeviceType,
+        error_rate: f64,
+    ) -> String {
         let device_id = format!("test_{:?}_unreliable_{}", device_type, Uuid::new_v4());
         let device = TestMockDevice::new(
             device_id.clone(),
             format!("Unreliable Test {:?} Device", device_type),
             device_type,
-        ).with_error_rate(error_rate);
+        )
+        .with_error_rate(error_rate);
 
-        self.app_state.add_device(device_id.clone(), Box::new(device)).await;
+        self.app_state
+            .add_device(device_id.clone(), Box::new(device))
+            .await;
         self.temp_devices.push(device_id.clone());
         device_id
     }
@@ -509,7 +554,12 @@ impl TestFixture {
         self.temp_files.clear();
     }
 
-    pub async fn wait_for_device_status(&self, device_id: &str, expected_status: DeviceStatus, timeout: Duration) -> bool {
+    pub async fn wait_for_device_status(
+        &self,
+        device_id: &str,
+        expected_status: DeviceStatus,
+        timeout: Duration,
+    ) -> bool {
         let start = Instant::now();
 
         while start.elapsed() < timeout {
@@ -577,14 +627,31 @@ pub mod test_utils {
     }
 
     /// Create multiple mock devices of different types
-    pub async fn create_multi_device_setup(fixture: &mut TestFixture) -> HashMap<DeviceType, String> {
+    pub async fn create_multi_device_setup(
+        fixture: &mut TestFixture,
+    ) -> HashMap<DeviceType, String> {
         let mut devices = HashMap::new();
 
-        devices.insert(DeviceType::TTL, fixture.add_mock_device(DeviceType::TTL).await);
-        devices.insert(DeviceType::Kernel, fixture.add_mock_device(DeviceType::Kernel).await);
-        devices.insert(DeviceType::Pupil, fixture.add_mock_device(DeviceType::Pupil).await);
-        devices.insert(DeviceType::Biopac, fixture.add_mock_device(DeviceType::Biopac).await);
-        devices.insert(DeviceType::Mock, fixture.add_mock_device(DeviceType::Mock).await);
+        devices.insert(
+            DeviceType::TTL,
+            fixture.add_mock_device(DeviceType::TTL).await,
+        );
+        devices.insert(
+            DeviceType::Kernel,
+            fixture.add_mock_device(DeviceType::Kernel).await,
+        );
+        devices.insert(
+            DeviceType::Pupil,
+            fixture.add_mock_device(DeviceType::Pupil).await,
+        );
+        devices.insert(
+            DeviceType::Biopac,
+            fixture.add_mock_device(DeviceType::Biopac).await,
+        );
+        devices.insert(
+            DeviceType::Mock,
+            fixture.add_mock_device(DeviceType::Mock).await,
+        );
 
         devices
     }
@@ -623,7 +690,8 @@ pub mod test_utils {
         assert!(
             throughput >= minimum,
             "Throughput {} msg/sec is below minimum requirement of {} msg/sec",
-            throughput, minimum
+            throughput,
+            minimum
         );
     }
 
@@ -697,7 +765,8 @@ mod tests {
             "test_device".to_string(),
             "Test Device".to_string(),
             DeviceType::Mock,
-        ).with_error_rate(1.0); // 100% error rate
+        )
+        .with_error_rate(1.0); // 100% error rate
 
         // Should fail to connect
         assert!(device.connect().await.is_err());

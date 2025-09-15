@@ -1,6 +1,6 @@
+use crate::devices::{DeviceStatus, DeviceType};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::devices::{DeviceType, DeviceStatus};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -168,13 +168,11 @@ pub struct MessageHandler;
 
 impl MessageHandler {
     pub fn parse_command(data: &str) -> Result<BridgeCommand, String> {
-        serde_json::from_str(data)
-            .map_err(|e| format!("Failed to parse command: {}", e))
+        serde_json::from_str(data).map_err(|e| format!("Failed to parse command: {}", e))
     }
 
     pub fn serialize_response(response: &BridgeResponse) -> Result<String, String> {
-        serde_json::to_string(response)
-            .map_err(|e| format!("Failed to serialize response: {}", e))
+        serde_json::to_string(response).map_err(|e| format!("Failed to serialize response: {}", e))
     }
 
     pub fn validate_device_type(device: &str) -> Option<DeviceType> {

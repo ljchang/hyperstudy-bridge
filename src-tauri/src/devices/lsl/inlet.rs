@@ -1,6 +1,6 @@
-use super::types::{LslError, StreamInfo, Sample, SampleData, StreamStatus, ChannelFormat};
-use super::sync::TimeSync;
 use super::resolver::DiscoveredStream;
+use super::sync::TimeSync;
+use super::types::{ChannelFormat, LslError, Sample, SampleData, StreamInfo, StreamStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -102,8 +102,10 @@ impl StreamInlet {
         config: InletConfig,
         time_sync: Arc<TimeSync>,
     ) -> Result<Self, LslError> {
-        info!("Creating LSL inlet: {} (UID: {})",
-              discovered_stream.info.name, discovered_stream.uid);
+        info!(
+            "Creating LSL inlet: {} (UID: {})",
+            discovered_stream.info.name, discovered_stream.uid
+        );
 
         // In a real implementation, this would create an LSL inlet
         // using lsl::StreamInlet::new()
@@ -134,7 +136,10 @@ impl StreamInlet {
             return Ok(());
         }
 
-        info!("Opening LSL inlet: {} (timeout: {:?})", self.info.name, timeout);
+        info!(
+            "Opening LSL inlet: {} (timeout: {:?})",
+            self.info.name, timeout
+        );
 
         // In a real implementation, this would call:
         // self.lsl_inlet.open_stream(timeout)?;
@@ -215,7 +220,11 @@ impl StreamInlet {
     }
 
     /// Pull multiple samples as a chunk
-    pub async fn pull_chunk(&self, max_samples: usize, timeout: Duration) -> Result<Vec<Sample>, LslError> {
+    pub async fn pull_chunk(
+        &self,
+        max_samples: usize,
+        timeout: Duration,
+    ) -> Result<Vec<Sample>, LslError> {
         let mut samples = Vec::with_capacity(max_samples);
         let start_time = Instant::now();
 
@@ -326,7 +335,10 @@ impl StreamInlet {
         // self.lsl_inlet.time_correction()?;
 
         // Simulate time correction calculation
-        let correction = self.time_sync.calculate_time_correction(self.time_sync.lsl_time()).await;
+        let correction = self
+            .time_sync
+            .calculate_time_correction(self.time_sync.lsl_time())
+            .await;
         Ok(correction)
     }
 
@@ -361,17 +373,18 @@ impl StreamInlet {
         // let (sample_data, timestamp) = self.lsl_inlet.pull_sample(timeout)?;
 
         // Simulate occasional data
-        if rand::random::<f32>() < 0.1 { // 10% chance of having data
+        if rand::random::<f32>() < 0.1 {
+            // 10% chance of having data
             let sample_data = match self.info.channel_format {
-                ChannelFormat::Float32 => {
-                    SampleData::Float32(vec![rand::random::<f32>(); self.info.channel_count as usize])
-                }
-                ChannelFormat::String => {
-                    SampleData::String(vec!["MOCK_MARKER".to_string()])
-                }
-                ChannelFormat::Int32 => {
-                    SampleData::Int32(vec![rand::random::<i32>(); self.info.channel_count as usize])
-                }
+                ChannelFormat::Float32 => SampleData::Float32(vec![
+                    rand::random::<f32>();
+                    self.info.channel_count as usize
+                ]),
+                ChannelFormat::String => SampleData::String(vec!["MOCK_MARKER".to_string()]),
+                ChannelFormat::Int32 => SampleData::Int32(vec![
+                    rand::random::<i32>();
+                    self.info.channel_count as usize
+                ]),
                 _ => SampleData::Float32(vec![0.0; self.info.channel_count as usize]),
             };
 
@@ -416,7 +429,14 @@ impl InletManager {
         config: Option<InletConfig>,
     ) -> Result<String, LslError> {
         let inlet_config = config.unwrap_or_else(|| self.default_config.clone());
-        let inlet = Arc::new(StreamInlet::new(discovered_stream.clone(), inlet_config, self.time_sync.clone()).await?);
+        let inlet = Arc::new(
+            StreamInlet::new(
+                discovered_stream.clone(),
+                inlet_config,
+                self.time_sync.clone(),
+            )
+            .await?,
+        );
 
         let inlet_id = discovered_stream.uid.clone();
 
@@ -435,7 +455,9 @@ impl InletManager {
 
     /// Open inlet connection
     pub async fn open_inlet(&self, inlet_id: &str, timeout: Duration) -> Result<(), LslError> {
-        let inlet = self.get_inlet(inlet_id).await
+        let inlet = self
+            .get_inlet(inlet_id)
+            .await
             .ok_or_else(|| LslError::StreamNotFound(inlet_id.to_string()))?;
 
         inlet.open(timeout).await
@@ -443,7 +465,9 @@ impl InletManager {
 
     /// Close inlet connection
     pub async fn close_inlet(&self, inlet_id: &str) -> Result<(), LslError> {
-        let inlet = self.get_inlet(inlet_id).await
+        let inlet = self
+            .get_inlet(inlet_id)
+            .await
             .ok_or_else(|| LslError::StreamNotFound(inlet_id.to_string()))?;
 
         inlet.close().await
@@ -464,8 +488,14 @@ impl InletManager {
     }
 
     /// Pull sample from inlet
-    pub async fn pull_sample(&self, inlet_id: &str, timeout: Duration) -> Result<Option<Sample>, LslError> {
-        let inlet = self.get_inlet(inlet_id).await
+    pub async fn pull_sample(
+        &self,
+        inlet_id: &str,
+        timeout: Duration,
+    ) -> Result<Option<Sample>, LslError> {
+        let inlet = self
+            .get_inlet(inlet_id)
+            .await
             .ok_or_else(|| LslError::StreamNotFound(inlet_id.to_string()))?;
 
         inlet.pull_sample(timeout).await
@@ -523,7 +553,7 @@ use rand;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::devices::lsl::{sync::TimeSync, resolver::DiscoveredStream, types::StreamInfo};
+    use crate::devices::lsl::{resolver::DiscoveredStream, sync::TimeSync, types::StreamInfo};
     use std::time::SystemTime;
 
     fn create_mock_discovered_stream() -> DiscoveredStream {
@@ -559,7 +589,9 @@ mod tests {
         let discovered_stream = create_mock_discovered_stream();
         let config = InletConfig::default();
 
-        let inlet = StreamInlet::new(discovered_stream, config, time_sync).await.unwrap();
+        let inlet = StreamInlet::new(discovered_stream, config, time_sync)
+            .await
+            .unwrap();
 
         // Open inlet
         assert!(inlet.open(Duration::from_secs(1)).await.is_ok());
@@ -580,7 +612,10 @@ mod tests {
         assert!(inlet_id.is_ok());
 
         let inlet_id = inlet_id.unwrap();
-        assert!(manager.open_inlet(&inlet_id, Duration::from_secs(1)).await.is_ok());
+        assert!(manager
+            .open_inlet(&inlet_id, Duration::from_secs(1))
+            .await
+            .is_ok());
 
         let inlets = manager.list_inlets().await;
         assert_eq!(inlets.len(), 1);

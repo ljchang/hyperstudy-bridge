@@ -1,7 +1,9 @@
-use crate::bridge::{AppState, BridgeCommand, BridgeResponse, MessageHandler};
 use crate::bridge::message::{CommandAction, QueryTarget};
-use crate::devices::{mock::MockDevice, ttl::TtlDevice, kernel::KernelDevice,
-                      pupil::PupilDevice, biopac::BiopacDevice};
+use crate::bridge::{AppState, BridgeCommand, BridgeResponse, MessageHandler};
+use crate::devices::{
+    biopac::BiopacDevice, kernel::KernelDevice, mock::MockDevice, pupil::PupilDevice,
+    ttl::TtlDevice,
+};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use std::net::SocketAddr;
@@ -10,7 +12,7 @@ use tauri::AppHandle;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
-use tracing::{error, info, warn, debug};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 const WS_PORT: u16 = 9000;
@@ -86,12 +88,7 @@ async fn handle_connection(
                     match MessageHandler::parse_command(&text) {
                         Ok(command) => {
                             info!("Parsed command successfully");
-                            handle_command(
-                                command,
-                                &state_clone,
-                                &tx,
-                                &app_handle,
-                            ).await;
+                            handle_command(command, &state_clone, &tx, &app_handle).await;
                         }
                         Err(e) => {
                             warn!("Failed to parse command: {}", e);
@@ -101,9 +98,11 @@ async fn handle_connection(
                 }
                 Ok(Message::Binary(_bin)) => {
                     warn!("Binary messages not supported");
-                    let _ = tx.send(BridgeResponse::error(
-                        "Binary messages not supported".to_string()
-                    )).await;
+                    let _ = tx
+                        .send(BridgeResponse::error(
+                            "Binary messages not supported".to_string(),
+                        ))
+                        .await;
                 }
                 Ok(Message::Ping(_data)) => {
                     debug!("Received ping, sending pong");
@@ -142,25 +141,34 @@ async fn handle_command(
     _app_handle: &AppHandle,
 ) {
     match command {
-        BridgeCommand::Command { device, action, payload, id } => {
+        BridgeCommand::Command {
+            device,
+            action,
+            payload,
+            id,
+        } => {
             handle_device_command(state, device, action, payload, id, tx).await;
         }
         BridgeCommand::Query { target, id } => {
             handle_query(state, target, id, tx).await;
         }
         BridgeCommand::Subscribe { device, events } => {
-            let _ = tx.send(BridgeResponse::event(
-                device,
-                "subscribed".to_string(),
-                json!({ "events": events })
-            )).await;
+            let _ = tx
+                .send(BridgeResponse::event(
+                    device,
+                    "subscribed".to_string(),
+                    json!({ "events": events }),
+                ))
+                .await;
         }
         BridgeCommand::Unsubscribe { device, events } => {
-            let _ = tx.send(BridgeResponse::event(
-                device,
-                "unsubscribed".to_string(),
-                json!({ "events": events })
-            )).await;
+            let _ = tx
+                .send(BridgeResponse::event(
+                    device,
+                    "unsubscribed".to_string(),
+                    json!({ "events": events }),
+                ))
+                .await;
         }
     }
 }
@@ -173,7 +181,10 @@ async fn handle_device_command(
     id: Option<String>,
     tx: &mpsc::Sender<BridgeResponse>,
 ) {
-    info!("Handling device command: device={}, action={:?}", device_id, action);
+    info!(
+        "Handling device command: device={}, action={:?}",
+        device_id, action
+    );
     match action {
         CommandAction::Connect => {
             info!("Processing connect for device: {}", device_id);
@@ -181,55 +192,57 @@ async fn handle_device_command(
 
             if device_type.is_none() {
                 warn!("Invalid device type: {}", device_id);
-                let _ = tx.send(BridgeResponse::device_error(
-                    device_id,
-                    "Invalid device type".to_string()
-                )).await;
+                let _ = tx
+                    .send(BridgeResponse::device_error(
+                        device_id,
+                        "Invalid device type".to_string(),
+                    ))
+                    .await;
                 return;
             }
 
-            let config = if let Some(p) = payload {
-                p
-            } else {
-                json!({})
-            };
+            let config = if let Some(p) = payload { p } else { json!({}) };
 
             let mut device: Box<dyn crate::devices::Device> = match device_id.as_str() {
                 "ttl" => {
-                    let port = config.get("port")
+                    let port = config
+                        .get("port")
                         .and_then(|v| v.as_str())
                         .unwrap_or("/dev/ttyUSB0");
                     Box::new(TtlDevice::new(port.to_string()))
                 }
                 "kernel" => {
-                    let ip = config.get("ip")
+                    let ip = config
+                        .get("ip")
                         .and_then(|v| v.as_str())
                         .unwrap_or("127.0.0.1");
                     Box::new(KernelDevice::new(ip.to_string()))
                 }
                 "pupil" => {
-                    let url = config.get("url")
+                    let url = config
+                        .get("url")
                         .and_then(|v| v.as_str())
                         .unwrap_or("localhost:8081");
                     Box::new(PupilDevice::new(url.to_string()))
                 }
                 "biopac" => {
-                    let addr = config.get("address")
+                    let addr = config
+                        .get("address")
                         .and_then(|v| v.as_str())
                         .unwrap_or("localhost");
                     Box::new(BiopacDevice::new(addr.to_string()))
                 }
-                "mock" => {
-                    Box::new(MockDevice::new(
-                        format!("mock_{}", Uuid::new_v4()),
-                        "Mock Device".to_string()
-                    ))
-                }
+                "mock" => Box::new(MockDevice::new(
+                    format!("mock_{}", Uuid::new_v4()),
+                    "Mock Device".to_string(),
+                )),
                 _ => {
-                    let _ = tx.send(BridgeResponse::device_error(
-                        device_id,
-                        "Unsupported device type".to_string()
-                    )).await;
+                    let _ = tx
+                        .send(BridgeResponse::device_error(
+                            device_id,
+                            "Unsupported device type".to_string(),
+                        ))
+                        .await;
                     return;
                 }
             };
@@ -239,28 +252,32 @@ async fn handle_device_command(
                     let status = device.get_status();
                     state.add_device(device_id.clone(), device).await;
 
-                    let _ = tx.send(BridgeResponse::status(device_id.clone(), status)).await;
+                    let _ = tx
+                        .send(BridgeResponse::status(device_id.clone(), status))
+                        .await;
 
                     if let Some(req_id) = id {
-                        let _ = tx.send(BridgeResponse::ack(
-                            req_id,
-                            true,
-                            Some("Device connected".to_string())
-                        )).await;
+                        let _ = tx
+                            .send(BridgeResponse::ack(
+                                req_id,
+                                true,
+                                Some("Device connected".to_string()),
+                            ))
+                            .await;
                     }
                 }
                 Err(e) => {
-                    let _ = tx.send(BridgeResponse::device_error(
-                        device_id.clone(),
-                        e.to_string()
-                    )).await;
+                    let _ = tx
+                        .send(BridgeResponse::device_error(
+                            device_id.clone(),
+                            e.to_string(),
+                        ))
+                        .await;
 
                     if let Some(req_id) = id {
-                        let _ = tx.send(BridgeResponse::ack(
-                            req_id,
-                            false,
-                            Some(e.to_string())
-                        )).await;
+                        let _ = tx
+                            .send(BridgeResponse::ack(req_id, false, Some(e.to_string())))
+                            .await;
                     }
                 }
             }
@@ -273,46 +290,51 @@ async fn handle_device_command(
                         drop(device);
                         state.remove_device(&device_id).await;
 
-                        let _ = tx.send(BridgeResponse::status(
-                            device_id,
-                            crate::devices::DeviceStatus::Disconnected
-                        )).await;
+                        let _ = tx
+                            .send(BridgeResponse::status(
+                                device_id,
+                                crate::devices::DeviceStatus::Disconnected,
+                            ))
+                            .await;
 
                         if let Some(req_id) = id {
-                            let _ = tx.send(BridgeResponse::ack(
-                                req_id,
-                                true,
-                                Some("Device disconnected".to_string())
-                            )).await;
+                            let _ = tx
+                                .send(BridgeResponse::ack(
+                                    req_id,
+                                    true,
+                                    Some("Device disconnected".to_string()),
+                                ))
+                                .await;
                         }
                     }
                     Err(e) => {
-                        let _ = tx.send(BridgeResponse::device_error(
-                            device_id,
-                            e.to_string()
-                        )).await;
+                        let _ = tx
+                            .send(BridgeResponse::device_error(device_id, e.to_string()))
+                            .await;
 
                         if let Some(req_id) = id {
-                            let _ = tx.send(BridgeResponse::ack(
-                                req_id,
-                                false,
-                                Some(e.to_string())
-                            )).await;
+                            let _ = tx
+                                .send(BridgeResponse::ack(req_id, false, Some(e.to_string())))
+                                .await;
                         }
                     }
                 }
             } else {
-                let _ = tx.send(BridgeResponse::device_error(
-                    device_id,
-                    "Device not found".to_string()
-                )).await;
+                let _ = tx
+                    .send(BridgeResponse::device_error(
+                        device_id,
+                        "Device not found".to_string(),
+                    ))
+                    .await;
 
                 if let Some(req_id) = id {
-                    let _ = tx.send(BridgeResponse::ack(
-                        req_id,
-                        false,
-                        Some("Device not found".to_string())
-                    )).await;
+                    let _ = tx
+                        .send(BridgeResponse::ack(
+                            req_id,
+                            false,
+                            Some("Device not found".to_string()),
+                        ))
+                        .await;
                 }
             }
         }
@@ -335,40 +357,43 @@ async fn handle_device_command(
                 match device.send(&data).await {
                     Ok(_) => {
                         if let Some(req_id) = id {
-                            let _ = tx.send(BridgeResponse::ack(
-                                req_id,
-                                true,
-                                Some("Data sent".to_string())
-                            )).await;
+                            let _ = tx
+                                .send(BridgeResponse::ack(
+                                    req_id,
+                                    true,
+                                    Some("Data sent".to_string()),
+                                ))
+                                .await;
                         }
                     }
                     Err(e) => {
-                        let _ = tx.send(BridgeResponse::device_error(
-                            device_id,
-                            e.to_string()
-                        )).await;
+                        let _ = tx
+                            .send(BridgeResponse::device_error(device_id, e.to_string()))
+                            .await;
 
                         if let Some(req_id) = id {
-                            let _ = tx.send(BridgeResponse::ack(
-                                req_id,
-                                false,
-                                Some(e.to_string())
-                            )).await;
+                            let _ = tx
+                                .send(BridgeResponse::ack(req_id, false, Some(e.to_string())))
+                                .await;
                         }
                     }
                 }
             } else {
-                let _ = tx.send(BridgeResponse::device_error(
-                    device_id,
-                    "Device not found".to_string()
-                )).await;
+                let _ = tx
+                    .send(BridgeResponse::device_error(
+                        device_id,
+                        "Device not found".to_string(),
+                    ))
+                    .await;
 
                 if let Some(req_id) = id {
-                    let _ = tx.send(BridgeResponse::ack(
-                        req_id,
-                        false,
-                        Some("Device not found".to_string())
-                    )).await;
+                    let _ = tx
+                        .send(BridgeResponse::ack(
+                            req_id,
+                            false,
+                            Some("Device not found".to_string()),
+                        ))
+                        .await;
                 }
             }
         }
@@ -377,38 +402,40 @@ async fn handle_device_command(
                 let _ = tx.send(BridgeResponse::status(device_id, status)).await;
 
                 if let Some(req_id) = id {
-                    let _ = tx.send(BridgeResponse::ack(
-                        req_id,
-                        true,
-                        None
-                    )).await;
+                    let _ = tx.send(BridgeResponse::ack(req_id, true, None)).await;
                 }
             } else {
-                let _ = tx.send(BridgeResponse::device_error(
-                    device_id,
-                    "Device not found".to_string()
-                )).await;
+                let _ = tx
+                    .send(BridgeResponse::device_error(
+                        device_id,
+                        "Device not found".to_string(),
+                    ))
+                    .await;
 
                 if let Some(req_id) = id {
-                    let _ = tx.send(BridgeResponse::ack(
-                        req_id,
-                        false,
-                        Some("Device not found".to_string())
-                    )).await;
+                    let _ = tx
+                        .send(BridgeResponse::ack(
+                            req_id,
+                            false,
+                            Some("Device not found".to_string()),
+                        ))
+                        .await;
                 }
             }
         }
         _ => {
-            let _ = tx.send(BridgeResponse::error(
-                "Unsupported action".to_string()
-            )).await;
+            let _ = tx
+                .send(BridgeResponse::error("Unsupported action".to_string()))
+                .await;
 
             if let Some(req_id) = id {
-                let _ = tx.send(BridgeResponse::ack(
-                    req_id,
-                    false,
-                    Some("Unsupported action".to_string())
-                )).await;
+                let _ = tx
+                    .send(BridgeResponse::ack(
+                        req_id,
+                        false,
+                        Some("Unsupported action".to_string()),
+                    ))
+                    .await;
             }
         }
     }
@@ -438,7 +465,8 @@ async fn handle_query(
             json!(metrics)
         }
         QueryTarget::Connections => {
-            let connections: Vec<_> = state.connections
+            let connections: Vec<_> = state
+                .connections
                 .iter()
                 .map(|entry| entry.value().clone())
                 .collect();

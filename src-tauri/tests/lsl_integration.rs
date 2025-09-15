@@ -1,7 +1,7 @@
 // LSL Integration Tests for CI/CD Pipeline
 // These tests are designed to run in automated environments without requiring actual LSL hardware
 
-use hyperstudy_bridge::devices::lsl::{LSLDevice, LSLStreamConfig, LSLSample};
+use hyperstudy_bridge::devices::lsl::{LSLDevice, LSLSample, LSLStreamConfig};
 use hyperstudy_bridge::devices::{Device, DeviceStatus, DeviceType};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -43,18 +43,25 @@ async fn test_lsl_stream_creation() {
     };
 
     // Create outlet
-    let result = device.create_outlet("test_outlet".to_string(), config.clone()).await;
+    let result = device
+        .create_outlet("test_outlet".to_string(), config.clone())
+        .await;
     assert!(result.is_ok());
 
     // Create inlet
-    let result = device.create_inlet("test_inlet".to_string(), "TestStream".to_string()).await;
+    let result = device
+        .create_inlet("test_inlet".to_string(), "TestStream".to_string())
+        .await;
     assert!(result.is_ok());
 }
 
 /// Test LSL data flow
 #[tokio::test]
 async fn test_lsl_data_flow() {
-    let device = LSLDevice::new("data_flow_test".to_string(), "Data Flow Test Device".to_string());
+    let device = LSLDevice::new(
+        "data_flow_test".to_string(),
+        "Data Flow Test Device".to_string(),
+    );
 
     let config = LSLStreamConfig {
         channel_count: 4,
@@ -62,12 +69,18 @@ async fn test_lsl_data_flow() {
         ..Default::default()
     };
 
-    device.create_outlet("data_outlet".to_string(), config).await.unwrap();
+    device
+        .create_outlet("data_outlet".to_string(), config)
+        .await
+        .unwrap();
 
     // Create test sample
     let sample = LSLSample {
         data: vec![1.0, 2.0, 3.0, 4.0],
-        timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64(),
+        timestamp: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64(),
         metadata: HashMap::new(),
     };
 
@@ -103,7 +116,10 @@ async fn test_lsl_error_handling() {
     // Try to push to non-existent outlet
     let sample = LSLSample {
         data: vec![1.0],
-        timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64(),
+        timestamp: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64(),
         metadata: HashMap::new(),
     };
 
@@ -135,13 +151,16 @@ async fn test_lsl_time_synchronization() {
     // Time difference should be reasonable (around 10ms)
     let diff = timestamp2 - timestamp1;
     assert!(diff >= 0.01); // At least 10ms
-    assert!(diff < 0.1);   // But less than 100ms
+    assert!(diff < 0.1); // But less than 100ms
 }
 
 /// Test LSL stream discovery
 #[tokio::test]
 async fn test_lsl_stream_discovery() {
-    let device = LSLDevice::new("discovery_test".to_string(), "Discovery Test Device".to_string());
+    let device = LSLDevice::new(
+        "discovery_test".to_string(),
+        "Discovery Test Device".to_string(),
+    );
 
     // Test discovery without filter
     let streams = device.discover_streams(None).await.unwrap();
@@ -156,7 +175,10 @@ async fn test_lsl_stream_discovery() {
 /// Test LSL performance under load
 #[tokio::test]
 async fn test_lsl_performance() {
-    let device = LSLDevice::new("perf_test".to_string(), "Performance Test Device".to_string());
+    let device = LSLDevice::new(
+        "perf_test".to_string(),
+        "Performance Test Device".to_string(),
+    );
 
     let config = LSLStreamConfig {
         channel_count: 64,
@@ -164,7 +186,10 @@ async fn test_lsl_performance() {
         ..Default::default()
     };
 
-    device.create_outlet("perf_outlet".to_string(), config).await.unwrap();
+    device
+        .create_outlet("perf_outlet".to_string(), config)
+        .await
+        .unwrap();
 
     let start_time = std::time::Instant::now();
     let sample_count = 1000;
@@ -173,7 +198,10 @@ async fn test_lsl_performance() {
     for i in 0..sample_count {
         let sample = LSLSample {
             data: (0..64).map(|j| (i * 64 + j) as f64 * 0.001).collect(),
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64(),
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs_f64(),
             metadata: HashMap::new(),
         };
 
@@ -192,14 +220,20 @@ async fn test_lsl_performance() {
 async fn test_lsl_concurrent_access() {
     use std::sync::Arc;
 
-    let device = Arc::new(LSLDevice::new("concurrent_test".to_string(), "Concurrent Test Device".to_string()));
+    let device = Arc::new(LSLDevice::new(
+        "concurrent_test".to_string(),
+        "Concurrent Test Device".to_string(),
+    ));
 
     let config = LSLStreamConfig {
         channel_count: 1,
         ..Default::default()
     };
 
-    device.create_outlet("concurrent_outlet".to_string(), config).await.unwrap();
+    device
+        .create_outlet("concurrent_outlet".to_string(), config)
+        .await
+        .unwrap();
 
     let mut handles = Vec::new();
 
@@ -210,12 +244,17 @@ async fn test_lsl_concurrent_access() {
             for j in 0..10 {
                 let sample = LSLSample {
                     data: vec![i as f64 * 10.0 + j as f64],
-                    timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64(),
+                    timestamp: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs_f64(),
                     metadata: HashMap::new(),
                 };
 
                 // This should not panic or cause race conditions
-                let _result = device_clone.push_to_outlet("concurrent_outlet", sample).await;
+                let _result = device_clone
+                    .push_to_outlet("concurrent_outlet", sample)
+                    .await;
             }
         });
         handles.push(handle);
@@ -230,23 +269,30 @@ async fn test_lsl_concurrent_access() {
 /// Test LSL with timeout scenarios
 #[tokio::test]
 async fn test_lsl_timeouts() {
-    let device = LSLDevice::new("timeout_test".to_string(), "Timeout Test Device".to_string());
+    let device = LSLDevice::new(
+        "timeout_test".to_string(),
+        "Timeout Test Device".to_string(),
+    );
 
-    device.create_inlet("timeout_inlet".to_string(), "NonExistentStream".to_string()).await.unwrap();
+    device
+        .create_inlet("timeout_inlet".to_string(), "NonExistentStream".to_string())
+        .await
+        .unwrap();
 
     // Test pull with short timeout
     let result = timeout(
         Duration::from_millis(100),
-        device.pull_from_inlet("timeout_inlet", 50)
-    ).await;
+        device.pull_from_inlet("timeout_inlet", 50),
+    )
+    .await;
 
     // Should either timeout or return None quickly
     assert!(result.is_ok()); // Timeout wrapper should succeed
     let inner_result = result.unwrap();
     // The actual result might be Ok(None) or Err depending on implementation
     match inner_result {
-        Ok(None) => {}, // Expected for mock
-        Err(_) => {},   // Also acceptable
+        Ok(None) => {} // Expected for mock
+        Err(_) => {}   // Also acceptable
         Ok(Some(_)) => panic!("Unexpected data from non-existent stream"),
     }
 }
@@ -254,7 +300,10 @@ async fn test_lsl_timeouts() {
 /// Test LSL device heartbeat functionality
 #[tokio::test]
 async fn test_lsl_heartbeat() {
-    let mut device = LSLDevice::new("heartbeat_test".to_string(), "Heartbeat Test Device".to_string());
+    let mut device = LSLDevice::new(
+        "heartbeat_test".to_string(),
+        "Heartbeat Test Device".to_string(),
+    );
 
     device.connect().await.unwrap();
 
@@ -264,46 +313,68 @@ async fn test_lsl_heartbeat() {
 
     // Test heartbeat updates status appropriately
     let status = device.get_status();
-    assert!(matches!(status, DeviceStatus::Connected | DeviceStatus::Disconnected));
+    assert!(matches!(
+        status,
+        DeviceStatus::Connected | DeviceStatus::Disconnected
+    ));
 }
 
 /// Test LSL data validation
 #[tokio::test]
 async fn test_lsl_data_validation() {
-    let device = LSLDevice::new("validation_test".to_string(), "Validation Test Device".to_string());
+    let device = LSLDevice::new(
+        "validation_test".to_string(),
+        "Validation Test Device".to_string(),
+    );
 
     let config = LSLStreamConfig {
         channel_count: 2,
         ..Default::default()
     };
 
-    device.create_outlet("validation_outlet".to_string(), config).await.unwrap();
+    device
+        .create_outlet("validation_outlet".to_string(), config)
+        .await
+        .unwrap();
 
     // Test with correct channel count
     let valid_sample = LSLSample {
         data: vec![1.0, 2.0], // 2 channels as expected
-        timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64(),
+        timestamp: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64(),
         metadata: HashMap::new(),
     };
 
-    let result = device.push_to_outlet("validation_outlet", valid_sample).await;
+    let result = device
+        .push_to_outlet("validation_outlet", valid_sample)
+        .await;
     assert!(result.is_ok());
 
     // Test with incorrect channel count
     let invalid_sample = LSLSample {
         data: vec![1.0, 2.0, 3.0], // 3 channels, but expecting 2
-        timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64(),
+        timestamp: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64(),
         metadata: HashMap::new(),
     };
 
-    let result = device.push_to_outlet("validation_outlet", invalid_sample).await;
+    let result = device
+        .push_to_outlet("validation_outlet", invalid_sample)
+        .await;
     assert!(result.is_err());
 }
 
 /// Test LSL stream configuration validation
 #[tokio::test]
 async fn test_lsl_stream_config_validation() {
-    let device = LSLDevice::new("config_validation_test".to_string(), "Config Validation Test Device".to_string());
+    let device = LSLDevice::new(
+        "config_validation_test".to_string(),
+        "Config Validation Test Device".to_string(),
+    );
 
     // Test valid configuration
     let valid_config = LSLStreamConfig {
@@ -316,7 +387,9 @@ async fn test_lsl_stream_config_validation() {
         metadata: HashMap::new(),
     };
 
-    let result = device.create_outlet("valid_outlet".to_string(), valid_config).await;
+    let result = device
+        .create_outlet("valid_outlet".to_string(), valid_config)
+        .await;
     assert!(result.is_ok());
 
     // Test invalid configuration (empty name should be caught by LSLOutlet::new)
@@ -325,7 +398,9 @@ async fn test_lsl_stream_config_validation() {
         ..Default::default()
     };
 
-    let result = device.create_outlet("invalid_outlet".to_string(), invalid_config).await;
+    let result = device
+        .create_outlet("invalid_outlet".to_string(), invalid_config)
+        .await;
     assert!(result.is_err());
 }
 
@@ -344,13 +419,22 @@ async fn test_lsl_device_trait_integration() {
     device.connect().await.unwrap();
 
     let config = LSLStreamConfig::default();
-    device.create_outlet("trait_outlet".to_string(), config.clone()).await.unwrap();
-    device.create_inlet("trait_inlet".to_string(), "TestStream".to_string()).await.unwrap();
+    device
+        .create_outlet("trait_outlet".to_string(), config.clone())
+        .await
+        .unwrap();
+    device
+        .create_inlet("trait_inlet".to_string(), "TestStream".to_string())
+        .await
+        .unwrap();
 
     // Test send
     let sample = LSLSample {
         data: vec![1.0, 2.0, 3.0],
-        timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64(),
+        timestamp: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64(),
         metadata: HashMap::new(),
     };
 

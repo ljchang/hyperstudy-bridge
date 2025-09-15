@@ -1,7 +1,7 @@
 // LSL Performance Benchmarks
 // These benchmarks measure the performance characteristics of the LSL module
 
-use hyperstudy_bridge::devices::lsl::{LSLDevice, LSLStreamConfig, LSLSample};
+use hyperstudy_bridge::devices::lsl::{LSLDevice, LSLSample, LSLStreamConfig};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -12,7 +12,10 @@ pub fn bench_lsl_outlet_throughput() {
     let rt = Runtime::new().unwrap();
 
     rt.block_on(async {
-        let device = LSLDevice::new("benchmark_outlet".to_string(), "Benchmark Outlet Device".to_string());
+        let device = LSLDevice::new(
+            "benchmark_outlet".to_string(),
+            "Benchmark Outlet Device".to_string(),
+        );
 
         let config = LSLStreamConfig {
             name: "BenchmarkStream".to_string(),
@@ -21,7 +24,10 @@ pub fn bench_lsl_outlet_throughput() {
             ..Default::default()
         };
 
-        device.create_outlet("benchmark_outlet".to_string(), config).await.unwrap();
+        device
+            .create_outlet("benchmark_outlet".to_string(), config)
+            .await
+            .unwrap();
 
         let sample_count = 10000;
         let start_time = Instant::now();
@@ -29,11 +35,17 @@ pub fn bench_lsl_outlet_throughput() {
         for i in 0..sample_count {
             let sample = LSLSample {
                 data: (0..64).map(|j| (i * 64 + j) as f64 * 0.001).collect(),
-                timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64(),
+                timestamp: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs_f64(),
                 metadata: HashMap::new(),
             };
 
-            device.push_to_outlet("benchmark_outlet", sample).await.unwrap();
+            device
+                .push_to_outlet("benchmark_outlet", sample)
+                .await
+                .unwrap();
         }
 
         let duration = start_time.elapsed();
@@ -47,8 +59,16 @@ pub fn bench_lsl_outlet_throughput() {
         println!("  Data rate: {:.2} MB/s", data_rate_mbps);
 
         // Performance assertions
-        assert!(samples_per_second >= 1000.0, "Throughput too low: {} samples/sec", samples_per_second);
-        assert!(duration < Duration::from_secs(20), "Benchmark took too long: {:?}", duration);
+        assert!(
+            samples_per_second >= 1000.0,
+            "Throughput too low: {} samples/sec",
+            samples_per_second
+        );
+        assert!(
+            duration < Duration::from_secs(20),
+            "Benchmark took too long: {:?}",
+            duration
+        );
     });
 }
 
@@ -57,15 +77,24 @@ pub fn bench_lsl_latency() {
     let rt = Runtime::new().unwrap();
 
     rt.block_on(async {
-        let device = LSLDevice::new("benchmark_latency".to_string(), "Benchmark Latency Device".to_string());
+        let device = LSLDevice::new(
+            "benchmark_latency".to_string(),
+            "Benchmark Latency Device".to_string(),
+        );
 
         let config = LSLStreamConfig {
             channel_count: 1,
             ..Default::default()
         };
 
-        device.create_outlet("latency_outlet".to_string(), config.clone()).await.unwrap();
-        device.create_inlet("latency_inlet".to_string(), "BenchmarkStream".to_string()).await.unwrap();
+        device
+            .create_outlet("latency_outlet".to_string(), config.clone())
+            .await
+            .unwrap();
+        device
+            .create_inlet("latency_inlet".to_string(), "BenchmarkStream".to_string())
+            .await
+            .unwrap();
 
         let iterations = 1000;
         let mut latencies = Vec::with_capacity(iterations);
@@ -75,12 +104,18 @@ pub fn bench_lsl_latency() {
 
             let sample = LSLSample {
                 data: vec![i as f64],
-                timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64(),
+                timestamp: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs_f64(),
                 metadata: HashMap::new(),
             };
 
             // Send sample
-            device.push_to_outlet("latency_outlet", sample).await.unwrap();
+            device
+                .push_to_outlet("latency_outlet", sample)
+                .await
+                .unwrap();
 
             // Try to receive (will be None for mock, but measures the call overhead)
             let _result = device.pull_from_inlet("latency_inlet", 1).await;
@@ -103,8 +138,16 @@ pub fn bench_lsl_latency() {
         println!("  99th percentile: {:?}", p99);
 
         // Performance assertions
-        assert!(median < Duration::from_millis(10), "Median latency too high: {:?}", median);
-        assert!(p99 < Duration::from_millis(50), "99th percentile latency too high: {:?}", p99);
+        assert!(
+            median < Duration::from_millis(10),
+            "Median latency too high: {:?}",
+            median
+        );
+        assert!(
+            p99 < Duration::from_millis(50),
+            "99th percentile latency too high: {:?}",
+            p99
+        );
     });
 }
 
@@ -113,7 +156,10 @@ pub fn bench_lsl_memory_usage() {
     let rt = Runtime::new().unwrap();
 
     rt.block_on(async {
-        let device = Arc::new(LSLDevice::new("benchmark_memory".to_string(), "Benchmark Memory Device".to_string()));
+        let device = Arc::new(LSLDevice::new(
+            "benchmark_memory".to_string(),
+            "Benchmark Memory Device".to_string(),
+        ));
 
         let config = LSLStreamConfig {
             channel_count: 256,
@@ -121,7 +167,10 @@ pub fn bench_lsl_memory_usage() {
             ..Default::default()
         };
 
-        device.create_outlet("memory_outlet".to_string(), config).await.unwrap();
+        device
+            .create_outlet("memory_outlet".to_string(), config)
+            .await
+            .unwrap();
 
         // Measure initial memory
         let initial_memory = get_memory_usage();
@@ -131,11 +180,17 @@ pub fn bench_lsl_memory_usage() {
         for i in 0..sample_count {
             let sample = LSLSample {
                 data: (0..256).map(|j| (i * 256 + j) as f64).collect(),
-                timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64(),
+                timestamp: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs_f64(),
                 metadata: HashMap::new(),
             };
 
-            device.push_to_outlet("memory_outlet", sample).await.unwrap();
+            device
+                .push_to_outlet("memory_outlet", sample)
+                .await
+                .unwrap();
 
             // Periodically check memory usage
             if i % 1000 == 0 {
@@ -152,10 +207,17 @@ pub fn bench_lsl_memory_usage() {
         println!("  Final memory: {} KB", final_memory / 1024);
         println!("  Memory increase: {} KB", memory_increase / 1024);
         println!("  Samples processed: {}", sample_count);
-        println!("  Memory per sample: {} bytes", memory_increase / sample_count);
+        println!(
+            "  Memory per sample: {} bytes",
+            memory_increase / sample_count
+        );
 
         // Memory usage should be reasonable
-        assert!(memory_increase < 100 * 1024 * 1024, "Memory usage too high: {} MB", memory_increase / (1024 * 1024));
+        assert!(
+            memory_increase < 100 * 1024 * 1024,
+            "Memory usage too high: {} MB",
+            memory_increase / (1024 * 1024)
+        );
     });
 }
 
@@ -164,14 +226,20 @@ pub fn bench_lsl_concurrent_access() {
     let rt = Runtime::new().unwrap();
 
     rt.block_on(async {
-        let device = Arc::new(LSLDevice::new("benchmark_concurrent".to_string(), "Benchmark Concurrent Device".to_string()));
+        let device = Arc::new(LSLDevice::new(
+            "benchmark_concurrent".to_string(),
+            "Benchmark Concurrent Device".to_string(),
+        ));
 
         let config = LSLStreamConfig {
             channel_count: 16,
             ..Default::default()
         };
 
-        device.create_outlet("concurrent_outlet".to_string(), config).await.unwrap();
+        device
+            .create_outlet("concurrent_outlet".to_string(), config)
+            .await
+            .unwrap();
 
         let thread_count = 10;
         let samples_per_thread = 1000;
@@ -184,12 +252,20 @@ pub fn bench_lsl_concurrent_access() {
             let handle = tokio::spawn(async move {
                 for i in 0..samples_per_thread {
                     let sample = LSLSample {
-                        data: (0..16).map(|j| (thread_id * 1000 + i * 16 + j) as f64).collect(),
-                        timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64(),
+                        data: (0..16)
+                            .map(|j| (thread_id * 1000 + i * 16 + j) as f64)
+                            .collect(),
+                        timestamp: SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs_f64(),
                         metadata: HashMap::new(),
                     };
 
-                    device_clone.push_to_outlet("concurrent_outlet", sample).await.unwrap();
+                    device_clone
+                        .push_to_outlet("concurrent_outlet", sample)
+                        .await
+                        .unwrap();
                 }
             });
             handles.push(handle);
@@ -212,8 +288,16 @@ pub fn bench_lsl_concurrent_access() {
         println!("  Samples/second: {:.0}", samples_per_second);
 
         // Performance assertions
-        assert!(samples_per_second >= 5000.0, "Concurrent throughput too low: {} samples/sec", samples_per_second);
-        assert!(duration < Duration::from_secs(10), "Concurrent benchmark took too long: {:?}", duration);
+        assert!(
+            samples_per_second >= 5000.0,
+            "Concurrent throughput too low: {} samples/sec",
+            samples_per_second
+        );
+        assert!(
+            duration < Duration::from_secs(10),
+            "Concurrent benchmark took too long: {:?}",
+            duration
+        );
     });
 }
 
@@ -222,7 +306,10 @@ pub fn bench_lsl_large_data() {
     let rt = Runtime::new().unwrap();
 
     rt.block_on(async {
-        let device = LSLDevice::new("benchmark_large".to_string(), "Benchmark Large Data Device".to_string());
+        let device = LSLDevice::new(
+            "benchmark_large".to_string(),
+            "Benchmark Large Data Device".to_string(),
+        );
 
         let config = LSLStreamConfig {
             channel_count: 1024, // Large channel count
@@ -230,7 +317,10 @@ pub fn bench_lsl_large_data() {
             ..Default::default()
         };
 
-        device.create_outlet("large_outlet".to_string(), config).await.unwrap();
+        device
+            .create_outlet("large_outlet".to_string(), config)
+            .await
+            .unwrap();
 
         let sample_count = 100;
         let data_per_sample = 1024 * 8; // 1024 channels * 8 bytes per f64
@@ -241,7 +331,10 @@ pub fn bench_lsl_large_data() {
         for i in 0..sample_count {
             let sample = LSLSample {
                 data: (0..1024).map(|j| (i * 1024 + j) as f64 * 0.001).collect(),
-                timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64(),
+                timestamp: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs_f64(),
                 metadata: HashMap::new(),
             };
 
@@ -260,8 +353,16 @@ pub fn bench_lsl_large_data() {
         println!("  Throughput: {:.2} MB/s", throughput_mbps);
 
         // Performance assertions
-        assert!(throughput_mbps >= 10.0, "Large data throughput too low: {:.2} MB/s", throughput_mbps);
-        assert!(duration < Duration::from_secs(30), "Large data benchmark took too long: {:?}", duration);
+        assert!(
+            throughput_mbps >= 10.0,
+            "Large data throughput too low: {:.2} MB/s",
+            throughput_mbps
+        );
+        assert!(
+            duration < Duration::from_secs(30),
+            "Large data benchmark took too long: {:?}",
+            duration
+        );
     });
 }
 
@@ -283,7 +384,8 @@ fn get_memory_usage() -> usize {
     String::from_utf8_lossy(&output.stdout)
         .trim()
         .parse::<usize>()
-        .unwrap_or(0) * 1024 // Convert KB to bytes
+        .unwrap_or(0)
+        * 1024 // Convert KB to bytes
 }
 
 #[cfg(not(target_os = "macos"))]

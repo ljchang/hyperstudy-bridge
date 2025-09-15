@@ -1,13 +1,16 @@
 use crate::bridge::{AppState, BridgeServer};
+use crate::devices::{
+    biopac::BiopacDevice, kernel::KernelDevice, mock::MockDevice, pupil::PupilDevice,
+    ttl::TtlDevice,
+};
 use crate::devices::{Device, DeviceInfo, DeviceStatus};
-use crate::devices::{ttl::TtlDevice, kernel::KernelDevice, pupil::PupilDevice, biopac::BiopacDevice, mock::MockDevice};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, State, Emitter};
-use tracing::{info, error};
-use chrono::Utc;
+use tauri::{AppHandle, Emitter, Manager, State};
+use tracing::{error, info};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CommandResult<T> {
@@ -68,7 +71,9 @@ pub async fn start_bridge_server(
         }
     });
 
-    Ok(CommandResult::success("Bridge server started on port 9000".to_string()))
+    Ok(CommandResult::success(
+        "Bridge server started on port 9000".to_string(),
+    ))
 }
 
 #[tauri::command]
@@ -92,9 +97,7 @@ pub async fn stop_bridge_server(
 }
 
 #[tauri::command]
-pub async fn get_bridge_status(
-    state: State<'_, Arc<AppState>>,
-) -> Result<BridgeStatus, ()> {
+pub async fn get_bridge_status(state: State<'_, Arc<AppState>>) -> Result<BridgeStatus, ()> {
     let devices = state.devices.read().await;
 
     Ok(BridgeStatus {
@@ -114,53 +117,70 @@ pub async fn connect_device(
     state: State<'_, Arc<AppState>>,
     app_handle: AppHandle,
 ) -> Result<CommandResult<DeviceInfo>, ()> {
-    info!("Connecting device: {} with config: {:?}", device_type, config);
+    info!(
+        "Connecting device: {} with config: {:?}",
+        device_type, config
+    );
 
     let mut device: Box<dyn Device> = match device_type.as_str() {
         "ttl" => {
-            let port = config.get("port")
+            let port = config
+                .get("port")
                 .and_then(|v| v.as_str())
                 .unwrap_or("/dev/ttyUSB0");
             let mut ttl_device = TtlDevice::new(port.to_string());
 
             // Set up performance monitoring callback
             let state_clone = state.inner().clone();
-            ttl_device.set_performance_callback(move |device_id, latency, bytes_sent, bytes_received| {
-                let state_clone = state_clone.clone();
-                let device_id = device_id.to_string();
-                tokio::spawn(async move {
-                    state_clone.record_device_operation(&device_id, latency, bytes_sent, bytes_received).await;
-                });
-            });
+            ttl_device.set_performance_callback(
+                move |device_id, latency, bytes_sent, bytes_received| {
+                    let state_clone = state_clone.clone();
+                    let device_id = device_id.to_string();
+                    tokio::spawn(async move {
+                        state_clone
+                            .record_device_operation(
+                                &device_id,
+                                latency,
+                                bytes_sent,
+                                bytes_received,
+                            )
+                            .await;
+                    });
+                },
+            );
 
             Box::new(ttl_device)
         }
         "kernel" => {
-            let ip = config.get("ip")
+            let ip = config
+                .get("ip")
                 .and_then(|v| v.as_str())
                 .unwrap_or("192.168.1.100");
             Box::new(KernelDevice::new(ip.to_string()))
         }
         "pupil" => {
-            let url = config.get("url")
+            let url = config
+                .get("url")
                 .and_then(|v| v.as_str())
                 .unwrap_or("localhost:8081");
             Box::new(PupilDevice::new(url.to_string()))
         }
         "biopac" => {
-            let address = config.get("address")
+            let address = config
+                .get("address")
                 .and_then(|v| v.as_str())
                 .unwrap_or("localhost");
             Box::new(BiopacDevice::new(address.to_string()))
         }
-        "mock" => {
-            Box::new(MockDevice::new(
-                format!("mock_{}", uuid::Uuid::new_v4()),
-                "Mock Device".to_string()
-            ))
-        }
+        "mock" => Box::new(MockDevice::new(
+            format!("mock_{}", uuid::Uuid::new_v4()),
+            "Mock Device".to_string(),
+        )),
         _ => {
-            return Ok(CommandResult::error(format!("Unknown device type: {}", device_type)));
+            return Ok(CommandResult::error(format!(
+                "Unknown device type: {}",
+                device_type
+            )));
         }
     };
 
@@ -176,10 +196,15 @@ pub async fn connect_device(
             state.add_device(device_id.clone(), device).await;
 
             // Emit status update
-            app_handle.emit("device_status_changed", json!({
-                "device": device_id,
-                "status": "Connected"
-            })).unwrap_or_else(|e| error!("Failed to emit event: {}", e));
+            app_handle
+                .emit(
+                    "device_status_changed",
+                    json!({
+                        "device": device_id,
+                        "status": "Connected"
+                    }),
+                )
+                .unwrap_or_else(|e| error!("Failed to emit event: {}", e));
 
             Ok(CommandResult::success(info))
         }
@@ -211,12 +236,20 @@ pub async fn disconnect_device(
                 state.remove_device(&device_id).await;
 
                 // Emit status update
-                app_handle.emit("device_status_changed", json!({
-                    "device": device_id,
-                    "status": "Disconnected"
-                })).unwrap_or_else(|e| error!("Failed to emit event: {}", e));
+                app_handle
+                    .emit(
+                        "device_status_changed",
+                        json!({
+                            "device": device_id,
+                            "status": "Disconnected"
+                        }),
+                    )
+                    .unwrap_or_else(|e| error!("Failed to emit event: {}", e));
 
-                Ok(CommandResult::success(format!("Device {} disconnected", device_id)))
+                Ok(CommandResult::success(format!(
+                    "Device {} disconnected",
+                    device_id
+                )))
             }
             Err(e) => {
                 error!("Failed to disconnect device: {}", e);
@@ -224,7 +257,10 @@ pub async fn disconnect_device(
             }
         }
     } else {
-        Ok(CommandResult::error(format!("Device {} not found", device_id)))
+        Ok(CommandResult::error(format!(
+            "Device {} not found",
+            device_id
+        )))
     }
 }
 
@@ -250,7 +286,10 @@ pub async fn send_device_command(
             }
         }
     } else {
-        Ok(CommandResult::error(format!("Device {} not found", device_id)))
+        Ok(CommandResult::error(format!(
+            "Device {} not found",
+            device_id
+        )))
     }
 }
 
@@ -273,11 +312,16 @@ pub async fn send_ttl_pulse(
                 let latency_us = start_time.elapsed().as_micros() as u64;
 
                 // Emit performance metric
-                app_handle.emit("performance_metrics", json!({
-                    "device": "ttl",
-                    "operation": "pulse",
-                    "latency_us": latency_us
-                })).unwrap_or_else(|e| error!("Failed to emit event: {}", e));
+                app_handle
+                    .emit(
+                        "performance_metrics",
+                        json!({
+                            "device": "ttl",
+                            "operation": "pulse",
+                            "latency_us": latency_us
+                        }),
+                    )
+                    .unwrap_or_else(|e| error!("Failed to emit event: {}", e));
 
                 Ok(CommandResult::success(latency_us))
             }
@@ -294,23 +338,23 @@ pub async fn send_ttl_pulse(
         // Quick connect and pulse for lowest latency
         let mut device = TtlDevice::new(port);
         match device.connect().await {
-            Ok(_) => {
-                match device.send(b"PULSE\n").await {
-                    Ok(_) => {
-                        let latency_us = start_time.elapsed().as_micros() as u64;
-                        let _ = device.disconnect().await;
-                        Ok(CommandResult::success(latency_us))
-                    }
-                    Err(e) => {
-                        let _ = device.disconnect().await;
-                        Ok(CommandResult::error(e.to_string()))
-                    }
+            Ok(_) => match device.send(b"PULSE\n").await {
+                Ok(_) => {
+                    let latency_us = start_time.elapsed().as_micros() as u64;
+                    let _ = device.disconnect().await;
+                    Ok(CommandResult::success(latency_us))
                 }
-            }
-            Err(e) => Ok(CommandResult::error(e.to_string()))
+                Err(e) => {
+                    let _ = device.disconnect().await;
+                    Ok(CommandResult::error(e.to_string()))
+                }
+            },
+            Err(e) => Ok(CommandResult::error(e.to_string())),
         }
     } else {
-        Ok(CommandResult::error("TTL device not connected and no port specified".to_string()))
+        Ok(CommandResult::error(
+            "TTL device not connected and no port specified".to_string(),
+        ))
     }
 }
 
@@ -353,8 +397,9 @@ pub async fn discover_devices() -> Result<Vec<DeviceInfo>, ()> {
     if let Ok(ports) = serialport::available_ports() {
         for port in ports {
             if let serialport::SerialPortType::UsbPort(info) = port.port_type {
-                if info.product.as_deref() == Some("RP2040") ||
-                   info.manufacturer.as_deref() == Some("Adafruit") {
+                if info.product.as_deref() == Some("RP2040")
+                    || info.manufacturer.as_deref() == Some("Adafruit")
+                {
                     discovered.push(DeviceInfo {
                         id: "ttl".to_string(),
                         name: "TTL Pulse Generator".to_string(),
@@ -384,7 +429,10 @@ pub async fn get_device_metrics(
     if let Some(metrics) = state.get_device_metrics(&device_id).await {
         Ok(CommandResult::success(json!(metrics)))
     } else {
-        Ok(CommandResult::error(format!("No metrics available for device {}", device_id)))
+        Ok(CommandResult::error(format!(
+            "No metrics available for device {}",
+            device_id
+        )))
     }
 }
 
@@ -445,7 +493,10 @@ pub async fn get_device_performance_metrics(
     if let Some(metrics) = state.get_device_performance_metrics(&device_id).await {
         Ok(CommandResult::success(metrics))
     } else {
-        Ok(CommandResult::error(format!("No performance metrics available for device {}", device_id)))
+        Ok(CommandResult::error(format!(
+            "No performance metrics available for device {}",
+            device_id
+        )))
     }
 }
 
@@ -464,7 +515,10 @@ pub async fn check_ttl_latency_compliance(
     if let Some(is_compliant) = state.check_ttl_latency_compliance(&device_id).await {
         Ok(CommandResult::success(is_compliant))
     } else {
-        Ok(CommandResult::error(format!("No TTL latency data available for device {}", device_id)))
+        Ok(CommandResult::error(format!(
+            "No TTL latency data available for device {}",
+            device_id
+        )))
     }
 }
 
@@ -478,12 +532,18 @@ pub async fn reset_performance_metrics(
             // Reset specific device metrics by removing and re-adding
             state.performance_monitor.remove_device(&id).await;
             state.performance_monitor.add_device(id.clone()).await;
-            Ok(CommandResult::success(format!("Performance metrics reset for device {}", id)))
+            Ok(CommandResult::success(format!(
+                "Performance metrics reset for device {}",
+                id
+            )))
         }
         None => {
             // Create new performance monitor to reset all metrics
-            *state.performance_monitor.device_counters.write().await = std::collections::HashMap::new();
-            Ok(CommandResult::success("All performance metrics reset".to_string()))
+            *state.performance_monitor.device_counters.write().await =
+                std::collections::HashMap::new();
+            Ok(CommandResult::success(
+                "All performance metrics reset".to_string(),
+            ))
         }
     }
 }
@@ -500,9 +560,7 @@ pub struct LogEntry {
 }
 
 #[tauri::command]
-pub async fn get_logs(
-    state: State<'_, Arc<AppState>>,
-) -> Result<CommandResult<Vec<LogEntry>>, ()> {
+pub async fn get_logs(_state: State<'_, Arc<AppState>>) -> Result<CommandResult<Vec<LogEntry>>, ()> {
     // TODO: Implement log collection from the actual logging system
     // For now, return mock data or collect from tracing subscriber
     let logs = vec![
@@ -540,12 +598,18 @@ pub async fn export_logs(
     let default_filename = format!("hyperstudy_bridge_logs_{}.json", timestamp);
 
     // For now, save to a default location (in production, use file dialog)
-    let app_data_dir = app_handle.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
     let logs_dir = app_data_dir.join("logs");
 
     // Create logs directory if it doesn't exist
     if let Err(e) = std::fs::create_dir_all(&logs_dir) {
-        return Ok(CommandResult::error(format!("Failed to create logs directory: {}", e)));
+        return Ok(CommandResult::error(format!(
+            "Failed to create logs directory: {}",
+            e
+        )));
     }
 
     let file_path = logs_dir.join(&default_filename);
@@ -558,7 +622,10 @@ pub async fn export_logs(
             match json_data {
                 Ok(json_str) => {
                     if let Err(e) = file.write_all(json_str.as_bytes()) {
-                        Ok(CommandResult::error(format!("Failed to write log file: {}", e)))
+                        Ok(CommandResult::error(format!(
+                            "Failed to write log file: {}",
+                            e
+                        )))
                     } else {
                         Ok(CommandResult::success(json!({
                             "path": file_path.to_string_lossy(),
@@ -570,7 +637,10 @@ pub async fn export_logs(
                 Err(e) => Ok(CommandResult::error(e)),
             }
         }
-        Err(e) => Ok(CommandResult::error(format!("Failed to create log file: {}", e))),
+        Err(e) => Ok(CommandResult::error(format!(
+            "Failed to create log file: {}",
+            e
+        ))),
     }
 }
 
@@ -578,5 +648,8 @@ pub async fn export_logs(
 pub async fn set_log_level(level: String) -> Result<CommandResult<String>, ()> {
     // TODO: Implement dynamic log level changes
     info!("Log level change requested: {}", level);
-    Ok(CommandResult::success(format!("Log level set to {}", level)))
+    Ok(CommandResult::success(format!(
+        "Log level set to {}",
+        level
+    )))
 }

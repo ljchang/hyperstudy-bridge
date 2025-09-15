@@ -109,7 +109,8 @@ impl StreamInfo {
             ChannelFormat::Float32,
             device_id.to_string(),
         );
-        info.metadata.insert("unit".to_string(), "optical_density".to_string());
+        info.metadata
+            .insert("unit".to_string(), "optical_density".to_string());
         info
     }
 
@@ -118,12 +119,13 @@ impl StreamInfo {
         let mut info = Self::new(
             format!("{}_Gaze", device_id),
             StreamType::Gaze,
-            3, // x, y, confidence
+            3,     // x, y, confidence
             120.0, // Typical eye tracker sampling rate
             ChannelFormat::Float32,
             device_id.to_string(),
         );
-        info.metadata.insert("unit".to_string(), "normalized".to_string());
+        info.metadata
+            .insert("unit".to_string(), "normalized".to_string());
         info
     }
 
@@ -137,7 +139,8 @@ impl StreamInfo {
             ChannelFormat::Float32,
             device_id.to_string(),
         );
-        info.metadata.insert("unit".to_string(), "microvolts".to_string());
+        info.metadata
+            .insert("unit".to_string(), "microvolts".to_string());
         info
     }
 
@@ -212,9 +215,7 @@ impl SampleData {
                 }
                 bytes
             }
-            SampleData::String(data) => {
-                serde_json::to_vec(data).unwrap_or_default()
-            }
+            SampleData::String(data) => serde_json::to_vec(data).unwrap_or_default(),
             SampleData::Int32(data) => {
                 let mut bytes = Vec::with_capacity(data.len() * 4);
                 for &value in data {
@@ -229,9 +230,7 @@ impl SampleData {
                 }
                 bytes
             }
-            SampleData::Int8(data) => {
-                data.iter().map(|&x| x as u8).collect()
-            }
+            SampleData::Int8(data) => data.iter().map(|&x| x as u8).collect(),
         }
     }
 }

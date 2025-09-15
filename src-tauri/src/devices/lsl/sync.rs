@@ -1,7 +1,7 @@
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
@@ -149,8 +149,10 @@ impl TimeSync {
         quality.last_sync_time = start_time;
         quality.status = SyncStatus::Synced;
 
-        debug!("Time synchronization completed: offset = {}ns, accuracy = {}ns",
-               offset_ns, quality.accuracy_ns);
+        debug!(
+            "Time synchronization completed: offset = {}ns, accuracy = {}ns",
+            offset_ns, quality.accuracy_ns
+        );
 
         Ok(())
     }
@@ -204,7 +206,8 @@ impl TimeSync {
         let current_time = self.system_time();
         let time_since_sync = current_time - quality.last_sync_time;
 
-        if time_since_sync > 300.0 { // 5 minutes
+        if time_since_sync > 300.0 {
+            // 5 minutes
             // Simulate drift detection
             quality.drift_ppm = 10.0; // 10 ppm drift
             quality.status = SyncStatus::Drifting;
@@ -271,7 +274,7 @@ impl TimeSync {
 }
 
 /// Utility functions for time synchronization
-
+///
 /// Convert nanoseconds to seconds
 pub fn ns_to_seconds(ns: u64) -> f64 {
     ns as f64 / 1_000_000_000.0

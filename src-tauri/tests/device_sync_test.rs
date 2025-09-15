@@ -1,12 +1,15 @@
 use hyperstudy_bridge::bridge::AppState;
-use hyperstudy_bridge::devices::{Device, DeviceType, DeviceStatus, DeviceConfig};
+use hyperstudy_bridge::devices::{Device, DeviceConfig, DeviceStatus, DeviceType};
 use hyperstudy_bridge::performance::PerformanceMonitor;
-use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use std::collections::HashMap;
-use tokio::sync::{RwLock, Mutex, mpsc};
-use tokio::time::timeout;
 use serde_json::json;
+use std::collections::HashMap;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::time::timeout;
 use uuid::Uuid;
 
 mod common;
@@ -48,7 +51,11 @@ mod multi_device_sync_tests {
                     let result = device.send(sync_operation_data).await;
                     (device_id_clone, operation_time, result)
                 } else {
-                    (device_id_clone, operation_time, Err(hyperstudy_bridge::devices::DeviceError::NotConnected))
+                    (
+                        device_id_clone,
+                        operation_time,
+                        Err(hyperstudy_bridge::devices::DeviceError::NotConnected),
+                    )
                 }
             });
             operation_tasks.push(task);
@@ -65,11 +72,17 @@ mod multi_device_sync_tests {
 
         // Verify all operations completed successfully
         for (device_id, _, result) in &operation_results {
-            assert!(result.is_ok(), "Operation failed for device {}: {:?}", device_id, result);
+            assert!(
+                result.is_ok(),
+                "Operation failed for device {}: {:?}",
+                device_id,
+                result
+            );
         }
 
         // Verify operations were reasonably synchronized (within 100ms of each other)
-        let operation_times: Vec<_> = operation_results.iter()
+        let operation_times: Vec<_> = operation_results
+            .iter()
             .map(|(_, time, _)| time.duration_since(operation_start))
             .collect();
 
@@ -77,11 +90,18 @@ mod multi_device_sync_tests {
         let max_time = operation_times.iter().max().unwrap();
         let time_spread = max_time.saturating_sub(*min_time);
 
-        println!("Multi-device sync: {} devices, time spread: {:?}, total time: {:?}",
-            devices.len(), time_spread, total_operation_time);
+        println!(
+            "Multi-device sync: {} devices, time spread: {:?}, total time: {:?}",
+            devices.len(),
+            time_spread,
+            total_operation_time
+        );
 
-        assert!(time_spread.as_millis() < 100,
-            "Device operations not well synchronized, time spread: {:?}", time_spread);
+        assert!(
+            time_spread.as_millis() < 100,
+            "Device operations not well synchronized, time spread: {:?}",
+            time_spread
+        );
 
         fixture.cleanup().await;
     }
@@ -130,14 +150,24 @@ mod multi_device_sync_tests {
 
         // Verify operations were performed in order with correct timing
         for i in 1..operation_times.len() {
-            let interval = operation_times[i].duration_since(operation_times[i-1]);
+            let interval = operation_times[i].duration_since(operation_times[i - 1]);
             let expected_interval = operation_interval;
 
             // Allow for some timing variance (±10ms)
-            assert!(interval.as_millis() >= expected_interval.as_millis() - 10,
-                "Operation {} too fast: {:?} vs expected {:?}", i, interval, expected_interval);
-            assert!(interval.as_millis() <= expected_interval.as_millis() + 20,
-                "Operation {} too slow: {:?} vs expected {:?}", i, interval, expected_interval);
+            assert!(
+                interval.as_millis() >= expected_interval.as_millis() - 10,
+                "Operation {} too fast: {:?} vs expected {:?}",
+                i,
+                interval,
+                expected_interval
+            );
+            assert!(
+                interval.as_millis() <= expected_interval.as_millis() + 20,
+                "Operation {} too slow: {:?} vs expected {:?}",
+                i,
+                interval,
+                expected_interval
+            );
         }
 
         println!("Ordered operations completed with proper timing intervals");
@@ -150,13 +180,14 @@ mod multi_device_sync_tests {
         let mut fixture = TestFixture::new().await;
 
         // Create multiple devices
-        let device_ids: Vec<_> = (0..10).map(|_| {
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    fixture.add_mock_device(DeviceType::Mock).await
+        let device_ids: Vec<_> = (0..10)
+            .map(|_| {
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current()
+                        .block_on(async { fixture.add_mock_device(DeviceType::Mock).await })
                 })
             })
-        }).collect();
+            .collect();
 
         // Perform rapid state changes across all devices
         for cycle in 0..5 {
@@ -171,8 +202,13 @@ mod multi_device_sync_tests {
             // Verify all devices are connected
             for device_id in &device_ids {
                 let status = fixture.app_state.get_device_status(device_id).await;
-                assert_eq!(status, Some(DeviceStatus::Connected),
-                    "Device {} not connected in cycle {}", device_id, cycle);
+                assert_eq!(
+                    status,
+                    Some(DeviceStatus::Connected),
+                    "Device {} not connected in cycle {}",
+                    device_id,
+                    cycle
+                );
             }
 
             // Perform operations on all devices
@@ -194,8 +230,13 @@ mod multi_device_sync_tests {
             // Verify all devices are disconnected
             for device_id in &device_ids {
                 let status = fixture.app_state.get_device_status(device_id).await;
-                assert_eq!(status, Some(DeviceStatus::Disconnected),
-                    "Device {} not disconnected in cycle {}", device_id, cycle);
+                assert_eq!(
+                    status,
+                    Some(DeviceStatus::Disconnected),
+                    "Device {} not disconnected in cycle {}",
+                    device_id,
+                    cycle
+                );
             }
         }
 
@@ -249,22 +290,32 @@ mod multi_device_sync_tests {
             },
             concurrent_workers,
             operations_per_worker,
-        ).await;
+        )
+        .await;
 
         // Analyze concurrent access performance
         let avg_latency = latencies.iter().sum::<Duration>() / latencies.len() as u32;
         let max_latency = latencies.iter().max().unwrap();
 
         println!("Concurrent multi-device access:");
-        println!("  Workers: {}, Operations per worker: {}", concurrent_workers, operations_per_worker);
+        println!(
+            "  Workers: {}, Operations per worker: {}",
+            concurrent_workers, operations_per_worker
+        );
         println!("  Average latency: {:?}", avg_latency);
         println!("  Max latency: {:?}", max_latency);
 
         // Verify reasonable performance under concurrent access
-        assert!(avg_latency.as_millis() < 50,
-            "Average latency too high under concurrent access: {:?}", avg_latency);
-        assert!(max_latency.as_millis() < 200,
-            "Max latency too high under concurrent access: {:?}", max_latency);
+        assert!(
+            avg_latency.as_millis() < 50,
+            "Average latency too high under concurrent access: {:?}",
+            avg_latency
+        );
+        assert!(
+            max_latency.as_millis() < 200,
+            "Max latency too high under concurrent access: {:?}",
+            max_latency
+        );
 
         fixture.cleanup().await;
     }
@@ -280,13 +331,14 @@ mod time_alignment_tests {
         let mut fixture = TestFixture::new().await;
 
         // Add devices for timestamp testing
-        let device_ids: Vec<_> = (0..3).map(|_| {
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    fixture.add_mock_device(DeviceType::Mock).await
+        let device_ids: Vec<_> = (0..3)
+            .map(|_| {
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current()
+                        .block_on(async { fixture.add_mock_device(DeviceType::Mock).await })
                 })
             })
-        }).collect();
+            .collect();
 
         // Connect devices
         for device_id in &device_ids {
@@ -334,8 +386,12 @@ mod time_alignment_tests {
         // Verify timestamp alignment (should be within 50ms of sync timestamp)
         for (device_id, timestamp) in &operation_timestamps {
             let time_diff = timestamp.abs_diff(sync_timestamp);
-            assert!(time_diff < 50,
-                "Device {} timestamp not aligned: {}ms difference", device_id, time_diff);
+            assert!(
+                time_diff < 50,
+                "Device {} timestamp not aligned: {}ms difference",
+                device_id,
+                time_diff
+            );
         }
 
         // Verify timestamps are close to each other (within 20ms)
@@ -348,8 +404,11 @@ mod time_alignment_tests {
         println!("  Devices: {}", device_ids.len());
         println!("  Timestamp spread: {}ms", timestamp_spread);
 
-        assert!(timestamp_spread < 20,
-            "Device timestamps not well synchronized: {}ms spread", timestamp_spread);
+        assert!(
+            timestamp_spread < 20,
+            "Device timestamps not well synchronized: {}ms spread",
+            timestamp_spread
+        );
 
         fixture.cleanup().await;
     }
@@ -392,8 +451,10 @@ mod time_alignment_tests {
             }
 
             // Analyze timing precision
-            let avg_interval = actual_intervals.iter().sum::<Duration>() / actual_intervals.len() as u32;
-            let max_deviation = actual_intervals.iter()
+            let avg_interval =
+                actual_intervals.iter().sum::<Duration>() / actual_intervals.len() as u32;
+            let max_deviation = actual_intervals
+                .iter()
                 .map(|interval| interval.as_millis().abs_diff(target_interval.as_millis()))
                 .max()
                 .unwrap();
@@ -404,9 +465,12 @@ mod time_alignment_tests {
 
             // Verify timing precision (allow ±5ms deviation for target intervals >= 10ms)
             let allowed_deviation = if target_interval_ms >= 10 { 5 } else { 2 };
-            assert!(max_deviation <= allowed_deviation,
+            assert!(
+                max_deviation <= allowed_deviation,
                 "Timing precision too low for {}ms intervals: {}ms max deviation",
-                target_interval_ms, max_deviation);
+                target_interval_ms,
+                max_deviation
+            );
         }
 
         fixture.cleanup().await;
@@ -444,7 +508,10 @@ mod time_alignment_tests {
                 let operation_start = Instant::now();
                 if let Some(device_lock) = fixture.app_state.get_device(device_id).await {
                     let mut device = device_lock.write().await;
-                    device.send(format!("seq_{}_{}", sequence, index).as_bytes()).await.unwrap();
+                    device
+                        .send(format!("seq_{}_{}", sequence, index).as_bytes())
+                        .await
+                        .unwrap();
                 }
                 let operation_duration = operation_start.elapsed();
                 device_timings.push((device_id.clone(), operation_start, operation_duration));
@@ -461,7 +528,7 @@ mod time_alignment_tests {
 
         for (_, device_timings) in &correlation_data {
             for i in 1..device_timings.len() {
-                let prev_time = device_timings[i-1].1;
+                let prev_time = device_timings[i - 1].1;
                 let curr_time = device_timings[i].1;
                 let interval = curr_time.duration_since(prev_time);
                 inter_device_intervals.push(interval);
@@ -469,7 +536,8 @@ mod time_alignment_tests {
         }
 
         // Verify consistent inter-device timing
-        let avg_interval = inter_device_intervals.iter().sum::<Duration>() / inter_device_intervals.len() as u32;
+        let avg_interval =
+            inter_device_intervals.iter().sum::<Duration>() / inter_device_intervals.len() as u32;
         let min_interval = inter_device_intervals.iter().min().unwrap();
         let max_interval = inter_device_intervals.iter().max().unwrap();
         let interval_variance = max_interval.saturating_sub(*min_interval);
@@ -479,8 +547,11 @@ mod time_alignment_tests {
         println!("  Interval variance: {:?}", interval_variance);
 
         // Verify consistent timing (variance should be small)
-        assert!(interval_variance.as_millis() < 20,
-            "High variance in inter-device timing: {:?}", interval_variance);
+        assert!(
+            interval_variance.as_millis() < 20,
+            "High variance in inter-device timing: {:?}",
+            interval_variance
+        );
 
         fixture.cleanup().await;
     }
@@ -528,23 +599,37 @@ mod time_alignment_tests {
         let expected_operation_rate = 1000.0 / operation_interval.as_millis() as f64;
 
         // Calculate timing drift
-        let expected_final_time = start_time + Duration::from_millis(operation_count * operation_interval.as_millis() as u64);
+        let expected_final_time = start_time
+            + Duration::from_millis(operation_count * operation_interval.as_millis() as u64);
         let actual_final_time = operation_times.last().unwrap();
         let timing_drift = actual_final_time.duration_since(expected_final_time);
 
         println!("Long-term timing stability:");
         println!("  Duration: {:?}", actual_duration);
-        println!("  Operations: {} (expected ~{})", operation_count, expected_operations);
-        println!("  Operation rate: {:.1} Hz (expected {:.1} Hz)", actual_operation_rate, expected_operation_rate);
+        println!(
+            "  Operations: {} (expected ~{})",
+            operation_count, expected_operations
+        );
+        println!(
+            "  Operation rate: {:.1} Hz (expected {:.1} Hz)",
+            actual_operation_rate, expected_operation_rate
+        );
         println!("  Timing drift: {:?}", timing_drift);
 
         // Verify timing stability
-        assert!(timing_drift.as_millis() < 100,
-            "Excessive timing drift over long period: {:?}", timing_drift);
+        assert!(
+            timing_drift.as_millis() < 100,
+            "Excessive timing drift over long period: {:?}",
+            timing_drift
+        );
 
-        let rate_error = (actual_operation_rate - expected_operation_rate).abs() / expected_operation_rate;
-        assert!(rate_error < 0.05,
-            "Operation rate drift too high: {:.1}% error", rate_error * 100.0);
+        let rate_error =
+            (actual_operation_rate - expected_operation_rate).abs() / expected_operation_rate;
+        assert!(
+            rate_error < 0.05,
+            "Operation rate drift too high: {:.1}% error",
+            rate_error * 100.0
+        );
 
         fixture.cleanup().await;
     }
@@ -560,13 +645,14 @@ mod data_integrity_tests {
         let mut fixture = TestFixture::new().await;
 
         // Create multiple devices for data consistency testing
-        let device_ids: Vec<_> = (0..5).map(|_| {
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    fixture.add_mock_device(DeviceType::Mock).await
+        let device_ids: Vec<_> = (0..5)
+            .map(|_| {
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current()
+                        .block_on(async { fixture.add_mock_device(DeviceType::Mock).await })
                 })
             })
-        }).collect();
+            .collect();
 
         // Connect all devices
         for device_id in &device_ids {
@@ -598,20 +684,31 @@ mod data_integrity_tests {
                 if let Some(device_lock) = fixture.app_state.get_device(device_id).await {
                     let device = device_lock.read().await;
                     // Cast to TestMockDevice to access test-specific methods
-                    if let Some(mock_device) = (device.as_ref() as &dyn std::any::Any)
-                        .downcast_ref::<TestMockDevice>() {
+                    if let Some(mock_device) =
+                        (device.as_ref() as &dyn std::any::Any).downcast_ref::<TestMockDevice>()
+                    {
                         let sent_data = mock_device.get_sent_data().await;
-                        assert!(sent_data.len() >= data_index + 1,
-                            "Device {} missing data for index {}", device_id, data_index);
-                        assert_eq!(sent_data[data_index], *test_data,
-                            "Data inconsistency in device {} at index {}", device_id, data_index);
+                        assert!(
+                            sent_data.len() >= data_index + 1,
+                            "Device {} missing data for index {}",
+                            device_id,
+                            data_index
+                        );
+                        assert_eq!(
+                            sent_data[data_index], *test_data,
+                            "Data inconsistency in device {} at index {}",
+                            device_id, data_index
+                        );
                     }
                 }
             }
         }
 
-        println!("Data consistency verified across {} devices for {} data sets",
-            device_ids.len(), test_data_sets.len());
+        println!(
+            "Data consistency verified across {} devices for {} data sets",
+            device_ids.len(),
+            test_data_sets.len()
+        );
 
         fixture.cleanup().await;
     }
@@ -629,7 +726,9 @@ mod data_integrity_tests {
         }
 
         // Send ordered data and verify order preservation
-        let ordered_data = (0..20).map(|i| format!("order_{:03}", i).into_bytes()).collect::<Vec<_>>();
+        let ordered_data = (0..20)
+            .map(|i| format!("order_{:03}", i).into_bytes())
+            .collect::<Vec<_>>();
 
         // Send data in order
         for data in &ordered_data {
@@ -642,21 +741,31 @@ mod data_integrity_tests {
         // Verify order preservation
         if let Some(device_lock) = fixture.app_state.get_device(&device_id).await {
             let device = device_lock.read().await;
-            if let Some(mock_device) = (device.as_ref() as &dyn std::any::Any)
-                .downcast_ref::<TestMockDevice>() {
+            if let Some(mock_device) =
+                (device.as_ref() as &dyn std::any::Any).downcast_ref::<TestMockDevice>()
+            {
                 let sent_data = mock_device.get_sent_data().await;
 
-                assert_eq!(sent_data.len(), ordered_data.len(),
-                    "Incorrect number of data items received");
+                assert_eq!(
+                    sent_data.len(),
+                    ordered_data.len(),
+                    "Incorrect number of data items received"
+                );
 
                 for (index, expected_data) in ordered_data.iter().enumerate() {
-                    assert_eq!(sent_data[index], *expected_data,
-                        "Data order not preserved at index {}", index);
+                    assert_eq!(
+                        sent_data[index], *expected_data,
+                        "Data order not preserved at index {}",
+                        index
+                    );
                 }
             }
         }
 
-        println!("Data ordering preserved for {} sequential items", ordered_data.len());
+        println!(
+            "Data ordering preserved for {} sequential items",
+            ordered_data.len()
+        );
 
         fixture.cleanup().await;
     }
@@ -711,23 +820,32 @@ mod data_integrity_tests {
         // Verify data integrity
         if let Some(device_lock) = fixture.app_state.get_device(&device_id).await {
             let device = device_lock.read().await;
-            if let Some(mock_device) = (device.as_ref() as &dyn std::any::Any)
-                .downcast_ref::<TestMockDevice>() {
+            if let Some(mock_device) =
+                (device.as_ref() as &dyn std::any::Any).downcast_ref::<TestMockDevice>()
+            {
                 let received_data = mock_device.get_sent_data().await;
 
-                assert_eq!(received_data.len(), all_expected_data.len(),
-                    "Data count mismatch under concurrent access");
+                assert_eq!(
+                    received_data.len(),
+                    all_expected_data.len(),
+                    "Data count mismatch under concurrent access"
+                );
 
                 // Verify all expected data was received (order may vary due to concurrency)
                 for expected_item in &all_expected_data {
-                    assert!(received_data.contains(expected_item),
-                        "Missing data item: {:?}", String::from_utf8_lossy(expected_item));
+                    assert!(
+                        received_data.contains(expected_item),
+                        "Missing data item: {:?}",
+                        String::from_utf8_lossy(expected_item)
+                    );
                 }
             }
         }
 
-        println!("Data integrity verified under concurrent access: {} workers, {} items per worker",
-            concurrent_workers, data_per_worker);
+        println!(
+            "Data integrity verified under concurrent access: {} workers, {} items per worker",
+            concurrent_workers, data_per_worker
+        );
 
         fixture.cleanup().await;
     }
@@ -768,32 +886,46 @@ mod data_integrity_tests {
             // Verify data integrity
             if let Some(device_lock) = fixture.app_state.get_device(&device_id).await {
                 let device = device_lock.read().await;
-                if let Some(mock_device) = (device.as_ref() as &dyn std::any::Any)
-                    .downcast_ref::<TestMockDevice>() {
+                if let Some(mock_device) =
+                    (device.as_ref() as &dyn std::any::Any).downcast_ref::<TestMockDevice>()
+                {
                     let sent_data = mock_device.get_sent_data().await;
                     let received_data = sent_data.last().unwrap();
 
-                    assert_eq!(received_data.len(), large_data.len(),
-                        "Large data size mismatch: {} bytes", data_size);
+                    assert_eq!(
+                        received_data.len(),
+                        large_data.len(),
+                        "Large data size mismatch: {} bytes",
+                        data_size
+                    );
 
                     // Verify data content
-                    assert_eq!(*received_data, large_data,
-                        "Large data content corruption for {} byte transfer", data_size);
+                    assert_eq!(
+                        *received_data, large_data,
+                        "Large data content corruption for {} byte transfer",
+                        data_size
+                    );
 
                     // Verify checksum
-                    let received_checksum_bytes = &received_data[data_size..data_size+4];
+                    let received_checksum_bytes = &received_data[data_size..data_size + 4];
                     let received_checksum = u32::from_be_bytes([
                         received_checksum_bytes[0],
                         received_checksum_bytes[1],
                         received_checksum_bytes[2],
-                        received_checksum_bytes[3]
+                        received_checksum_bytes[3],
                     ]);
-                    assert_eq!(received_checksum, checksum,
-                        "Checksum mismatch for {} byte transfer", data_size);
+                    assert_eq!(
+                        received_checksum, checksum,
+                        "Checksum mismatch for {} byte transfer",
+                        data_size
+                    );
                 }
             }
 
-            println!("Large data transfer integrity verified: {} bytes", data_size);
+            println!(
+                "Large data transfer integrity verified: {} bytes",
+                data_size
+            );
         }
 
         fixture.cleanup().await;
@@ -835,8 +967,9 @@ mod lsl_integration_tests {
         // Verify LSL stream data handling
         if let Some(device_lock) = fixture.app_state.get_device(&lsl_device_id).await {
             let device = device_lock.read().await;
-            if let Some(mock_device) = (device.as_ref() as &dyn std::any::Any)
-                .downcast_ref::<TestMockDevice>() {
+            if let Some(mock_device) =
+                (device.as_ref() as &dyn std::any::Any).downcast_ref::<TestMockDevice>()
+            {
                 let sent_data = mock_device.get_sent_data().await;
                 assert_eq!(sent_data.len(), stream_data_samples.len());
 
@@ -888,7 +1021,10 @@ mod lsl_integration_tests {
             for (stream_id, device_id) in stream_device_ids.iter().enumerate() {
                 let state = fixture.app_state.clone();
                 let device_id_clone = device_id.clone();
-                let sample_data = format!("stream_{}_sample_{}_ts_{}", stream_id, sample_index, sync_timestamp);
+                let sample_data = format!(
+                    "stream_{}_sample_{}_ts_{}",
+                    stream_id, sample_index, sync_timestamp
+                );
 
                 let task = tokio::spawn(async move {
                     if let Some(device_lock) = state.get_device(&device_id_clone).await {
@@ -912,14 +1048,19 @@ mod lsl_integration_tests {
             let max_ts = sample_timestamps.iter().max().unwrap();
             let timestamp_spread = max_ts - min_ts;
 
-            assert!(timestamp_spread <= 10,
-                "Stream timestamps not synchronized: {}ms spread", timestamp_spread);
+            assert!(
+                timestamp_spread <= 10,
+                "Stream timestamps not synchronized: {}ms spread",
+                timestamp_spread
+            );
 
             tokio::time::sleep(sync_interval).await;
         }
 
-        println!("Multi-stream synchronization test completed: {} streams, {} samples per stream",
-            stream_count, samples_per_stream);
+        println!(
+            "Multi-stream synchronization test completed: {} streams, {} samples per stream",
+            stream_count, samples_per_stream
+        );
 
         fixture.cleanup().await;
     }
@@ -961,24 +1102,34 @@ mod lsl_integration_tests {
         // Verify all samples were buffered correctly
         if let Some(device_lock) = fixture.app_state.get_device(&device_id).await {
             let device = device_lock.read().await;
-            if let Some(mock_device) = (device.as_ref() as &dyn std::any::Any)
-                .downcast_ref::<TestMockDevice>() {
+            if let Some(mock_device) =
+                (device.as_ref() as &dyn std::any::Any).downcast_ref::<TestMockDevice>()
+            {
                 let buffered_data = mock_device.get_sent_data().await;
 
-                assert_eq!(buffered_data.len(), high_frequency_samples,
-                    "Sample count mismatch in buffering test");
+                assert_eq!(
+                    buffered_data.len(),
+                    high_frequency_samples,
+                    "Sample count mismatch in buffering test"
+                );
 
                 // Verify sample order and content
                 for (index, sample_data) in buffered_data.iter().enumerate() {
                     let expected_sample = format!("hf_sample_{:06}", index);
-                    assert_eq!(*sample_data, expected_sample.as_bytes(),
-                        "Sample data mismatch at index {}", index);
+                    assert_eq!(
+                        *sample_data,
+                        expected_sample.as_bytes(),
+                        "Sample data mismatch at index {}",
+                        index
+                    );
                 }
             }
         }
 
-        println!("Stream buffering test: {} samples at {:.0} Hz",
-            high_frequency_samples, actual_sample_rate);
+        println!(
+            "Stream buffering test: {} samples at {:.0} Hz",
+            high_frequency_samples, actual_sample_rate
+        );
 
         fixture.cleanup().await;
     }
@@ -1010,8 +1161,8 @@ mod event_correlation_tests {
 
         // Test event correlation across devices
         let event_sequences = vec![
-            ("trigger_start", vec![0, 1, 2]), // TTL -> Kernel -> Pupil
-            ("marker_event", vec![1, 0]),    // Kernel -> TTL
+            ("trigger_start", vec![0, 1, 2]),  // TTL -> Kernel -> Pupil
+            ("marker_event", vec![1, 0]),      // Kernel -> TTL
             ("recording_sync", vec![2, 1, 0]), // Pupil -> Kernel -> TTL
         ];
 
@@ -1035,8 +1186,11 @@ mod event_correlation_tests {
                 let step_duration = step_start.elapsed();
 
                 // Verify event timing (each step should complete quickly)
-                assert!(step_duration.as_millis() < 50,
-                    "Event step took too long: {:?}", step_duration);
+                assert!(
+                    step_duration.as_millis() < 50,
+                    "Event step took too long: {:?}",
+                    step_duration
+                );
 
                 // Small delay between correlated events
                 if step < device_sequence.len() - 1 {
@@ -1048,23 +1202,34 @@ mod event_correlation_tests {
             println!("  Sequence completed in: {:?}", total_sequence_time);
 
             // Verify sequence completed in reasonable time
-            assert!(total_sequence_time.as_millis() < 200,
-                "Event sequence took too long: {:?}", total_sequence_time);
+            assert!(
+                total_sequence_time.as_millis() < 200,
+                "Event sequence took too long: {:?}",
+                total_sequence_time
+            );
         }
 
         // Verify all events were recorded in correct devices
         for (device_index, device_id) in device_ids.iter().enumerate() {
             if let Some(device_lock) = fixture.app_state.get_device(device_id).await {
                 let device = device_lock.read().await;
-                if let Some(mock_device) = (device.as_ref() as &dyn std::any::Any)
-                    .downcast_ref::<TestMockDevice>() {
+                if let Some(mock_device) =
+                    (device.as_ref() as &dyn std::any::Any).downcast_ref::<TestMockDevice>()
+                {
                     let device_data = mock_device.get_sent_data().await;
 
                     // Each device should have received events from the sequences it participated in
-                    assert!(!device_data.is_empty(),
-                        "Device {} received no events", device_index);
+                    assert!(
+                        !device_data.is_empty(),
+                        "Device {} received no events",
+                        device_index
+                    );
 
-                    println!("Device {} received {} events", device_index, device_data.len());
+                    println!(
+                        "Device {} received {} events",
+                        device_index,
+                        device_data.len()
+                    );
                 }
             }
         }
@@ -1077,15 +1242,20 @@ mod event_correlation_tests {
         let mut fixture = TestFixture::new().await;
 
         // Add performance monitoring for timestamp tracking
-        let device_ids: Vec<_> = (0..3).map(|_| {
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    let device_id = fixture.add_mock_device(DeviceType::Mock).await;
-                    fixture.performance_monitor.add_device(device_id.clone()).await;
-                    device_id
+        let device_ids: Vec<_> = (0..3)
+            .map(|_| {
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        let device_id = fixture.add_mock_device(DeviceType::Mock).await;
+                        fixture
+                            .performance_monitor
+                            .add_device(device_id.clone())
+                            .await;
+                        device_id
+                    })
                 })
             })
-        }).collect();
+            .collect();
 
         // Connect all devices
         for device_id in &device_ids {
@@ -1124,12 +1294,14 @@ mod event_correlation_tests {
                     let operation_time = operation_start.elapsed();
 
                     // Record operation with performance monitor
-                    monitor.record_device_operation(
-                        &device_id_clone,
-                        operation_time,
-                        event_data.len() as u64,
-                        0,
-                    ).await;
+                    monitor
+                        .record_device_operation(
+                            &device_id_clone,
+                            operation_time,
+                            event_data.len() as u64,
+                            0,
+                        )
+                        .await;
 
                     (device_id_clone, event_timestamp, operation_time)
                 });
@@ -1149,8 +1321,11 @@ mod event_correlation_tests {
             let max_timestamp = timestamps.iter().max().unwrap();
             let timestamp_spread = max_timestamp - min_timestamp;
 
-            assert!(timestamp_spread <= 10,
-                "Event timestamps not correlated: {}ms spread", timestamp_spread);
+            assert!(
+                timestamp_spread <= 10,
+                "Event timestamps not correlated: {}ms spread",
+                timestamp_spread
+            );
 
             // Small delay between event sets
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -1158,16 +1333,25 @@ mod event_correlation_tests {
 
         // Verify performance metrics show correlated events
         for device_id in &device_ids {
-            let metrics = fixture.performance_monitor.get_device_metrics(device_id).await;
+            let metrics = fixture
+                .performance_monitor
+                .get_device_metrics(device_id)
+                .await;
             assert!(metrics.is_some());
 
             let device_metrics = metrics.unwrap();
-            assert_eq!(device_metrics.messages_sent, correlation_events as u64,
-                "Incorrect event count for device {}", device_id);
+            assert_eq!(
+                device_metrics.messages_sent, correlation_events as u64,
+                "Incorrect event count for device {}",
+                device_id
+            );
         }
 
-        println!("Event timestamp correlation test completed: {} events across {} devices",
-            correlation_events, device_ids.len());
+        println!(
+            "Event timestamp correlation test completed: {} events across {} devices",
+            correlation_events,
+            device_ids.len()
+        );
 
         fixture.cleanup().await;
     }
@@ -1199,14 +1383,14 @@ mod event_correlation_tests {
 
         // Define complex workflow: Experiment session simulation
         let workflow_steps = vec![
-            ("session_start", vec![0]), // TTL triggers session start
+            ("session_start", vec![0]),         // TTL triggers session start
             ("recording_begin", vec![1, 2, 3]), // Start recording on all data devices
-            ("trial_start", vec![0]), // TTL marks trial start
-            ("stimulus_present", vec![1]), // Kernel presents stimulus
-            ("response_capture", vec![2, 3]), // Pupil and Biopac capture response
-            ("trial_end", vec![0]), // TTL marks trial end
-            ("recording_end", vec![1, 2, 3]), // Stop recording
-            ("session_end", vec![0]), // TTL ends session
+            ("trial_start", vec![0]),           // TTL marks trial start
+            ("stimulus_present", vec![1]),      // Kernel presents stimulus
+            ("response_capture", vec![2, 3]),   // Pupil and Biopac capture response
+            ("trial_end", vec![0]),             // TTL marks trial end
+            ("recording_end", vec![1, 2, 3]),   // Stop recording
+            ("session_end", vec![0]),           // TTL ends session
         ];
 
         let workflow_start = Instant::now();
@@ -1244,8 +1428,12 @@ mod event_correlation_tests {
             println!("  Step '{}' completed in: {:?}", step_name, step_duration);
 
             // Verify step completed quickly
-            assert!(step_duration.as_millis() < 100,
-                "Workflow step '{}' took too long: {:?}", step_name, step_duration);
+            assert!(
+                step_duration.as_millis() < 100,
+                "Workflow step '{}' took too long: {:?}",
+                step_name,
+                step_duration
+            );
 
             // Inter-step delay for realistic workflow timing
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1255,18 +1443,30 @@ mod event_correlation_tests {
         println!("Complete workflow executed in: {:?}", total_workflow_time);
 
         // Verify workflow completed in reasonable time
-        assert!(total_workflow_time.as_secs() < 5,
-            "Workflow took too long: {:?}", total_workflow_time);
+        assert!(
+            total_workflow_time.as_secs() < 5,
+            "Workflow took too long: {:?}",
+            total_workflow_time
+        );
 
         // Verify all devices participated in workflow
         for (device_name, device_id) in &all_devices {
             if let Some(device_lock) = fixture.app_state.get_device(device_id).await {
                 let device = device_lock.read().await;
-                if let Some(mock_device) = (device.as_ref() as &dyn std::any::Any)
-                    .downcast_ref::<TestMockDevice>() {
+                if let Some(mock_device) =
+                    (device.as_ref() as &dyn std::any::Any).downcast_ref::<TestMockDevice>()
+                {
                     let device_data = mock_device.get_sent_data().await;
-                    println!("Device {} executed {} workflow commands", device_name, device_data.len());
-                    assert!(!device_data.is_empty(), "Device {} did not participate in workflow", device_name);
+                    println!(
+                        "Device {} executed {} workflow commands",
+                        device_name,
+                        device_data.len()
+                    );
+                    assert!(
+                        !device_data.is_empty(),
+                        "Device {} did not participate in workflow",
+                        device_name
+                    );
                 }
             }
         }

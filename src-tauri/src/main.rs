@@ -4,15 +4,14 @@
 )]
 
 mod bridge;
-mod devices;
 mod commands;
+mod devices;
 mod performance;
 
 use std::sync::Arc;
-use tracing::{info, error};
-use tracing_subscriber;
+use tracing::{error, info};
 
-use crate::bridge::{BridgeServer, AppState};
+use crate::bridge::{AppState, BridgeServer};
 use crate::commands::*;
 
 #[tokio::main]

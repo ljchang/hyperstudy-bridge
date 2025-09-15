@@ -45,7 +45,10 @@ impl std::fmt::Debug for TtlDevice {
             .field("status", &self.status)
             .field("config", &self.config)
             .field("device_config", &self.device_config)
-            .field("has_performance_callback", &self.performance_callback.is_some())
+            .field(
+                "has_performance_callback",
+                &self.performance_callback.is_some(),
+            )
             .finish()
     }
 }
@@ -74,13 +77,10 @@ impl TtlDevice {
     }
 
     pub fn list_ports() -> Result<Vec<String>, DeviceError> {
-        let ports = serialport::available_ports()
-            .map_err(|e| DeviceError::SerialError(e.to_string()))?;
+        let ports =
+            serialport::available_ports().map_err(|e| DeviceError::SerialError(e.to_string()))?;
 
-        Ok(ports
-            .into_iter()
-            .map(|p| p.port_name)
-            .collect())
+        Ok(ports.into_iter().map(|p| p.port_name).collect())
     }
 
     async fn send_pulse(&mut self) -> Result<(), DeviceError> {
@@ -95,7 +95,8 @@ impl TtlDevice {
                     .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
 
                 Ok(())
-            }).await;
+            })
+            .await;
 
             // Record performance metrics
             if let Some(ref callback) = self.performance_callback {
@@ -106,7 +107,10 @@ impl TtlDevice {
 
             // Check for compliance with <1ms requirement
             if latency > Duration::from_millis(1) {
-                warn!("TTL pulse latency exceeded 1ms: {:?} - Performance requirement not met!", latency);
+                warn!(
+                    "TTL pulse latency exceeded 1ms: {:?} - Performance requirement not met!",
+                    latency
+                );
             } else if latency > Duration::from_micros(500) {
                 warn!("TTL pulse latency approaching limit: {:?}", latency);
             }
@@ -169,7 +173,8 @@ impl Device for TtlDevice {
                 port.flush()
                     .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
                 Ok(())
-            }).await;
+            })
+            .await;
 
             // Record performance metrics
             if let Some(ref callback) = self.performance_callback {
@@ -193,12 +198,11 @@ impl Device for TtlDevice {
                         buffer.truncate(bytes_read);
                         Ok(buffer)
                     }
-                    Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                        Ok(Vec::new())
-                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::TimedOut => Ok(Vec::new()),
                     Err(e) => Err(DeviceError::CommunicationError(e.to_string())),
                 }
-            }).await;
+            })
+            .await;
 
             // Record performance metrics
             if let Ok(ref data) = result {

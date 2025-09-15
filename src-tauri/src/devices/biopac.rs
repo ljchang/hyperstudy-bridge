@@ -4,10 +4,10 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::net::TcpStream;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 use tokio::time::{sleep, timeout};
-use tracing::{error, info, debug, warn};
+use tracing::{debug, error, info, warn};
 
 // NDT Protocol Constants
 const DEFAULT_PORT: u16 = 5000;
@@ -95,7 +95,10 @@ impl std::fmt::Debug for BiopacDevice {
             .field("sequence_number", &self.sequence_number)
             .field("last_heartbeat", &self.last_heartbeat)
             .field("reconnect_attempts", &self.reconnect_attempts)
-            .field("has_performance_callback", &self.performance_callback.is_some())
+            .field(
+                "has_performance_callback",
+                &self.performance_callback.is_some(),
+            )
             .finish()
     }
 }
@@ -146,13 +149,18 @@ impl BiopacDevice {
     /// Configure channels for data acquisition
     pub fn configure_channels(&mut self, channels: Vec<ChannelConfig>) -> Result<(), DeviceError> {
         if channels.len() > MAX_CHANNELS {
-            return Err(DeviceError::ConfigurationError(
-                format!("Too many channels configured: {} > {}", channels.len(), MAX_CHANNELS)
-            ));
+            return Err(DeviceError::ConfigurationError(format!(
+                "Too many channels configured: {} > {}",
+                channels.len(),
+                MAX_CHANNELS
+            )));
         }
 
         self.config.channels = channels;
-        info!("Configured {} channels for Biopac device", self.config.channels.len());
+        info!(
+            "Configured {} channels for Biopac device",
+            self.config.channels.len()
+        );
         Ok(())
     }
 
@@ -165,9 +173,8 @@ impl BiopacDevice {
         let packet = self.create_ndt_packet(NDT_START_ACQUISITION, &[]);
         let device_id = self.get_info().id;
 
-        let (result, latency) = measure_latency(async {
-            self.send_ndt_packet(&packet).await
-        }).await;
+        let (result, latency) =
+            measure_latency(async { self.send_ndt_packet(&packet).await }).await;
 
         // Record performance metrics
         if let Some(ref callback) = self.performance_callback {
@@ -177,7 +184,10 @@ impl BiopacDevice {
         result?;
         self.acquiring = true;
         self.sequence_number = 0;
-        info!("Started Biopac data acquisition with latency: {:?}", latency);
+        info!(
+            "Started Biopac data acquisition with latency: {:?}",
+            latency
+        );
         Ok(())
     }
 
@@ -190,9 +200,8 @@ impl BiopacDevice {
         let packet = self.create_ndt_packet(NDT_STOP_ACQUISITION, &[]);
         let device_id = self.get_info().id;
 
-        let (result, latency) = measure_latency(async {
-            self.send_ndt_packet(&packet).await
-        }).await;
+        let (result, latency) =
+            measure_latency(async { self.send_ndt_packet(&packet).await }).await;
 
         // Record performance metrics
         if let Some(ref callback) = self.performance_callback {
@@ -202,21 +211,31 @@ impl BiopacDevice {
         result?;
         self.acquiring = false;
         self.data_buffer.clear();
-        info!("Stopped Biopac data acquisition with latency: {:?}", latency);
+        info!(
+            "Stopped Biopac data acquisition with latency: {:?}",
+            latency
+        );
         Ok(())
     }
 
     /// Set event marker with timestamp and metadata
-    pub async fn set_marker(&mut self, marker_id: &str, metadata: Option<HashMap<String, String>>) -> Result<(), DeviceError> {
+    pub async fn set_marker(
+        &mut self,
+        marker_id: &str,
+        metadata: Option<HashMap<String, String>>,
+    ) -> Result<(), DeviceError> {
         if self.status != DeviceStatus::Connected {
             return Err(DeviceError::NotConnected);
         }
 
         if !self.config.enable_event_markers {
-            return Err(DeviceError::ConfigurationError("Event markers are disabled".to_string()));
+            return Err(DeviceError::ConfigurationError(
+                "Event markers are disabled".to_string(),
+            ));
         }
 
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
             .map_err(|e| DeviceError::Unknown(e.to_string()))?
             .as_micros() as u64;
 
@@ -227,9 +246,8 @@ impl BiopacDevice {
         let packet = self.create_ndt_packet(NDT_SET_MARKER, &marker_data);
         let device_id = self.get_info().id;
 
-        let (result, latency) = measure_latency(async {
-            self.send_ndt_packet(&packet).await
-        }).await;
+        let (result, latency) =
+            measure_latency(async { self.send_ndt_packet(&packet).await }).await;
 
         // Record performance metrics
         if let Some(ref callback) = self.performance_callback {
@@ -246,7 +264,10 @@ impl BiopacDevice {
         };
         self.event_buffer.push(event_marker);
 
-        debug!("Set marker '{}' at timestamp {} with latency: {:?}", marker_id, timestamp, latency);
+        debug!(
+            "Set marker '{}' at timestamp {} with latency: {:?}",
+            marker_id, timestamp, latency
+        );
         Ok(())
     }
 
@@ -260,9 +281,8 @@ impl BiopacDevice {
         let packet = self.create_ndt_packet(NDT_SET_SAMPLING_RATE, &rate_bytes);
 
         let device_id = self.get_info().id;
-        let (result, latency) = measure_latency(async {
-            self.send_ndt_packet(&packet).await
-        }).await;
+        let (result, latency) =
+            measure_latency(async { self.send_ndt_packet(&packet).await }).await;
 
         // Record performance metrics
         if let Some(ref callback) = self.performance_callback {
@@ -272,7 +292,10 @@ impl BiopacDevice {
         result?;
 
         self.config.master_sampling_rate = rate;
-        info!("Set sampling rate to {} Hz with latency: {:?}", rate, latency);
+        info!(
+            "Set sampling rate to {} Hz with latency: {:?}",
+            rate, latency
+        );
         Ok(())
     }
 
@@ -288,7 +311,8 @@ impl BiopacDevice {
         let (result, latency) = measure_latency(async {
             self.send_ndt_packet(&packet).await?;
             self.receive_ndt_response().await
-        }).await;
+        })
+        .await;
 
         // Record performance metrics
         if let Some(ref callback) = self.performance_callback {
@@ -301,7 +325,11 @@ impl BiopacDevice {
         let channels = self.parse_channel_config(&response_packet.data)?;
         self.config.channels = channels.clone();
 
-        info!("Retrieved {} channels from device with latency: {:?}", channels.len(), latency);
+        info!(
+            "Retrieved {} channels from device with latency: {:?}",
+            channels.len(),
+            latency
+        );
         Ok(channels)
     }
 
@@ -312,9 +340,7 @@ impl BiopacDevice {
         }
 
         let device_id = self.get_info().id;
-        let (result, latency) = measure_latency(async {
-            self.receive_ndt_response().await
-        }).await;
+        let (result, latency) = measure_latency(async { self.receive_ndt_response().await }).await;
 
         match result {
             Ok(packet) => {
@@ -335,7 +361,11 @@ impl BiopacDevice {
                         self.data_buffer.drain(0..excess);
                     }
 
-                    debug!("Received {} channel data points with latency: {:?}", channel_data.len(), latency);
+                    debug!(
+                        "Received {} channel data points with latency: {:?}",
+                        channel_data.len(),
+                        latency
+                    );
                     Ok(channel_data)
                 } else {
                     debug!("Received non-data packet: command={:02x}", packet.command);
@@ -354,11 +384,13 @@ impl BiopacDevice {
     /// Get recent event markers
     pub fn get_event_markers(&self, since: Option<u64>) -> Vec<EventMarker> {
         match since {
-            Some(timestamp) => self.event_buffer.iter()
+            Some(timestamp) => self
+                .event_buffer
+                .iter()
                 .filter(|marker| marker.timestamp >= timestamp)
                 .cloned()
                 .collect(),
-            None => self.event_buffer.clone()
+            None => self.event_buffer.clone(),
         }
     }
 
@@ -378,7 +410,10 @@ impl BiopacDevice {
 #[async_trait]
 impl Device for BiopacDevice {
     async fn connect(&mut self) -> Result<(), DeviceError> {
-        info!("Connecting to Biopac at {}:{}", self.config.server_address, self.config.port);
+        info!(
+            "Connecting to Biopac at {}:{}",
+            self.config.server_address, self.config.port
+        );
         self.status = DeviceStatus::Connecting;
 
         let addr = format!("{}:{}", self.config.server_address, self.config.port);
@@ -406,7 +441,9 @@ impl Device for BiopacDevice {
         }
 
         if let Some(mut socket) = self.socket.take() {
-            socket.shutdown().await
+            socket
+                .shutdown()
+                .await
                 .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
         }
 
@@ -417,13 +454,19 @@ impl Device for BiopacDevice {
 
     async fn send(&mut self, data: &[u8]) -> Result<(), DeviceError> {
         if let Some(ref mut socket) = self.socket {
-            socket.write_all(data).await
+            socket
+                .write_all(data)
+                .await
                 .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
 
-            socket.write_all(b"\n").await
+            socket
+                .write_all(b"\n")
+                .await
                 .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
 
-            socket.flush().await
+            socket
+                .flush()
+                .await
                 .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
 
             Ok(())
@@ -441,13 +484,15 @@ impl Device for BiopacDevice {
                 Ok(0) => {
                     self.status = DeviceStatus::Disconnected;
                     self.socket = None;
-                    Err(DeviceError::ConnectionFailed("Connection closed by remote".to_string()))
+                    Err(DeviceError::ConnectionFailed(
+                        "Connection closed by remote".to_string(),
+                    ))
                 }
                 Ok(n) => {
                     self.buffer.truncate(n);
                     Ok(self.buffer.clone())
                 }
-                Err(e) => Err(DeviceError::CommunicationError(e.to_string()))
+                Err(e) => Err(DeviceError::CommunicationError(e.to_string())),
             }
         } else {
             Err(DeviceError::NotConnected)
@@ -456,8 +501,15 @@ impl Device for BiopacDevice {
 
     fn get_info(&self) -> DeviceInfo {
         DeviceInfo {
-            id: format!("biopac_{}_{}", self.config.server_address.replace('.', "_"), self.config.port),
-            name: format!("Biopac MP150/160 ({}:{})", self.config.server_address, self.config.port),
+            id: format!(
+                "biopac_{}_{}",
+                self.config.server_address.replace('.', "_"),
+                self.config.port
+            ),
+            name: format!(
+                "Biopac MP150/160 ({}:{})",
+                self.config.server_address, self.config.port
+            ),
             device_type: DeviceType::Biopac,
             status: self.status,
             metadata: serde_json::json!({
@@ -510,12 +562,28 @@ impl Device for BiopacDevice {
                     if let Some(ch_obj) = ch.as_object() {
                         let channel = ChannelConfig {
                             id: ch_obj.get("id").and_then(|v| v.as_u64()).unwrap_or(0) as u8,
-                            name: ch_obj.get("name").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string(),
-                            enabled: ch_obj.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true),
-                            scale: ch_obj.get("scale").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
-                            offset: ch_obj.get("offset").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
-                            sampling_rate: ch_obj.get("sampling_rate").and_then(|v| v.as_u64()).unwrap_or(1000) as u32,
-                            units: ch_obj.get("units").and_then(|v| v.as_str()).unwrap_or("mV").to_string(),
+                            name: ch_obj
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Unknown")
+                                .to_string(),
+                            enabled: ch_obj
+                                .get("enabled")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(true),
+                            scale: ch_obj.get("scale").and_then(|v| v.as_f64()).unwrap_or(1.0)
+                                as f32,
+                            offset: ch_obj.get("offset").and_then(|v| v.as_f64()).unwrap_or(0.0)
+                                as f32,
+                            sampling_rate: ch_obj
+                                .get("sampling_rate")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(1000) as u32,
+                            units: ch_obj
+                                .get("units")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("mV")
+                                .to_string(),
                         };
                         new_channels.push(channel);
                     }
@@ -524,9 +592,11 @@ impl Device for BiopacDevice {
                 if new_channels.len() <= MAX_CHANNELS {
                     self.config.channels = new_channels;
                 } else {
-                    return Err(DeviceError::ConfigurationError(
-                        format!("Too many channels: {} > {}", new_channels.len(), MAX_CHANNELS)
-                    ));
+                    return Err(DeviceError::ConfigurationError(format!(
+                        "Too many channels: {} > {}",
+                        new_channels.len(),
+                        MAX_CHANNELS
+                    )));
                 }
             }
         }
@@ -540,7 +610,9 @@ impl Device for BiopacDevice {
         }
 
         // Check if heartbeat is overdue
-        let elapsed = self.last_heartbeat.elapsed()
+        let elapsed = self
+            .last_heartbeat
+            .elapsed()
             .map_err(|e| DeviceError::Unknown(e.to_string()))?;
 
         if elapsed > Duration::from_millis(self.device_config.timeout_ms * 2) {
@@ -551,8 +623,10 @@ impl Device for BiopacDevice {
 
             match timeout(
                 Duration::from_millis(self.device_config.timeout_ms),
-                self.send_ndt_packet(&status_packet)
-            ).await {
+                self.send_ndt_packet(&status_packet),
+            )
+            .await
+            {
                 Ok(Ok(())) => {
                     self.last_heartbeat = SystemTime::now();
                     debug!("Biopac heartbeat successful");
@@ -592,16 +666,22 @@ impl BiopacDevice {
             header.extend_from_slice(&packet.command.to_le_bytes());
             header.extend_from_slice(&packet.length.to_le_bytes());
 
-            socket.write_all(&header).await
+            socket
+                .write_all(&header)
+                .await
                 .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
 
             // Send data payload if present
             if !packet.data.is_empty() {
-                socket.write_all(&packet.data).await
+                socket
+                    .write_all(&packet.data)
+                    .await
                     .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
             }
 
-            socket.flush().await
+            socket
+                .flush()
+                .await
                 .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
 
             self.sequence_number = self.sequence_number.wrapping_add(1);
@@ -616,30 +696,46 @@ impl BiopacDevice {
             // Read NDT header
             let mut header = [0u8; NDT_HEADER_SIZE];
 
-            match timeout(Duration::from_millis(self.device_config.timeout_ms), socket.read_exact(&mut header)).await {
+            match timeout(
+                Duration::from_millis(self.device_config.timeout_ms),
+                socket.read_exact(&mut header),
+            )
+            .await
+            {
                 Ok(Ok(_)) => {
                     let command = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
                     let length = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
 
                     // Validate packet length
                     if length > BUFFER_SIZE as u32 {
-                        return Err(DeviceError::InvalidData(format!("Packet too large: {} bytes", length)));
+                        return Err(DeviceError::InvalidData(format!(
+                            "Packet too large: {} bytes",
+                            length
+                        )));
                     }
 
                     // Read data payload
                     let mut data = vec![0u8; length as usize];
                     if length > 0 {
-                        socket.read_exact(&mut data).await
+                        socket
+                            .read_exact(&mut data)
+                            .await
                             .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
                     }
 
-                    Ok(NdtPacket { command, length, data })
+                    Ok(NdtPacket {
+                        command,
+                        length,
+                        data,
+                    })
                 }
                 Ok(Err(e)) => {
                     if e.kind() == std::io::ErrorKind::UnexpectedEof {
                         self.status = DeviceStatus::Disconnected;
                         self.socket = None;
-                        Err(DeviceError::ConnectionFailed("Connection closed by remote".to_string()))
+                        Err(DeviceError::ConnectionFailed(
+                            "Connection closed by remote".to_string(),
+                        ))
                     } else {
                         Err(DeviceError::CommunicationError(e.to_string()))
                     }
@@ -655,7 +751,9 @@ impl BiopacDevice {
         // Parse channel configuration from binary data
         // This is a simplified implementation - real NDT would have specific format
         if data.len() < 4 {
-            return Err(DeviceError::InvalidData("Channel config data too short".to_string()));
+            return Err(DeviceError::InvalidData(
+                "Channel config data too short".to_string(),
+            ));
         }
 
         let num_channels = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
@@ -680,12 +778,13 @@ impl BiopacDevice {
         // Parse physiological data from NDT data packet
         // Format: [timestamp: 8 bytes][num_samples: 4 bytes][channel_data...]
         if data.len() < 12 {
-            return Err(DeviceError::InvalidData("Data packet too short".to_string()));
+            return Err(DeviceError::InvalidData(
+                "Data packet too short".to_string(),
+            ));
         }
 
         let timestamp = u64::from_le_bytes([
-            data[0], data[1], data[2], data[3],
-            data[4], data[5], data[6], data[7],
+            data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
         ]);
 
         let num_samples = u32::from_le_bytes([data[8], data[9], data[10], data[11]]) as usize;
@@ -697,15 +796,16 @@ impl BiopacDevice {
                 break;
             }
 
-            let channel_id = data[offset] as u8;
+            let channel_id = data[offset];
             let raw_value = u16::from_le_bytes([data[offset + 1], data[offset + 2]]);
 
             // Apply scaling and offset from channel configuration
-            let scaled_value = if let Some(config) = self.config.channels.iter().find(|c| c.id == channel_id) {
-                (raw_value as f32) * config.scale + config.offset
-            } else {
-                raw_value as f32
-            };
+            let scaled_value =
+                if let Some(config) = self.config.channels.iter().find(|c| c.id == channel_id) {
+                    (raw_value as f32) * config.scale + config.offset
+                } else {
+                    raw_value as f32
+                };
 
             channel_data.push(ChannelData {
                 channel_id,
@@ -722,11 +822,16 @@ impl BiopacDevice {
 
     async fn attempt_reconnect(&mut self) -> Result<(), DeviceError> {
         if !self.device_config.auto_reconnect {
-            return Err(DeviceError::ConnectionFailed("Auto-reconnect disabled".to_string()));
+            return Err(DeviceError::ConnectionFailed(
+                "Auto-reconnect disabled".to_string(),
+            ));
         }
 
         self.reconnect_attempts += 1;
-        warn!("Attempting to reconnect to Biopac (attempt {})", self.reconnect_attempts);
+        warn!(
+            "Attempting to reconnect to Biopac (attempt {})",
+            self.reconnect_attempts
+        );
 
         sleep(Duration::from_millis(RECONNECT_DELAY_MS)).await;
 
@@ -737,7 +842,10 @@ impl BiopacDevice {
                 Ok(())
             }
             Err(e) => {
-                error!("Reconnection attempt {} failed: {}", self.reconnect_attempts, e);
+                error!(
+                    "Reconnection attempt {} failed: {}",
+                    self.reconnect_attempts, e
+                );
                 Err(e)
             }
         }

@@ -1,16 +1,16 @@
-use hyperstudy_bridge::bridge::{AppState, BridgeCommand, BridgeResponse, BridgeServer};
 use hyperstudy_bridge::bridge::message::{CommandAction, QueryTarget};
-use hyperstudy_bridge::devices::{DeviceType, DeviceStatus};
+use hyperstudy_bridge::bridge::{AppState, BridgeCommand, BridgeResponse, BridgeServer};
+use hyperstudy_bridge::devices::{DeviceStatus, DeviceType};
 use hyperstudy_bridge::performance::PerformanceMonitor;
+use serde_json::json;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::collections::HashMap;
-use tokio::time::timeout;
+use tauri::test::mock_runtime;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-use serde_json::json;
+use tokio::time::timeout;
 use uuid::Uuid;
-use tauri::test::mock_runtime;
 
 mod common;
 use common::*;
@@ -44,7 +44,8 @@ mod websocket_server_tests {
         let ws_url = "ws://127.0.0.1:9000";
         let connection_result = timeout(Duration::from_secs(5), async {
             TestWebSocketClient::connect(ws_url).await
-        }).await;
+        })
+        .await;
 
         match connection_result {
             Ok(Ok(mut client)) => {
@@ -53,7 +54,10 @@ mod websocket_server_tests {
             }
             Ok(Err(e)) => {
                 // Connection might fail if port is already in use or server isn't ready
-                println!("WebSocket connection failed (expected in some test environments): {}", e);
+                println!(
+                    "WebSocket connection failed (expected in some test environments): {}",
+                    e
+                );
             }
             Err(_) => {
                 println!("WebSocket connection timed out (expected in some test environments)");
@@ -87,9 +91,7 @@ mod websocket_server_tests {
         let mut bridge_server = BridgeServer::new(fixture.app_state.clone(), app_handle);
 
         // Start server
-        let server_handle = tokio::spawn(async move {
-            bridge_server.start().await
-        });
+        let server_handle = tokio::spawn(async move { bridge_server.start().await });
 
         // Give server time to start
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -104,11 +106,14 @@ mod websocket_server_tests {
         let ws_url = "ws://127.0.0.1:9000";
         let connection_result = timeout(Duration::from_millis(500), async {
             TestWebSocketClient::connect(ws_url).await
-        }).await;
+        })
+        .await;
 
         // Connection should fail or timeout since server is shut down
-        assert!(connection_result.is_err() || connection_result.unwrap().is_err(),
-            "Server should not accept connections after shutdown");
+        assert!(
+            connection_result.is_err() || connection_result.unwrap().is_err(),
+            "Server should not accept connections after shutdown"
+        );
 
         fixture.cleanup().await;
     }
@@ -142,7 +147,12 @@ mod message_routing_tests {
         let parsed_command: BridgeCommand = serde_json::from_str(&json_str).unwrap();
 
         match parsed_command {
-            BridgeCommand::Command { device, action, payload, .. } => {
+            BridgeCommand::Command {
+                device,
+                action,
+                payload,
+                ..
+            } => {
                 assert_eq!(device, "ttl");
                 assert!(matches!(action, CommandAction::Send));
                 assert!(payload.is_some());
@@ -173,7 +183,8 @@ mod message_routing_tests {
     #[tokio::test]
     async fn test_response_message_serialization() {
         // Test status response
-        let status_response = BridgeResponse::status("test_device".to_string(), DeviceStatus::Connected);
+        let status_response =
+            BridgeResponse::status("test_device".to_string(), DeviceStatus::Connected);
         let json_str = serde_json::to_string(&status_response).unwrap();
         let parsed_response: BridgeResponse = serde_json::from_str(&json_str).unwrap();
 
@@ -186,12 +197,15 @@ mod message_routing_tests {
         }
 
         // Test error response
-        let error_response = BridgeResponse::device_error("test_device".to_string(), "Test error".to_string());
+        let error_response =
+            BridgeResponse::device_error("test_device".to_string(), "Test error".to_string());
         let json_str = serde_json::to_string(&error_response).unwrap();
         let parsed_response: BridgeResponse = serde_json::from_str(&json_str).unwrap();
 
         match parsed_response {
-            BridgeResponse::Error { device, message, .. } => {
+            BridgeResponse::Error {
+                device, message, ..
+            } => {
                 assert_eq!(device, Some("test_device".to_string()));
                 assert_eq!(message, "Test error");
             }
@@ -211,7 +225,11 @@ mod message_routing_tests {
 
         for malformed_msg in malformed_messages {
             let parse_result = serde_json::from_str::<BridgeCommand>(malformed_msg);
-            assert!(parse_result.is_err(), "Should fail to parse malformed message: {}", malformed_msg);
+            assert!(
+                parse_result.is_err(),
+                "Should fail to parse malformed message: {}",
+                malformed_msg
+            );
         }
     }
 
@@ -234,7 +252,12 @@ mod message_routing_tests {
 
         let parsed_command: BridgeCommand = serde_json::from_str(&json_str).unwrap();
         match parsed_command {
-            BridgeCommand::Command { device, action, payload, .. } => {
+            BridgeCommand::Command {
+                device,
+                action,
+                payload,
+                ..
+            } => {
                 assert_eq!(device, "test_device");
                 assert!(matches!(action, CommandAction::Send));
                 assert!(payload.is_some());
@@ -259,8 +282,12 @@ mod client_connection_tests {
         assert_eq!(initial_connections, 0);
 
         // Simulate adding connections
-        fixture.app_state.add_connection("conn1".to_string(), "127.0.0.1:12345".to_string());
-        fixture.app_state.add_connection("conn2".to_string(), "127.0.0.1:12346".to_string());
+        fixture
+            .app_state
+            .add_connection("conn1".to_string(), "127.0.0.1:12345".to_string());
+        fixture
+            .app_state
+            .add_connection("conn2".to_string(), "127.0.0.1:12346".to_string());
 
         assert_eq!(fixture.app_state.connections.len(), 2);
 
@@ -334,8 +361,12 @@ mod client_connection_tests {
         let mut fixture = TestFixture::new().await;
 
         // Add connections
-        fixture.app_state.add_connection("test_conn_1".to_string(), "127.0.0.1:50001".to_string());
-        fixture.app_state.add_connection("test_conn_2".to_string(), "127.0.0.1:50002".to_string());
+        fixture
+            .app_state
+            .add_connection("test_conn_1".to_string(), "127.0.0.1:50001".to_string());
+        fixture
+            .app_state
+            .add_connection("test_conn_2".to_string(), "127.0.0.1:50002".to_string());
 
         assert_eq!(fixture.app_state.connections.len(), 2);
 
@@ -357,21 +388,36 @@ mod client_connection_tests {
         let mut fixture = TestFixture::new().await;
 
         // Test performance monitor connection tracking
-        let initial_connections = fixture.performance_monitor.system_counters.active_connections
+        let initial_connections = fixture
+            .performance_monitor
+            .system_counters
+            .active_connections
             .load(std::sync::atomic::Ordering::Relaxed);
 
         // Simulate connection events
-        fixture.performance_monitor.record_websocket_connection(true); // Connect
-        fixture.performance_monitor.record_websocket_connection(true); // Another connect
+        fixture
+            .performance_monitor
+            .record_websocket_connection(true); // Connect
+        fixture
+            .performance_monitor
+            .record_websocket_connection(true); // Another connect
 
-        let after_connects = fixture.performance_monitor.system_counters.active_connections
+        let after_connects = fixture
+            .performance_monitor
+            .system_counters
+            .active_connections
             .load(std::sync::atomic::Ordering::Relaxed);
         assert_eq!(after_connects, initial_connections + 2);
 
         // Simulate disconnection
-        fixture.performance_monitor.record_websocket_connection(false); // Disconnect
+        fixture
+            .performance_monitor
+            .record_websocket_connection(false); // Disconnect
 
-        let after_disconnect = fixture.performance_monitor.system_counters.active_connections
+        let after_disconnect = fixture
+            .performance_monitor
+            .system_counters
+            .active_connections
             .load(std::sync::atomic::Ordering::Relaxed);
         assert_eq!(after_disconnect, initial_connections + 1);
 
@@ -437,17 +483,28 @@ mod throughput_tests {
 
         // Measure device command throughput
         let test_duration = Duration::from_secs(3);
-        let (command_count, throughput) = test_utils::measure_throughput(|| async {
-            if let Some(device_lock) = fixture.app_state.get_device(&device_id).await {
-                let mut device = device_lock.write().await;
-                let _ = device.send(b"PULSE\n").await;
-            }
-        }, test_duration).await;
+        let (command_count, throughput) = test_utils::measure_throughput(
+            || async {
+                if let Some(device_lock) = fixture.app_state.get_device(&device_id).await {
+                    let mut device = device_lock.write().await;
+                    let _ = device.send(b"PULSE\n").await;
+                }
+            },
+            test_duration,
+        )
+        .await;
 
-        println!("Device command throughput: {:.0} cmd/sec ({} commands)", throughput, command_count);
+        println!(
+            "Device command throughput: {:.0} cmd/sec ({} commands)",
+            throughput, command_count
+        );
 
         // TTL should handle high-frequency commands
-        assert!(throughput > 500.0, "TTL command throughput too low: {:.0} cmd/sec", throughput);
+        assert!(
+            throughput > 500.0,
+            "TTL command throughput too low: {:.0} cmd/sec",
+            throughput
+        );
 
         fixture.cleanup().await;
     }
@@ -457,13 +514,14 @@ mod throughput_tests {
         let mut fixture = TestFixture::new().await;
 
         // Add multiple devices for concurrent testing
-        let device_ids: Vec<_> = (0..5).map(|_| {
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    fixture.add_mock_device(DeviceType::Mock).await
+        let device_ids: Vec<_> = (0..5)
+            .map(|_| {
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current()
+                        .block_on(async { fixture.add_mock_device(DeviceType::Mock).await })
                 })
             })
-        }).collect();
+            .collect();
 
         // Connect all devices
         for device_id in &device_ids {
@@ -493,18 +551,24 @@ mod throughput_tests {
             },
             concurrent_clients,
             operations_per_client,
-        ).await;
+        )
+        .await;
 
         let total_duration = start_time.elapsed().as_secs_f64();
         let total_operations = latencies.len();
         let overall_throughput = total_operations as f64 / total_duration;
 
-        println!("Concurrent throughput: {:.0} ops/sec ({} ops, {} clients)",
-            overall_throughput, total_operations, concurrent_clients);
+        println!(
+            "Concurrent throughput: {:.0} ops/sec ({} ops, {} clients)",
+            overall_throughput, total_operations, concurrent_clients
+        );
 
         // Verify reasonable throughput under concurrent load
-        assert!(overall_throughput > 500.0,
-            "Concurrent throughput too low: {:.0} ops/sec", overall_throughput);
+        assert!(
+            overall_throughput > 500.0,
+            "Concurrent throughput too low: {:.0} ops/sec",
+            overall_throughput
+        );
 
         fixture.cleanup().await;
     }
@@ -526,22 +590,31 @@ mod throughput_tests {
         for message_size in message_sizes {
             let message = vec![0u8; message_size];
 
-            let (message_count, throughput) = test_utils::measure_throughput(|| async {
-                if let Some(device_lock) = fixture.app_state.get_device(&device_id).await {
-                    let mut device = device_lock.write().await;
-                    let _ = device.send(&message).await;
-                }
-            }, test_duration).await;
+            let (message_count, throughput) = test_utils::measure_throughput(
+                || async {
+                    if let Some(device_lock) = fixture.app_state.get_device(&device_id).await {
+                        let mut device = device_lock.write().await;
+                        let _ = device.send(&message).await;
+                    }
+                },
+                test_duration,
+            )
+            .await;
 
             let bytes_per_second = throughput * message_size as f64;
 
-            println!("Message size: {} bytes, Throughput: {:.0} msg/sec, {:.0} bytes/sec",
-                message_size, throughput, bytes_per_second);
+            println!(
+                "Message size: {} bytes, Throughput: {:.0} msg/sec, {:.0} bytes/sec",
+                message_size, throughput, bytes_per_second
+            );
 
             // Throughput should decrease with message size, but still be reasonable
-            assert!(throughput > 100.0,
+            assert!(
+                throughput > 100.0,
                 "Throughput too low for {} byte messages: {:.0} msg/sec",
-                message_size, throughput);
+                message_size,
+                throughput
+            );
         }
 
         fixture.cleanup().await;
@@ -582,24 +655,36 @@ mod bridge_error_handling_tests {
         let device_id = fixture.add_unreliable_device(DeviceType::TTL, 1.0).await; // 100% error rate
 
         // Test that device errors are properly recorded
-        fixture.performance_monitor.add_device(device_id.clone()).await;
+        fixture
+            .performance_monitor
+            .add_device(device_id.clone())
+            .await;
 
         // Attempt operations that will fail
         for _ in 0..5 {
             if let Some(device_lock) = fixture.app_state.get_device(&device_id).await {
                 let mut device = device_lock.write().await;
                 if let Err(e) = device.connect().await {
-                    fixture.performance_monitor.record_device_error(&device_id, &e.to_string()).await;
+                    fixture
+                        .performance_monitor
+                        .record_device_error(&device_id, &e.to_string())
+                        .await;
                 }
             }
         }
 
         // Verify errors were recorded
-        let metrics = fixture.performance_monitor.get_device_metrics(&device_id).await;
+        let metrics = fixture
+            .performance_monitor
+            .get_device_metrics(&device_id)
+            .await;
         assert!(metrics.is_some());
 
         let device_metrics = metrics.unwrap();
-        assert!(device_metrics.errors > 0, "No errors recorded despite high error rate");
+        assert!(
+            device_metrics.errors > 0,
+            "No errors recorded despite high error rate"
+        );
 
         fixture.cleanup().await;
     }
@@ -631,14 +716,20 @@ mod bridge_error_handling_tests {
         }
 
         // Verify reliable device is still connected despite unreliable device errors
-        let reliable_status = fixture.app_state.get_device_status(&reliable_device_id).await;
+        let reliable_status = fixture
+            .app_state
+            .get_device_status(&reliable_device_id)
+            .await;
         assert_eq!(reliable_status, Some(DeviceStatus::Connected));
 
         // Verify state consistency
         let device_count = fixture.get_device_count().await;
         assert_eq!(device_count, 2, "Device count should remain consistent");
 
-        println!("Unreliable device successful connections: {}/10", connection_attempts);
+        println!(
+            "Unreliable device successful connections: {}/10",
+            connection_attempts
+        );
 
         fixture.cleanup().await;
     }
@@ -668,7 +759,8 @@ mod bridge_error_handling_tests {
         memory_tracker.measure();
 
         // Verify no significant memory leaks from error handling
-        assert!(!memory_tracker.has_memory_leak(15),
+        assert!(
+            !memory_tracker.has_memory_leak(15),
             "Memory leak detected during error handling: {} bytes increase",
             memory_tracker.memory_increase()
         );
@@ -682,7 +774,10 @@ mod bridge_error_handling_tests {
 
         // Add device to performance monitoring
         let device_id = fixture.add_unreliable_device(DeviceType::TTL, 0.5).await;
-        fixture.performance_monitor.add_device(device_id.clone()).await;
+        fixture
+            .performance_monitor
+            .add_device(device_id.clone())
+            .await;
 
         // Perform operations with mixed success/failure
         for _ in 0..50 {
@@ -692,29 +787,38 @@ mod bridge_error_handling_tests {
                 match device.send(b"test").await {
                     Ok(_) => {
                         let latency = start.elapsed();
-                        fixture.performance_monitor.record_device_operation(
-                            &device_id, latency, 4, 0
-                        ).await;
+                        fixture
+                            .performance_monitor
+                            .record_device_operation(&device_id, latency, 4, 0)
+                            .await;
                     }
                     Err(e) => {
-                        fixture.performance_monitor.record_device_error(
-                            &device_id, &e.to_string()
-                        ).await;
+                        fixture
+                            .performance_monitor
+                            .record_device_error(&device_id, &e.to_string())
+                            .await;
                     }
                 }
             }
         }
 
         // Verify performance monitoring handles mixed success/failure correctly
-        let metrics = fixture.performance_monitor.get_device_metrics(&device_id).await;
+        let metrics = fixture
+            .performance_monitor
+            .get_device_metrics(&device_id)
+            .await;
         assert!(metrics.is_some());
 
         let device_metrics = metrics.unwrap();
-        assert!(device_metrics.messages_sent > 0 || device_metrics.errors > 0,
-            "Should have recorded either successful operations or errors");
+        assert!(
+            device_metrics.messages_sent > 0 || device_metrics.errors > 0,
+            "Should have recorded either successful operations or errors"
+        );
 
-        println!("Mixed operations: {} successful, {} errors",
-            device_metrics.messages_sent, device_metrics.errors);
+        println!(
+            "Mixed operations: {} successful, {} errors",
+            device_metrics.messages_sent, device_metrics.errors
+        );
 
         fixture.cleanup().await;
     }
@@ -738,9 +842,8 @@ mod bridge_query_tests {
         assert_eq!(devices_list.len(), device_ids.len());
 
         // Verify all device types are represented
-        let device_types: std::collections::HashSet<_> = devices_list.iter()
-            .map(|info| info.device_type)
-            .collect();
+        let device_types: std::collections::HashSet<_> =
+            devices_list.iter().map(|info| info.device_type).collect();
 
         assert!(device_types.contains(&DeviceType::TTL));
         assert!(device_types.contains(&DeviceType::Kernel));
@@ -776,7 +879,10 @@ mod bridge_query_tests {
 
         // Add device and perform some operations
         let device_id = fixture.add_mock_device(DeviceType::TTL).await;
-        fixture.performance_monitor.add_device(device_id.clone()).await;
+        fixture
+            .performance_monitor
+            .add_device(device_id.clone())
+            .await;
 
         // Connect and perform operations
         if let Some(device_lock) = fixture.app_state.get_device(&device_id).await {
@@ -785,12 +891,10 @@ mod bridge_query_tests {
 
             for _ in 0..5 {
                 device.send(b"test").await.unwrap();
-                fixture.performance_monitor.record_device_operation(
-                    &device_id,
-                    Duration::from_millis(1),
-                    4,
-                    0,
-                ).await;
+                fixture
+                    .performance_monitor
+                    .record_device_operation(&device_id, Duration::from_millis(1), 4, 0)
+                    .await;
             }
         }
 
@@ -809,11 +913,17 @@ mod bridge_query_tests {
         let mut fixture = TestFixture::new().await;
 
         // Add some connections
-        fixture.app_state.add_connection("conn1".to_string(), "127.0.0.1:50001".to_string());
-        fixture.app_state.add_connection("conn2".to_string(), "127.0.0.1:50002".to_string());
+        fixture
+            .app_state
+            .add_connection("conn1".to_string(), "127.0.0.1:50001".to_string());
+        fixture
+            .app_state
+            .add_connection("conn2".to_string(), "127.0.0.1:50002".to_string());
 
         // Query connections (simulating QueryTarget::Connections)
-        let connections: Vec<_> = fixture.app_state.connections
+        let connections: Vec<_> = fixture
+            .app_state
+            .connections
             .iter()
             .map(|entry| entry.value().clone())
             .collect();
@@ -836,7 +946,9 @@ mod bridge_query_tests {
         let _device_id2 = fixture.add_mock_device(DeviceType::Kernel).await;
 
         // Add a connection
-        fixture.app_state.add_connection("test_conn".to_string(), "127.0.0.1:50001".to_string());
+        fixture
+            .app_state
+            .add_connection("test_conn".to_string(), "127.0.0.1:50001".to_string());
 
         // Simulate status query
         let device_count = fixture.app_state.devices.read().await.len();
@@ -947,12 +1059,17 @@ mod scalability_tests {
         let elapsed = start_time.elapsed();
         let frequency = operation_count as f64 / elapsed.as_secs_f64();
 
-        println!("High-frequency operations: {:.0} ops/sec ({} ops in {:?})",
-            frequency, operation_count, elapsed);
+        println!(
+            "High-frequency operations: {:.0} ops/sec ({} ops in {:?})",
+            frequency, operation_count, elapsed
+        );
 
         // Should handle at least 5000 operations per second
-        assert!(frequency > 5000.0,
-            "High-frequency operation rate too low: {:.0} ops/sec", frequency);
+        assert!(
+            frequency > 5000.0,
+            "High-frequency operation rate too low: {:.0} ops/sec",
+            frequency
+        );
 
         fixture.cleanup().await;
     }
@@ -963,13 +1080,14 @@ mod scalability_tests {
         let mut memory_tracker = MemoryTracker::new();
 
         // Add multiple devices
-        let device_ids: Vec<_> = (0..10).map(|_| {
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    fixture.add_mock_device(DeviceType::Mock).await
+        let device_ids: Vec<_> = (0..10)
+            .map(|_| {
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current()
+                        .block_on(async { fixture.add_mock_device(DeviceType::Mock).await })
                 })
             })
-        }).collect();
+            .collect();
 
         // Connect all devices
         for device_id in &device_ids {
@@ -998,13 +1116,16 @@ mod scalability_tests {
         memory_tracker.measure();
 
         // Verify reasonable memory usage
-        assert!(!memory_tracker.has_memory_leak(50),
+        assert!(
+            !memory_tracker.has_memory_leak(50),
             "Excessive memory usage under load: {} bytes increase",
             memory_tracker.memory_increase()
         );
 
-        println!("Memory usage under load: {} bytes increase",
-            memory_tracker.memory_increase());
+        println!(
+            "Memory usage under load: {} bytes increase",
+            memory_tracker.memory_increase()
+        );
 
         fixture.cleanup().await;
     }
@@ -1032,12 +1153,17 @@ mod scalability_tests {
         let query_time = start_time.elapsed();
         let queries_per_second = 1000.0 / query_time.as_secs_f64();
 
-        println!("State query performance: {:.0} queries/sec with {} devices",
-            queries_per_second, device_count);
+        println!(
+            "State query performance: {:.0} queries/sec with {} devices",
+            queries_per_second, device_count
+        );
 
         // Should handle at least 100 queries per second even with many devices
-        assert!(queries_per_second > 100.0,
-            "State query performance too low: {:.0} queries/sec", queries_per_second);
+        assert!(
+            queries_per_second > 100.0,
+            "State query performance too low: {:.0} queries/sec",
+            queries_per_second
+        );
 
         fixture.cleanup().await;
     }

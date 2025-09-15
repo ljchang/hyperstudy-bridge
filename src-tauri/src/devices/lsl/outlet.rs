@@ -1,5 +1,5 @@
-use super::types::{LslError, StreamInfo, Sample, StreamStatus, SampleData};
 use super::sync::TimeSync;
+use super::types::{LslError, Sample, StreamInfo, StreamStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -77,8 +77,10 @@ impl StreamOutlet {
         config: OutletConfig,
         time_sync: Arc<TimeSync>,
     ) -> Result<Self, LslError> {
-        info!("Creating LSL outlet: {} (type: {}, channels: {})",
-              info.name, info.stream_type, info.channel_count);
+        info!(
+            "Creating LSL outlet: {} (type: {}, channels: {})",
+            info.name, info.stream_type, info.channel_count
+        );
 
         // In a real implementation, this would create an LSL outlet
         // using lsl::StreamOutlet::new()
@@ -194,8 +196,10 @@ impl StreamOutlet {
         // In a real implementation, this would call outlet.push_sample()
         self.simulate_send(sample).await?;
 
-        debug!("Sample sent: timestamp={:.3}, channels={}",
-               timestamp, channel_count);
+        debug!(
+            "Sample sent: timestamp={:.3}, channels={}",
+            timestamp, channel_count
+        );
 
         Ok(())
     }
@@ -251,9 +255,7 @@ impl StreamOutlet {
         let (buffer_used, buffer_size) = self.get_buffer_usage().await;
         let last_send = self.last_send_time.read().await;
 
-        let seconds_since_last_send = last_send
-            .map(|t| t.elapsed().as_secs_f64())
-            .unwrap_or(0.0);
+        let seconds_since_last_send = last_send.map(|t| t.elapsed().as_secs_f64()).unwrap_or(0.0);
 
         serde_json::json!({
             "name": self.info.name,
@@ -279,7 +281,9 @@ impl StreamOutlet {
 
         // Simulate occasional errors
         if sample.timestamp < 0.0 {
-            return Err(LslError::InvalidSampleData("Negative timestamp".to_string()));
+            return Err(LslError::InvalidSampleData(
+                "Negative timestamp".to_string(),
+            ));
         }
 
         Ok(())
@@ -312,7 +316,8 @@ impl OutletManager {
         config: Option<OutletConfig>,
     ) -> Result<String, LslError> {
         let outlet_config = config.unwrap_or_else(|| self.default_config.clone());
-        let outlet = Arc::new(StreamOutlet::new(info.clone(), outlet_config, self.time_sync.clone()).await?);
+        let outlet =
+            Arc::new(StreamOutlet::new(info.clone(), outlet_config, self.time_sync.clone()).await?);
 
         let outlet_id = format!("{}_{}", info.stream_type, info.source_id);
 
@@ -331,7 +336,9 @@ impl OutletManager {
 
     /// Start outlet
     pub async fn start_outlet(&self, outlet_id: &str) -> Result<(), LslError> {
-        let outlet = self.get_outlet(outlet_id).await
+        let outlet = self
+            .get_outlet(outlet_id)
+            .await
             .ok_or_else(|| LslError::StreamNotFound(outlet_id.to_string()))?;
 
         outlet.start().await
@@ -339,7 +346,9 @@ impl OutletManager {
 
     /// Stop outlet
     pub async fn stop_outlet(&self, outlet_id: &str) -> Result<(), LslError> {
-        let outlet = self.get_outlet(outlet_id).await
+        let outlet = self
+            .get_outlet(outlet_id)
+            .await
             .ok_or_else(|| LslError::StreamNotFound(outlet_id.to_string()))?;
 
         outlet.stop().await
@@ -361,7 +370,9 @@ impl OutletManager {
 
     /// Send sample to outlet
     pub async fn send_sample(&self, outlet_id: &str, sample: Sample) -> Result<(), LslError> {
-        let outlet = self.get_outlet(outlet_id).await
+        let outlet = self
+            .get_outlet(outlet_id)
+            .await
             .ok_or_else(|| LslError::StreamNotFound(outlet_id.to_string()))?;
 
         outlet.send_sample(sample).await
@@ -400,7 +411,12 @@ impl OutletManager {
             "kernel" => StreamInfo::kernel_fnirs(device_id, 16), // Default 16 channels
             "pupil" => StreamInfo::pupil_gaze(device_id),
             "biopac" => StreamInfo::biopac_biosignals(device_id, 8, 1000.0), // Default config
-            _ => return Err(LslError::LslLibraryError(format!("Unknown device type: {}", device_type))),
+            _ => {
+                return Err(LslError::LslLibraryError(format!(
+                    "Unknown device type: {}",
+                    device_type
+                )))
+            }
         };
 
         self.create_outlet(stream_info, config).await
@@ -484,7 +500,9 @@ mod tests {
         let time_sync = Arc::new(TimeSync::new(false));
         let manager = OutletManager::new(time_sync);
 
-        let outlet_id = manager.create_device_outlet("test_device", "ttl", None).await;
+        let outlet_id = manager
+            .create_device_outlet("test_device", "ttl", None)
+            .await;
         assert!(outlet_id.is_ok());
 
         let outlet_id = outlet_id.unwrap();

@@ -1,12 +1,12 @@
 use crate::devices::{BoxedDevice, DeviceInfo, DeviceStatus};
 use crate::performance::PerformanceMonitor;
 use dashmap::DashMap;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub struct AppState {
@@ -44,6 +44,12 @@ pub struct DeviceMetrics {
     pub messages_received: u64,
     pub errors: u64,
     pub last_latency_ms: f64,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AppState {
@@ -199,25 +205,39 @@ impl AppState {
 
     pub async fn get_device_metrics(&self, device_id: &str) -> Option<DeviceMetrics> {
         let metrics = self.metrics.read().await;
-        metrics.device_metrics.iter()
+        metrics
+            .device_metrics
+            .iter()
             .find(|m| m.device_id == device_id)
             .cloned()
     }
 
     /// Record device operation with performance tracking
-    pub async fn record_device_operation(&self, device_id: &str, latency: Duration, bytes_sent: u64, bytes_received: u64) {
-        self.performance_monitor.record_device_operation(device_id, latency, bytes_sent, bytes_received).await;
+    pub async fn record_device_operation(
+        &self,
+        device_id: &str,
+        latency: Duration,
+        bytes_sent: u64,
+        bytes_received: u64,
+    ) {
+        self.performance_monitor
+            .record_device_operation(device_id, latency, bytes_sent, bytes_received)
+            .await;
     }
 
     /// Record device error with performance tracking
     pub async fn record_device_error(&self, device_id: &str, error_msg: &str) {
-        self.performance_monitor.record_device_error(device_id, error_msg).await;
+        self.performance_monitor
+            .record_device_error(device_id, error_msg)
+            .await;
         self.set_last_error(Some(error_msg.to_string())).await;
     }
 
     /// Record device connection attempt with performance tracking
     pub async fn record_connection_attempt(&self, device_id: &str, success: bool) {
-        self.performance_monitor.record_connection_attempt(device_id, success).await;
+        self.performance_monitor
+            .record_connection_attempt(device_id, success)
+            .await;
     }
 
     /// Get comprehensive performance metrics
@@ -226,7 +246,10 @@ impl AppState {
     }
 
     /// Get device-specific performance metrics
-    pub async fn get_device_performance_metrics(&self, device_id: &str) -> Option<crate::performance::DevicePerformanceMetrics> {
+    pub async fn get_device_performance_metrics(
+        &self,
+        device_id: &str,
+    ) -> Option<crate::performance::DevicePerformanceMetrics> {
         self.performance_monitor.get_device_metrics(device_id).await
     }
 
@@ -237,6 +260,8 @@ impl AppState {
 
     /// Check TTL latency compliance (<1ms)
     pub async fn check_ttl_latency_compliance(&self, device_id: &str) -> Option<bool> {
-        self.performance_monitor.check_ttl_latency_compliance(device_id).await
+        self.performance_monitor
+            .check_ttl_latency_compliance(device_id)
+            .await
     }
 }

@@ -1,9 +1,9 @@
-pub mod ttl;
-pub mod kernel;
-pub mod pupil;
 pub mod biopac;
+pub mod kernel;
 pub mod lsl;
 pub mod mock;
+pub mod pupil;
+pub mod ttl;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

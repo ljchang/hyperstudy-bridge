@@ -1,10 +1,10 @@
-use super::types::{LslError, StreamInfo, StreamType, ChannelFormat};
+use super::types::{ChannelFormat, LslError, StreamInfo, StreamType};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::{sleep, timeout};
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, info, warn};
 
 /// Stream discovery and resolution service
 #[derive(Debug)]
@@ -36,6 +36,7 @@ pub struct DiscoveredStream {
 
 /// Stream discovery filter criteria
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct StreamFilter {
     /// Filter by stream name (regex pattern)
     pub name_pattern: Option<String>,
@@ -53,19 +54,6 @@ pub struct StreamFilter {
     pub channel_format: Option<ChannelFormat>,
 }
 
-impl Default for StreamFilter {
-    fn default() -> Self {
-        Self {
-            name_pattern: None,
-            stream_type: None,
-            hostname: None,
-            source_id: None,
-            min_channels: None,
-            max_channels: None,
-            channel_format: None,
-        }
-    }
-}
 
 /// Discovery events
 #[derive(Debug, Clone)]
@@ -111,12 +99,16 @@ impl StreamResolver {
     }
 
     /// Start continuous stream discovery
-    pub async fn start_discovery(&self) -> Result<mpsc::UnboundedReceiver<DiscoveryEvent>, LslError> {
+    pub async fn start_discovery(
+        &self,
+    ) -> Result<mpsc::UnboundedReceiver<DiscoveryEvent>, LslError> {
         let (sender, receiver) = mpsc::unbounded_channel();
 
         let mut is_discovering = self.is_discovering.write().await;
         if *is_discovering {
-            return Err(LslError::LslLibraryError("Discovery already running".to_string()));
+            return Err(LslError::LslLibraryError(
+                "Discovery already running".to_string(),
+            ));
         }
 
         *is_discovering = true;
@@ -145,17 +137,25 @@ impl StreamResolver {
 
     /// Perform one-time stream discovery
     pub async fn discover_streams(&self) -> Result<Vec<DiscoveredStream>, LslError> {
-        info!("Performing one-time stream discovery (timeout: {:?})", self.timeout_duration);
+        info!(
+            "Performing one-time stream discovery (timeout: {:?})",
+            self.timeout_duration
+        );
 
         let discovery_start = Instant::now();
 
         // Simulate stream discovery
         // In a real implementation, this would call lsl::resolve_streams()
-        let discovered = timeout(self.timeout_duration, self.simulate_discovery()).await
+        let discovered = timeout(self.timeout_duration, self.simulate_discovery())
+            .await
             .map_err(|_| LslError::DiscoveryTimeout)?;
 
         let discovery_time = discovery_start.elapsed();
-        info!("Discovery completed in {:?}, found {} streams", discovery_time, discovered.len());
+        info!(
+            "Discovery completed in {:?}, found {} streams",
+            discovery_time,
+            discovered.len()
+        );
 
         // Update cache
         let mut cache = self.discovered_streams.write().await;
@@ -175,7 +175,8 @@ impl StreamResolver {
     /// Get streams by filter criteria
     pub async fn find_streams(&self, filter: &StreamFilter) -> Vec<DiscoveredStream> {
         let cache = self.discovered_streams.read().await;
-        cache.values()
+        cache
+            .values()
             .filter(|stream| self.matches_filter(&stream.info, filter))
             .cloned()
             .collect()
@@ -208,7 +209,7 @@ impl StreamResolver {
     /// Check if a stream is available
     pub async fn is_stream_available(&self, uid: &str) -> bool {
         let cache = self.discovered_streams.read().await;
-        cache.get(uid).map_or(false, |stream| stream.available)
+        cache.get(uid).is_some_and(|stream| stream.available)
     }
 
     /// Remove stale streams from cache
@@ -240,7 +241,9 @@ impl StreamResolver {
 
         let mut stats_by_type = HashMap::new();
         for stream in cache.values() {
-            *stats_by_type.entry(stream.info.stream_type.clone()).or_insert(0) += 1;
+            *stats_by_type
+                .entry(stream.info.stream_type)
+                .or_insert(0) += 1;
         }
 
         serde_json::json!({
@@ -266,7 +269,10 @@ impl StreamResolver {
                 }
                 Err(e) => {
                     warn!("Discovery error: {}", e);
-                    if sender.send(DiscoveryEvent::DiscoveryError(e.to_string())).is_err() {
+                    if sender
+                        .send(DiscoveryEvent::DiscoveryError(e.to_string()))
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -352,9 +358,9 @@ impl StreamResolver {
             _ => StreamType::Generic,
         };
 
-        self.filters.iter().any(|filter| {
-            filter.stream_type.is_none() || filter.stream_type == Some(mock_type)
-        })
+        self.filters
+            .iter()
+            .any(|filter| filter.stream_type.is_none() || filter.stream_type == Some(mock_type))
     }
 
     /// Check if stream matches filter criteria

@@ -1,7 +1,7 @@
-pub mod websocket;
-pub mod state;
 pub mod message;
+pub mod state;
+pub mod websocket;
 
+pub use message::{BridgeCommand, BridgeResponse, MessageHandler};
 pub use state::AppState;
 pub use websocket::BridgeServer;
-pub use message::{BridgeCommand, BridgeResponse, MessageHandler};

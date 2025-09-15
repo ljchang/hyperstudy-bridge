@@ -1,5 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
@@ -56,7 +56,8 @@ mod stress_components {
             // Simulate connection time
             tokio::time::sleep(Duration::from_millis(10 + rand::random::<u64>() % 50)).await;
 
-            if rand::random::<f64>() < 0.95 { // 95% success rate
+            if rand::random::<f64>() < 0.95 {
+                // 95% success rate
                 self.is_connected.store(true, Ordering::Relaxed);
                 Ok(())
             } else {
@@ -79,9 +80,11 @@ mod stress_components {
             let elapsed = start.elapsed();
 
             // Simulate occasional failures
-            if rand::random::<f64>() < 0.98 { // 98% success rate
+            if rand::random::<f64>() < 0.98 {
+                // 98% success rate
                 self.message_count.fetch_add(1, Ordering::Relaxed);
-                self.latency_sum.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
+                self.latency_sum
+                    .fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
                 self.latency_count.fetch_add(1, Ordering::Relaxed);
                 Ok(elapsed)
             } else {
@@ -151,7 +154,8 @@ mod stress_components {
             // Simulate message processing
             tokio::task::yield_now().await;
 
-            if rand::random::<f64>() < 0.999 { // 99.9% success rate
+            if rand::random::<f64>() < 0.999 {
+                // 99.9% success rate
                 self.message_count.fetch_add(1, Ordering::Relaxed);
                 Ok(())
             } else {
@@ -206,7 +210,8 @@ fn stress_test_high_throughput(c: &mut Criterion) {
                     let duration = Duration::from_secs(5);
                     let start_time = Instant::now();
 
-                    let mut interval_timer = interval(Duration::from_nanos(1_000_000_000 / msg_per_sec));
+                    let mut interval_timer =
+                        interval(Duration::from_nanos(1_000_000_000 / msg_per_sec));
 
                     let mut successful_messages = 0;
                     let mut failed_messages = 0;
@@ -223,7 +228,7 @@ fn stress_test_high_throughput(c: &mut Criterion) {
                     device.disconnect();
                     black_box((successful_messages, failed_messages))
                 });
-            }
+            },
         );
     }
 
@@ -247,35 +252,37 @@ fn stress_test_concurrent_connections(c: &mut Criterion) {
                     let server = Arc::new(StressTestServer::new(connection_count * 2));
                     let semaphore = Arc::new(Semaphore::new(connection_count));
 
-                    let tasks: Vec<_> = (0..connection_count).map(|i| {
-                        let server = Arc::clone(&server);
-                        let semaphore = Arc::clone(&semaphore);
+                    let tasks: Vec<_> = (0..connection_count)
+                        .map(|i| {
+                            let server = Arc::clone(&server);
+                            let semaphore = Arc::clone(&semaphore);
 
-                        tokio::spawn(async move {
-                            let _permit = semaphore.acquire().await.unwrap();
+                            tokio::spawn(async move {
+                                let _permit = semaphore.acquire().await.unwrap();
 
-                            // Connect
-                            if let Err(_) = server.handle_connection().await {
-                                return 0;
-                            }
-
-                            let message = vec![0u8; 512];
-                            let mut message_count = 0;
-
-                            // Send messages for 3 seconds
-                            let start = Instant::now();
-                            while start.elapsed() < Duration::from_secs(3) {
-                                if server.handle_message(&message).await.is_ok() {
-                                    message_count += 1;
+                                // Connect
+                                if let Err(_) = server.handle_connection().await {
+                                    return 0;
                                 }
 
-                                tokio::time::sleep(Duration::from_millis(10)).await;
-                            }
+                                let message = vec![0u8; 512];
+                                let mut message_count = 0;
 
-                            server.close_connection();
-                            message_count
+                                // Send messages for 3 seconds
+                                let start = Instant::now();
+                                while start.elapsed() < Duration::from_secs(3) {
+                                    if server.handle_message(&message).await.is_ok() {
+                                        message_count += 1;
+                                    }
+
+                                    tokio::time::sleep(Duration::from_millis(10)).await;
+                                }
+
+                                server.close_connection();
+                                message_count
+                            })
                         })
-                    }).collect();
+                        .collect();
 
                     let results: Vec<_> = futures_util::future::join_all(tasks).await;
                     let total_messages: i32 = results.into_iter().map(|r| r.unwrap()).sum();
@@ -283,7 +290,7 @@ fn stress_test_concurrent_connections(c: &mut Criterion) {
                     let final_stats = server.get_stats();
                     black_box((total_messages, final_stats))
                 });
-            }
+            },
         );
     }
 
@@ -302,12 +309,13 @@ fn stress_test_long_running_stability(c: &mut Criterion) {
                 .collect();
 
             // Connect all devices
-            let connect_tasks: Vec<_> = devices.iter().map(|device| {
-                let device = Arc::clone(device);
-                tokio::spawn(async move {
-                    device.connect().await
+            let connect_tasks: Vec<_> = devices
+                .iter()
+                .map(|device| {
+                    let device = Arc::clone(device);
+                    tokio::spawn(async move { device.connect().await })
                 })
-            }).collect();
+                .collect();
 
             let _connect_results: Vec<_> = futures_util::future::join_all(connect_tasks).await;
 
@@ -315,25 +323,31 @@ fn stress_test_long_running_stability(c: &mut Criterion) {
             let test_duration = Duration::from_secs(10);
             let start_time = Instant::now();
 
-            let tasks: Vec<_> = devices.iter().map(|device| {
-                let device = Arc::clone(device);
-                tokio::spawn(async move {
-                    let message = vec![0u8; 256];
-                    let mut local_message_count = 0;
+            let tasks: Vec<_> = devices
+                .iter()
+                .map(|device| {
+                    let device = Arc::clone(device);
+                    tokio::spawn(async move {
+                        let message = vec![0u8; 256];
+                        let mut local_message_count = 0;
 
-                    while start_time.elapsed() < test_duration {
-                        match device.send_message(&message).await {
-                            Ok(_) => local_message_count += 1,
-                            Err(_) => {}
+                        while start_time.elapsed() < test_duration {
+                            match device.send_message(&message).await {
+                                Ok(_) => local_message_count += 1,
+                                Err(_) => {}
+                            }
+
+                            // Random delay between messages
+                            tokio::time::sleep(Duration::from_millis(
+                                1 + rand::random::<u64>() % 10,
+                            ))
+                            .await;
                         }
 
-                        // Random delay between messages
-                        tokio::time::sleep(Duration::from_millis(1 + rand::random::<u64>() % 10)).await;
-                    }
-
-                    local_message_count
+                        local_message_count
+                    })
                 })
-            }).collect();
+                .collect();
 
             let results: Vec<_> = futures_util::future::join_all(tasks).await;
             let total_messages: u64 = results.into_iter().map(|r| r.unwrap()).sum();
@@ -436,7 +450,7 @@ fn stress_test_resource_exhaustion(c: &mut Criterion) {
                                 server.close_connection();
                             }
                         }
-                    },
+                    }
                     Err(_) => failed_connections += 1,
                 }
 
@@ -525,7 +539,8 @@ fn stress_test_error_recovery(c: &mut Criterion) {
             while start_time.elapsed() < test_duration {
                 // Randomly disconnect some devices (simulate errors)
                 for (i, device) in devices.iter().enumerate() {
-                    if rand::random::<f64>() < 0.1 { // 10% chance to disconnect
+                    if rand::random::<f64>() < 0.1 {
+                        // 10% chance to disconnect
                         device.disconnect();
                     }
                 }
@@ -541,17 +556,20 @@ fn stress_test_error_recovery(c: &mut Criterion) {
 
                 // Send messages to connected devices
                 let message = vec![0u8; 512];
-                let tasks: Vec<_> = devices.iter().map(|device| {
-                    let device = Arc::clone(device);
-                    let message = message.clone();
-                    tokio::spawn(async move {
-                        if device.get_stats().is_connected {
-                            device.send_message(&message).await.is_ok()
-                        } else {
-                            false
-                        }
+                let tasks: Vec<_> = devices
+                    .iter()
+                    .map(|device| {
+                        let device = Arc::clone(device);
+                        let message = message.clone();
+                        tokio::spawn(async move {
+                            if device.get_stats().is_connected {
+                                device.send_message(&message).await.is_ok()
+                            } else {
+                                false
+                            }
+                        })
                     })
-                }).collect();
+                    .collect();
 
                 let _results: Vec<_> = futures_util::future::join_all(tasks).await;
 
@@ -585,7 +603,8 @@ fn stress_test_thermal_throttling(c: &mut Criterion) {
                 let message = vec![0u8; 1024];
 
                 // Simulate thermal throttling by gradually increasing delays
-                let elapsed_ratio = start_time.elapsed().as_secs_f64() / test_duration.as_secs_f64();
+                let elapsed_ratio =
+                    start_time.elapsed().as_secs_f64() / test_duration.as_secs_f64();
                 let throttle_delay = Duration::from_micros((elapsed_ratio * 1000.0) as u64);
 
                 tokio::time::sleep(throttle_delay).await;

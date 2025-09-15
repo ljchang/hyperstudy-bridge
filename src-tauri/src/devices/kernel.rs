@@ -2,8 +2,8 @@ use super::{Device, DeviceConfig, DeviceError, DeviceInfo, DeviceStatus, DeviceT
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
-use tokio::net::TcpStream;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 use tokio::time::{sleep, timeout};
 use tracing::{debug, error, info, warn};
 
@@ -69,8 +69,14 @@ impl std::fmt::Debug for KernelDevice {
             .field("device_config", &self.device_config)
             .field("reconnect_attempts", &self.reconnect_attempts)
             .field("last_heartbeat", &self.last_heartbeat)
-            .field("last_successful_connection", &self.last_successful_connection)
-            .field("has_performance_callback", &self.performance_callback.is_some())
+            .field(
+                "last_successful_connection",
+                &self.last_successful_connection,
+            )
+            .field(
+                "has_performance_callback",
+                &self.performance_callback.is_some(),
+            )
             .finish()
     }
 }
@@ -107,8 +113,7 @@ impl KernelDevice {
         let max_delay = self.config.max_reconnect_delay_ms;
 
         // Exponential backoff: base * 2^attempts, capped at max_delay
-        let delay_ms = (base_delay * (2_u64.pow(self.reconnect_attempts.min(10))))
-            .min(max_delay);
+        let delay_ms = (base_delay * (2_u64.pow(self.reconnect_attempts.min(10)))).min(max_delay);
 
         Duration::from_millis(delay_ms)
     }
@@ -122,15 +127,24 @@ impl KernelDevice {
 
         match timeout(connection_timeout, TcpStream::connect(&addr)).await {
             Ok(Ok(socket)) => {
-                info!("Successfully established connection to Kernel Flow2 at {}", addr);
+                info!(
+                    "Successfully established connection to Kernel Flow2 at {}",
+                    addr
+                );
                 Ok(socket)
             }
             Ok(Err(e)) => {
                 error!("TCP connection failed to {}: {}", addr, e);
-                Err(DeviceError::ConnectionFailed(format!("TCP connection failed: {}", e)))
+                Err(DeviceError::ConnectionFailed(format!(
+                    "TCP connection failed: {}",
+                    e
+                )))
             }
             Err(_) => {
-                error!("Connection attempt to {} timed out after {:?}", addr, connection_timeout);
+                error!(
+                    "Connection attempt to {} timed out after {:?}",
+                    addr, connection_timeout
+                );
                 Err(DeviceError::Timeout)
             }
         }
@@ -139,16 +153,23 @@ impl KernelDevice {
     /// Reconnect with exponential backoff
     async fn attempt_reconnect(&mut self) -> Result<(), DeviceError> {
         if self.reconnect_attempts >= self.config.max_reconnect_attempts {
-            error!("Maximum reconnection attempts ({}) reached for Kernel Flow2", self.config.max_reconnect_attempts);
+            error!(
+                "Maximum reconnection attempts ({}) reached for Kernel Flow2",
+                self.config.max_reconnect_attempts
+            );
             self.status = DeviceStatus::Error;
-            return Err(DeviceError::ConnectionFailed("Maximum reconnection attempts reached".to_string()));
+            return Err(DeviceError::ConnectionFailed(
+                "Maximum reconnection attempts reached".to_string(),
+            ));
         }
 
         self.reconnect_attempts += 1;
         let backoff_delay = self.calculate_backoff_delay();
 
-        warn!("Reconnection attempt {} of {} for Kernel Flow2, waiting {:?}",
-              self.reconnect_attempts, self.config.max_reconnect_attempts, backoff_delay);
+        warn!(
+            "Reconnection attempt {} of {} for Kernel Flow2, waiting {:?}",
+            self.reconnect_attempts, self.config.max_reconnect_attempts, backoff_delay
+        );
 
         sleep(backoff_delay).await;
 
@@ -163,7 +184,10 @@ impl KernelDevice {
                 Ok(())
             }
             Err(e) => {
-                warn!("Reconnection attempt {} failed: {}", self.reconnect_attempts, e);
+                warn!(
+                    "Reconnection attempt {} failed: {}",
+                    self.reconnect_attempts, e
+                );
                 Err(e)
             }
         }
@@ -209,14 +233,23 @@ impl KernelDevice {
 
         if let Some(ref mut socket) = self.socket {
             let result = match socket.write_all(HEARTBEAT_COMMAND).await {
-                Ok(_) => socket.flush().await
-                    .map_err(|e| DeviceError::CommunicationError(format!("Heartbeat failed: {}", e))),
-                Err(e) => Err(DeviceError::CommunicationError(format!("Heartbeat failed: {}", e))),
+                Ok(_) => socket.flush().await.map_err(|e| {
+                    DeviceError::CommunicationError(format!("Heartbeat failed: {}", e))
+                }),
+                Err(e) => Err(DeviceError::CommunicationError(format!(
+                    "Heartbeat failed: {}",
+                    e
+                ))),
             };
 
             // Record performance metrics (simplified for borrowing)
             if let Some(ref callback) = self.performance_callback {
-                callback(&device_id, Duration::from_nanos(0), HEARTBEAT_COMMAND.len() as u64, 0);
+                callback(
+                    &device_id,
+                    Duration::from_nanos(0),
+                    HEARTBEAT_COMMAND.len() as u64,
+                    0,
+                );
             }
 
             result
@@ -284,7 +317,8 @@ impl KernelDevice {
         self.config = config;
         // Resize buffer if size changed
         if self.buffer.capacity() < self.config.buffer_size {
-            self.buffer.reserve(self.config.buffer_size - self.buffer.capacity());
+            self.buffer
+                .reserve(self.config.buffer_size - self.buffer.capacity());
         }
     }
 }
@@ -292,7 +326,10 @@ impl KernelDevice {
 #[async_trait]
 impl Device for KernelDevice {
     async fn connect(&mut self) -> Result<(), DeviceError> {
-        info!("Connecting to Kernel Flow2 at {}:{}", self.config.ip_address, self.config.port);
+        info!(
+            "Connecting to Kernel Flow2 at {}:{}",
+            self.config.ip_address, self.config.port
+        );
         self.status = DeviceStatus::Connecting;
         self.reconnect_attempts = 0; // Reset reconnection attempts on new connection
 
@@ -360,9 +397,15 @@ impl Device for KernelDevice {
                         if self.is_io_error_connection_lost(&flush_err) {
                             self.socket = None;
                             self.status = DeviceStatus::Error;
-                            return Err(DeviceError::ConnectionFailed(format!("Connection lost during flush: {}", flush_err)));
+                            return Err(DeviceError::ConnectionFailed(format!(
+                                "Connection lost during flush: {}",
+                                flush_err
+                            )));
                         } else {
-                            return Err(DeviceError::CommunicationError(format!("Flush failed: {}", flush_err)));
+                            return Err(DeviceError::CommunicationError(format!(
+                                "Flush failed: {}",
+                                flush_err
+                            )));
                         }
                     }
 
@@ -374,16 +417,26 @@ impl Device for KernelDevice {
                         callback(&device_id, latency, data.len() as u64, 0);
                     }
 
-                    debug!("Kernel Flow2 data sent successfully: {} bytes with latency {:?}", data.len(), latency);
+                    debug!(
+                        "Kernel Flow2 data sent successfully: {} bytes with latency {:?}",
+                        data.len(),
+                        latency
+                    );
                     Ok(())
                 }
                 Err(send_err) => {
                     if self.is_io_error_connection_lost(&send_err) {
                         self.socket = None;
                         self.status = DeviceStatus::Error;
-                        Err(DeviceError::ConnectionFailed(format!("Connection lost during send: {}", send_err)))
+                        Err(DeviceError::ConnectionFailed(format!(
+                            "Connection lost during send: {}",
+                            send_err
+                        )))
                     } else {
-                        Err(DeviceError::CommunicationError(format!("Send failed: {}", send_err)))
+                        Err(DeviceError::CommunicationError(format!(
+                            "Send failed: {}",
+                            send_err
+                        )))
                     }
                 }
             }
@@ -422,7 +475,9 @@ impl Device for KernelDevice {
                     warn!("Kernel Flow2 connection closed by remote");
                     self.status = DeviceStatus::Error;
                     self.socket = None;
-                    Err(DeviceError::ConnectionFailed("Connection closed by remote".to_string()))
+                    Err(DeviceError::ConnectionFailed(
+                        "Connection closed by remote".to_string(),
+                    ))
                 }
                 Ok(n) => {
                     self.buffer.truncate(n);
@@ -455,9 +510,15 @@ impl Device for KernelDevice {
                     if self.is_io_error_connection_lost(&e) {
                         self.socket = None;
                         self.status = DeviceStatus::Error;
-                        Err(DeviceError::ConnectionFailed(format!("Connection lost during read: {}", e)))
+                        Err(DeviceError::ConnectionFailed(format!(
+                            "Connection lost during read: {}",
+                            e
+                        )))
                     } else {
-                        Err(DeviceError::CommunicationError(format!("Read failed: {}", e)))
+                        Err(DeviceError::CommunicationError(format!(
+                            "Read failed: {}",
+                            e
+                        )))
                     }
                 }
             }
@@ -468,8 +529,15 @@ impl Device for KernelDevice {
 
     fn get_info(&self) -> DeviceInfo {
         DeviceInfo {
-            id: format!("kernel_{}_{}", self.config.ip_address.replace('.', "_"), self.config.port),
-            name: format!("Kernel Flow2 ({}:{})", self.config.ip_address, self.config.port),
+            id: format!(
+                "kernel_{}_{}",
+                self.config.ip_address.replace('.', "_"),
+                self.config.port
+            ),
+            name: format!(
+                "Kernel Flow2 ({}:{})",
+                self.config.ip_address, self.config.port
+            ),
             device_type: DeviceType::Kernel,
             status: self.status,
             metadata: serde_json::json!({
@@ -507,11 +575,16 @@ impl Device for KernelDevice {
                 self.config.connection_timeout_ms = timeout;
             }
 
-            if let Some(heartbeat_interval) = custom.get("heartbeat_interval_ms").and_then(|v| v.as_u64()) {
+            if let Some(heartbeat_interval) =
+                custom.get("heartbeat_interval_ms").and_then(|v| v.as_u64())
+            {
                 self.config.heartbeat_interval_ms = heartbeat_interval;
             }
 
-            if let Some(max_attempts) = custom.get("max_reconnect_attempts").and_then(|v| v.as_u64()) {
+            if let Some(max_attempts) = custom
+                .get("max_reconnect_attempts")
+                .and_then(|v| v.as_u64())
+            {
                 self.config.max_reconnect_attempts = max_attempts as u32;
             }
 
@@ -521,12 +594,16 @@ impl Device for KernelDevice {
                 self.buffer.reserve(self.config.buffer_size);
             }
 
-            if let Some(enable_heartbeat) = custom.get("enable_heartbeat").and_then(|v| v.as_bool()) {
+            if let Some(enable_heartbeat) = custom.get("enable_heartbeat").and_then(|v| v.as_bool())
+            {
                 self.config.enable_heartbeat = enable_heartbeat;
             }
         }
 
-        info!("Kernel Flow2 device configured: {}:{}", self.config.ip_address, self.config.port);
+        info!(
+            "Kernel Flow2 device configured: {}:{}",
+            self.config.ip_address, self.config.port
+        );
         Ok(())
     }
 

@@ -1,5 +1,6 @@
 // Note: Temporarily removing metrics crate integration due to compilation issues
 // Will re-add once the proper syntax is determined
+use histogram::Histogram;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -7,7 +8,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::System;
 use tokio::sync::RwLock;
-use histogram::Histogram;
 
 /// Performance monitoring system for HyperStudy Bridge
 /// Tracks device latency, throughput, system resources, and connection stability
@@ -163,7 +163,13 @@ impl PerformanceMonitor {
     }
 
     /// Record a device operation with latency measurement
-    pub async fn record_device_operation(&self, device_id: &str, latency: Duration, bytes_sent: u64, bytes_received: u64) {
+    pub async fn record_device_operation(
+        &self,
+        device_id: &str,
+        latency: Duration,
+        bytes_sent: u64,
+        bytes_received: u64,
+    ) {
         if let Some(counters) = self.get_device_counters(device_id).await {
             let latency_ns = latency.as_nanos() as u64;
 
@@ -172,11 +178,18 @@ impl PerformanceMonitor {
                 counters.messages_received.fetch_add(1, Ordering::Relaxed);
             }
             counters.bytes_sent.fetch_add(bytes_sent, Ordering::Relaxed);
-            counters.bytes_received.fetch_add(bytes_received, Ordering::Relaxed);
-            counters.last_latency_ns.store(latency_ns, Ordering::Relaxed);
+            counters
+                .bytes_received
+                .fetch_add(bytes_received, Ordering::Relaxed);
+            counters
+                .last_latency_ns
+                .store(latency_ns, Ordering::Relaxed);
             counters.last_activity.store(
-                SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
-                Ordering::Relaxed
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                Ordering::Relaxed,
             );
 
             // Update latency histogram
@@ -196,7 +209,9 @@ impl PerformanceMonitor {
             counters.errors.fetch_add(1, Ordering::Relaxed);
         }
 
-        self.system_counters.global_errors.fetch_add(1, Ordering::Relaxed);
+        self.system_counters
+            .global_errors
+            .fetch_add(1, Ordering::Relaxed);
 
         tracing::error!("Device {} error: {}", device_id, error_msg);
     }
@@ -206,7 +221,9 @@ impl PerformanceMonitor {
         if let Some(counters) = self.get_device_counters(device_id).await {
             counters.connection_attempts.fetch_add(1, Ordering::Relaxed);
             if success {
-                counters.successful_connections.fetch_add(1, Ordering::Relaxed);
+                counters
+                    .successful_connections
+                    .fetch_add(1, Ordering::Relaxed);
             }
         }
     }
@@ -214,16 +231,24 @@ impl PerformanceMonitor {
     /// Record a WebSocket connection event
     pub fn record_websocket_connection(&self, connected: bool) {
         if connected {
-            self.system_counters.total_connections.fetch_add(1, Ordering::Relaxed);
-            self.system_counters.active_connections.fetch_add(1, Ordering::Relaxed);
+            self.system_counters
+                .total_connections
+                .fetch_add(1, Ordering::Relaxed);
+            self.system_counters
+                .active_connections
+                .fetch_add(1, Ordering::Relaxed);
         } else {
-            self.system_counters.active_connections.fetch_sub(1, Ordering::Relaxed);
+            self.system_counters
+                .active_connections
+                .fetch_sub(1, Ordering::Relaxed);
         }
     }
 
     /// Record a bridge message
     pub fn record_bridge_message(&self) {
-        self.system_counters.bridge_messages.fetch_add(1, Ordering::Relaxed);
+        self.system_counters
+            .bridge_messages
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Update system resource metrics
@@ -234,7 +259,9 @@ impl PerformanceMonitor {
 
         // Get memory usage (simplified for compatibility)
         let memory_bytes = system.total_memory();
-        self.system_counters.memory_usage_bytes.store(memory_bytes, Ordering::Relaxed);
+        self.system_counters
+            .memory_usage_bytes
+            .store(memory_bytes, Ordering::Relaxed);
 
         // Get CPU usage (simplified for compatibility)
         let cpu_info = system.cpus();
@@ -243,7 +270,9 @@ impl PerformanceMonitor {
         } else {
             0
         };
-        self.system_counters.cpu_usage_percent.store(cpu_usage, Ordering::Relaxed);
+        self.system_counters
+            .cpu_usage_percent
+            .store(cpu_usage, Ordering::Relaxed);
     }
 
     /// Get comprehensive performance metrics
@@ -251,13 +280,25 @@ impl PerformanceMonitor {
         // Update system metrics first
         self.update_system_metrics().await;
 
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         let uptime_seconds = self.start_time.elapsed().as_secs();
 
         let system_metrics = SystemMetrics {
-            memory_usage_bytes: self.system_counters.memory_usage_bytes.load(Ordering::Relaxed),
-            cpu_usage_percent: self.system_counters.cpu_usage_percent.load(Ordering::Relaxed) as f64,
-            active_connections: self.system_counters.active_connections.load(Ordering::Relaxed),
+            memory_usage_bytes: self
+                .system_counters
+                .memory_usage_bytes
+                .load(Ordering::Relaxed),
+            cpu_usage_percent: self
+                .system_counters
+                .cpu_usage_percent
+                .load(Ordering::Relaxed) as f64,
+            active_connections: self
+                .system_counters
+                .active_connections
+                .load(Ordering::Relaxed),
             bridge_messages: self.system_counters.bridge_messages.load(Ordering::Relaxed),
             global_errors: self.system_counters.global_errors.load(Ordering::Relaxed),
         };
@@ -282,12 +323,19 @@ impl PerformanceMonitor {
     pub async fn get_device_metrics(&self, device_id: &str) -> Option<DevicePerformanceMetrics> {
         let device_counters = self.device_counters.read().await;
         let counters = device_counters.get(device_id)?;
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         Some(self.calculate_device_metrics(counters, timestamp).await)
     }
 
     /// Calculate device performance metrics from counters
-    async fn calculate_device_metrics(&self, counters: &DeviceCounters, current_timestamp: u64) -> DevicePerformanceMetrics {
+    async fn calculate_device_metrics(
+        &self,
+        counters: &DeviceCounters,
+        current_timestamp: u64,
+    ) -> DevicePerformanceMetrics {
         let messages_sent = counters.messages_sent.load(Ordering::Relaxed);
         let messages_received = counters.messages_received.load(Ordering::Relaxed);
         let errors = counters.errors.load(Ordering::Relaxed);
@@ -401,12 +449,20 @@ impl DeviceCounters {
             errors: Arc::new(AtomicU64::new(0)),
             connection_attempts: Arc::new(AtomicU64::new(0)),
             successful_connections: Arc::new(AtomicU64::new(0)),
-            latency_histogram: Arc::new(RwLock::new(Histogram::new(3, 16).expect("Failed to create histogram"))),
+            latency_histogram: Arc::new(RwLock::new(
+                Histogram::new(3, 16).expect("Failed to create histogram"),
+            )),
             last_latency_ns: Arc::new(AtomicU64::new(0)),
             bytes_sent: Arc::new(AtomicU64::new(0)),
             bytes_received: Arc::new(AtomicU64::new(0)),
             last_activity: Arc::new(AtomicU64::new(0)),
         }
+    }
+}
+
+impl Default for SystemCounters {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

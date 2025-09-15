@@ -1,12 +1,12 @@
 use hyperstudy_bridge::bridge::{AppState, BridgeCommand, BridgeResponse, BridgeServer};
-use hyperstudy_bridge::devices::{Device, DeviceError, DeviceStatus, DeviceType, DeviceConfig};
-use hyperstudy_bridge::performance::{PerformanceMonitor, measure_latency};
+use hyperstudy_bridge::devices::{Device, DeviceConfig, DeviceError, DeviceStatus, DeviceType};
+use hyperstudy_bridge::performance::{measure_latency, PerformanceMonitor};
+use serde_json::json;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::collections::HashMap;
-use tokio::time::timeout;
 use tokio::sync::RwLock;
-use serde_json::json;
+use tokio::time::timeout;
 use uuid::Uuid;
 
 mod common;
@@ -205,14 +205,21 @@ mod performance_tests {
         let test_data = b"test_message";
         let test_duration = Duration::from_secs(5);
 
-        let (message_count, throughput) = test_utils::measure_throughput(|| async {
-            if let Some(device_lock) = fixture.app_state.get_device(&device_id).await {
-                let mut device = device_lock.write().await;
-                let _ = device.send(test_data).await;
-            }
-        }, test_duration).await;
+        let (message_count, throughput) = test_utils::measure_throughput(
+            || async {
+                if let Some(device_lock) = fixture.app_state.get_device(&device_id).await {
+                    let mut device = device_lock.write().await;
+                    let _ = device.send(test_data).await;
+                }
+            },
+            test_duration,
+        )
+        .await;
 
-        println!("Throughput: {} msg/sec ({} messages in {:?})", throughput, message_count, test_duration);
+        println!(
+            "Throughput: {} msg/sec ({} messages in {:?})",
+            throughput, message_count, test_duration
+        );
 
         // Verify throughput requirement (>1000 msg/sec)
         test_utils::assert_throughput_compliance(throughput, 1000.0);
@@ -243,7 +250,13 @@ mod performance_tests {
                 let state = fixture.app_state.clone();
                 let devices = devices.clone();
                 async move {
-                    let device_types = vec![DeviceType::TTL, DeviceType::Kernel, DeviceType::Pupil, DeviceType::Biopac, DeviceType::Mock];
+                    let device_types = vec![
+                        DeviceType::TTL,
+                        DeviceType::Kernel,
+                        DeviceType::Pupil,
+                        DeviceType::Biopac,
+                        DeviceType::Mock,
+                    ];
                     let device_type = device_types[worker_id % device_types.len()];
                     let device_id = &devices[&device_type];
 
@@ -257,7 +270,8 @@ mod performance_tests {
             },
             concurrent_operations,
             operations_per_worker,
-        ).await;
+        )
+        .await;
 
         // Analyze results
         let avg_latency = latencies.iter().sum::<Duration>() / latencies.len() as u32;
@@ -274,8 +288,14 @@ mod performance_tests {
         println!("  Total operations: {}", latencies.len());
 
         // Verify reasonable performance under load
-        assert!(avg_latency.as_millis() < 100, "Average latency too high under concurrent load");
-        assert!(p95_latency.as_millis() < 200, "P95 latency too high under concurrent load");
+        assert!(
+            avg_latency.as_millis() < 100,
+            "Average latency too high under concurrent load"
+        );
+        assert!(
+            p95_latency.as_millis() < 200,
+            "P95 latency too high under concurrent load"
+        );
 
         fixture.cleanup().await;
     }
@@ -286,7 +306,10 @@ mod performance_tests {
         let device_id = fixture.add_mock_device(DeviceType::TTL).await;
 
         // Add device to performance monitoring
-        fixture.performance_monitor.add_device(device_id.clone()).await;
+        fixture
+            .performance_monitor
+            .add_device(device_id.clone())
+            .await;
 
         // Connect and perform operations
         if let Some(device_lock) = fixture.app_state.get_device(&device_id).await {
@@ -303,16 +326,20 @@ mod performance_tests {
             }
             let latency = start.elapsed();
 
-            fixture.performance_monitor.record_device_operation(
-                &device_id,
-                latency,
-                4, // bytes sent
-                0, // bytes received
-            ).await;
+            fixture
+                .performance_monitor
+                .record_device_operation(
+                    &device_id, latency, 4, // bytes sent
+                    0, // bytes received
+                )
+                .await;
         }
 
         // Verify metrics collection
-        let metrics = fixture.performance_monitor.get_device_metrics(&device_id).await;
+        let metrics = fixture
+            .performance_monitor
+            .get_device_metrics(&device_id)
+            .await;
         assert!(metrics.is_some());
 
         let device_metrics = metrics.unwrap();
@@ -347,10 +374,20 @@ mod error_recovery_tests {
         }
 
         // With 50% error rate, we should have some successful connections
-        assert!(successful_connections > 0, "No successful connections after {} attempts", max_attempts);
-        assert!(successful_connections < max_attempts, "All connections succeeded with 50% error rate");
+        assert!(
+            successful_connections > 0,
+            "No successful connections after {} attempts",
+            max_attempts
+        );
+        assert!(
+            successful_connections < max_attempts,
+            "All connections succeeded with 50% error rate"
+        );
 
-        println!("Successful connections: {}/{}", successful_connections, max_attempts);
+        println!(
+            "Successful connections: {}/{}",
+            successful_connections, max_attempts
+        );
 
         fixture.cleanup().await;
     }
@@ -401,7 +438,11 @@ mod error_recovery_tests {
         println!("Success rate with retries: {:.2}%", success_rate * 100.0);
 
         // With 30% error rate and 3 retries, success rate should be much higher
-        assert!(success_rate > 0.8, "Success rate too low even with retries: {}", success_rate);
+        assert!(
+            success_rate > 0.8,
+            "Success rate too low even with retries: {}",
+            success_rate
+        );
 
         fixture.cleanup().await;
     }
@@ -434,7 +475,10 @@ mod error_recovery_tests {
         };
 
         // All heartbeats should succeed for a healthy device
-        assert!(heartbeat_results.iter().all(|&success| success), "Some heartbeats failed");
+        assert!(
+            heartbeat_results.iter().all(|&success| success),
+            "Some heartbeats failed"
+        );
 
         fixture.cleanup().await;
     }
@@ -445,7 +489,10 @@ mod error_recovery_tests {
         let device_id = fixture.add_unreliable_device(DeviceType::TTL, 0.8).await; // 80% error rate
 
         // Add to performance monitoring
-        fixture.performance_monitor.add_device(device_id.clone()).await;
+        fixture
+            .performance_monitor
+            .add_device(device_id.clone())
+            .await;
 
         // Attempt operations to generate errors
         let total_operations = 20;
@@ -453,7 +500,10 @@ mod error_recovery_tests {
             if let Some(device_lock) = fixture.app_state.get_device(&device_id).await {
                 let mut device = device_lock.write().await;
                 if let Err(e) = device.connect().await {
-                    fixture.performance_monitor.record_device_error(&device_id, &e.to_string()).await;
+                    fixture
+                        .performance_monitor
+                        .record_device_error(&device_id, &e.to_string())
+                        .await;
                 } else {
                     device.disconnect().await.ok();
                 }
@@ -461,17 +511,26 @@ mod error_recovery_tests {
         }
 
         // Check error metrics
-        let metrics = fixture.performance_monitor.get_device_metrics(&device_id).await;
+        let metrics = fixture
+            .performance_monitor
+            .get_device_metrics(&device_id)
+            .await;
         assert!(metrics.is_some());
 
         let device_metrics = metrics.unwrap();
-        assert!(device_metrics.errors > 0, "No errors recorded despite high error rate");
+        assert!(
+            device_metrics.errors > 0,
+            "No errors recorded despite high error rate"
+        );
 
         // With 80% error rate, we should see significant errors
         let error_rate = device_metrics.errors as f64 / total_operations as f64;
         assert!(error_rate > 0.5, "Error rate too low: {}", error_rate);
 
-        println!("Recorded errors: {} out of {} operations", device_metrics.errors, total_operations);
+        println!(
+            "Recorded errors: {} out of {} operations",
+            device_metrics.errors, total_operations
+        );
 
         fixture.cleanup().await;
     }
@@ -507,12 +566,16 @@ mod memory_leak_tests {
         memory_tracker.measure();
 
         // Check for memory leaks (threshold: 10MB increase)
-        assert!(!memory_tracker.has_memory_leak(10),
+        assert!(
+            !memory_tracker.has_memory_leak(10),
             "Memory leak detected: {} bytes increase",
             memory_tracker.memory_increase()
         );
 
-        println!("Memory increase: {} bytes", memory_tracker.memory_increase());
+        println!(
+            "Memory increase: {} bytes",
+            memory_tracker.memory_increase()
+        );
 
         fixture.cleanup().await;
     }
@@ -547,12 +610,16 @@ mod memory_leak_tests {
         memory_tracker.measure();
 
         // Check for memory leaks (threshold: 20MB increase for large message test)
-        assert!(!memory_tracker.has_memory_leak(20),
+        assert!(
+            !memory_tracker.has_memory_leak(20),
             "Memory leak detected in message processing: {} bytes increase",
             memory_tracker.memory_increase()
         );
 
-        println!("Memory increase after 1000 messages: {} bytes", memory_tracker.memory_increase());
+        println!(
+            "Memory increase after 1000 messages: {} bytes",
+            memory_tracker.memory_increase()
+        );
 
         fixture.cleanup().await;
     }
@@ -586,12 +653,16 @@ mod memory_leak_tests {
         memory_tracker.measure();
 
         // Check for memory leaks
-        assert!(!memory_tracker.has_memory_leak(15),
+        assert!(
+            !memory_tracker.has_memory_leak(15),
             "Memory leak detected in device state management: {} bytes increase",
             memory_tracker.memory_increase()
         );
 
-        println!("Memory increase after device lifecycle test: {} bytes", memory_tracker.memory_increase());
+        println!(
+            "Memory increase after device lifecycle test: {} bytes",
+            memory_tracker.memory_increase()
+        );
 
         fixture.cleanup().await;
     }
@@ -605,7 +676,9 @@ mod edge_case_tests {
     #[tokio::test]
     async fn test_extremely_high_latency_device() {
         let mut fixture = TestFixture::new().await;
-        let device_id = fixture.add_high_latency_device(DeviceType::Kernel, 5000).await; // 5 second latency
+        let device_id = fixture
+            .add_high_latency_device(DeviceType::Kernel, 5000)
+            .await; // 5 second latency
 
         // Test connection with timeout
         let connect_result = timeout(Duration::from_secs(10), async {
@@ -615,7 +688,8 @@ mod edge_case_tests {
             } else {
                 Err(DeviceError::NotConnected)
             }
-        }).await;
+        })
+        .await;
 
         assert!(connect_result.is_ok(), "Connection timed out");
         assert!(connect_result.unwrap().is_ok(), "Connection failed");
@@ -680,7 +754,11 @@ mod edge_case_tests {
                 assert!(connect_result.is_ok(), "Connect failed on cycle {}", cycle);
 
                 let disconnect_result = device.disconnect().await;
-                assert!(disconnect_result.is_ok(), "Disconnect failed on cycle {}", cycle);
+                assert!(
+                    disconnect_result.is_ok(),
+                    "Disconnect failed on cycle {}",
+                    cycle
+                );
             }
         }
 
@@ -739,10 +817,16 @@ mod edge_case_tests {
             assert!(send_result.is_err(), "Send should fail when disconnected");
 
             let receive_result = device.receive().await;
-            assert!(receive_result.is_err(), "Receive should fail when disconnected");
+            assert!(
+                receive_result.is_err(),
+                "Receive should fail when disconnected"
+            );
 
             let heartbeat_result = device.heartbeat().await;
-            assert!(heartbeat_result.is_err(), "Heartbeat should fail when disconnected");
+            assert!(
+                heartbeat_result.is_err(),
+                "Heartbeat should fail when disconnected"
+            );
         }
 
         fixture.cleanup().await;
@@ -759,13 +843,14 @@ mod resource_cleanup_tests {
         let mut fixture = TestFixture::new().await;
 
         // Add multiple devices
-        let device_ids: Vec<_> = (0..5).map(|i| {
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    fixture.add_mock_device(DeviceType::Mock).await
+        let device_ids: Vec<_> = (0..5)
+            .map(|i| {
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current()
+                        .block_on(async { fixture.add_mock_device(DeviceType::Mock).await })
                 })
             })
-        }).collect();
+            .collect();
 
         // Verify devices are added
         assert_eq!(fixture.get_device_count().await, 5);
@@ -779,7 +864,11 @@ mod resource_cleanup_tests {
         // Verify devices are no longer accessible
         for device_id in device_ids {
             let device = fixture.app_state.get_device(&device_id).await;
-            assert!(device.is_none(), "Device {} still accessible after cleanup", device_id);
+            assert!(
+                device.is_none(),
+                "Device {} still accessible after cleanup",
+                device_id
+            );
         }
     }
 
@@ -788,20 +877,32 @@ mod resource_cleanup_tests {
         let mut fixture = TestFixture::new().await;
 
         // Add devices to performance monitoring
-        let device_ids: Vec<_> = (0..3).map(|_| {
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    let device_id = fixture.add_mock_device(DeviceType::TTL).await;
-                    fixture.performance_monitor.add_device(device_id.clone()).await;
-                    device_id
+        let device_ids: Vec<_> = (0..3)
+            .map(|_| {
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        let device_id = fixture.add_mock_device(DeviceType::TTL).await;
+                        fixture
+                            .performance_monitor
+                            .add_device(device_id.clone())
+                            .await;
+                        device_id
+                    })
                 })
             })
-        }).collect();
+            .collect();
 
         // Verify metrics exist for all devices
         for device_id in &device_ids {
-            let metrics = fixture.performance_monitor.get_device_metrics(device_id).await;
-            assert!(metrics.is_some(), "Metrics not found for device {}", device_id);
+            let metrics = fixture
+                .performance_monitor
+                .get_device_metrics(device_id)
+                .await;
+            assert!(
+                metrics.is_some(),
+                "Metrics not found for device {}",
+                device_id
+            );
         }
 
         // Remove devices from performance monitoring
@@ -811,8 +912,15 @@ mod resource_cleanup_tests {
 
         // Verify metrics are cleaned up
         for device_id in &device_ids {
-            let metrics = fixture.performance_monitor.get_device_metrics(device_id).await;
-            assert!(metrics.is_none(), "Metrics still exist for device {} after cleanup", device_id);
+            let metrics = fixture
+                .performance_monitor
+                .get_device_metrics(device_id)
+                .await;
+            assert!(
+                metrics.is_none(),
+                "Metrics still exist for device {} after cleanup",
+                device_id
+            );
         }
 
         fixture.cleanup().await;
