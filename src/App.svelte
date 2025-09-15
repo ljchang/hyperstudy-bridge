@@ -1,8 +1,9 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import DeviceCard from './lib/components/DeviceCard.svelte';
   import StatusIndicator from './lib/components/StatusIndicator.svelte';
-  
+  import { bridgeStore } from './lib/stores/websocket.svelte.js';
+
   // Device configuration
   let devices = $state([
     {
@@ -11,7 +12,7 @@
       type: 'Adafruit RP2040',
       connection: 'USB Serial',
       status: 'disconnected',
-      config: { port: null }
+      config: { port: '/dev/ttyUSB0' }
     },
     {
       id: 'kernel',
@@ -27,7 +28,7 @@
       type: 'Eye Tracker',
       connection: 'WebSocket',
       status: 'disconnected',
-      config: { url: null }
+      config: { url: 'localhost:8081' }
     },
     {
       id: 'biopac',
@@ -35,28 +36,60 @@
       type: 'Physiological',
       connection: 'TCP (NDT)',
       status: 'disconnected',
-      config: { ip: null, port: 5000 }
+      config: { ip: 'localhost', port: 5000 }
+    },
+    {
+      id: 'mock',
+      name: 'Mock Device',
+      type: 'Testing',
+      connection: 'Virtual',
+      status: 'disconnected',
+      config: {}
     }
   ]);
-  
-  let bridgeStatus = $state('initializing');
-  let wsConnection = $state(null);
-  
+
+  $: bridgeStatus = bridgeStore.status;
+  $: wsDevices = bridgeStore.devices;
+
+  // Update device statuses from WebSocket store
+  $: {
+    devices = devices.map(device => {
+      const wsDevice = wsDevices.get(device.id);
+      if (wsDevice) {
+        return { ...device, status: wsDevice.status || 'disconnected' };
+      }
+      return device;
+    });
+  }
+
   // Connect all devices
   async function connectAll() {
     console.log('Connecting all devices...');
-    // TODO: Implement connection logic
+    for (const device of devices) {
+      if (device.status === 'disconnected') {
+        await bridgeStore.connectDevice(device.id, device.config);
+        await new Promise(resolve => setTimeout(resolve, 500)); // Small delay between connections
+      }
+    }
   }
-  
+
   // Disconnect all devices
   async function disconnectAll() {
     console.log('Disconnecting all devices...');
-    // TODO: Implement disconnection logic
+    for (const device of devices) {
+      if (device.status === 'connected') {
+        await bridgeStore.disconnectDevice(device.id);
+      }
+    }
   }
-  
+
   onMount(() => {
-    bridgeStatus = 'ready';
-    // TODO: Initialize WebSocket server
+    // Bridge store auto-connects in constructor
+    console.log('HyperStudy Bridge initialized');
+  });
+
+  onDestroy(() => {
+    bridgeStore.disconnect();
   });
 </script>
 

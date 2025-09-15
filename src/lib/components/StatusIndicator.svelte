@@ -1,31 +1,31 @@
 <script>
-  let { status } = $props();
-  
-  function getStatusColor(status) {
-    switch(status) {
-      case 'ready': return '#10b981';
-      case 'initializing': return '#f59e0b';
-      case 'error': return '#ef4444';
-      default: return '#6b7280';
-    }
-  }
-  
-  function getStatusLabel(status) {
-    switch(status) {
-      case 'ready': return 'Bridge Ready';
-      case 'initializing': return 'Initializing...';
-      case 'error': return 'Bridge Error';
-      default: return 'Unknown';
-    }
-  }
+  let { status = 'disconnected', size = 'medium', showLabel = true } = $props();
+
+  const statusConfig = {
+    connected: { color: '#10b981', label: 'Connected' },
+    connecting: { color: '#f59e0b', label: 'Connecting...' },
+    disconnected: { color: '#6b7280', label: 'Disconnected' },
+    error: { color: '#ef4444', label: 'Error' }
+  };
+
+  const sizeMap = {
+    small: 8,
+    medium: 10,
+    large: 12
+  };
+
+  $: config = statusConfig[status] || statusConfig.disconnected;
+  $: dotSize = sizeMap[size] || sizeMap.medium;
 </script>
 
 <div class="status-indicator">
-  <div 
-    class="status-light" 
-    style="background-color: {getStatusColor(status)}"
+  <div
+    class="status-light {status === 'connecting' ? 'pulsing' : ''}"
+    style="background-color: {config.color}; width: {dotSize}px; height: {dotSize}px; box-shadow: 0 0 {dotSize}px {config.color}40;"
   ></div>
-  <span class="status-label">{getStatusLabel(status)}</span>
+  {#if showLabel}
+    <span class="status-label">{config.label}</span>
+  {/if}
 </div>
 
 <style>
@@ -40,12 +40,14 @@
   }
   
   .status-light {
-    width: 8px;
-    height: 8px;
     border-radius: 50%;
+    transition: all 0.3s ease;
+  }
+
+  .status-light.pulsing {
     animation: pulse 2s infinite;
   }
-  
+
   @keyframes pulse {
     0%, 100% {
       opacity: 1;
