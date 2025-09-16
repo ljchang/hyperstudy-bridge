@@ -190,12 +190,10 @@ mod integration_tests {
         let metrics_clone = metrics.clone();
 
         device.set_performance_callback(move |id, latency, sent, recv| {
-            metrics_clone.lock().unwrap().push((
-                id.to_string(),
-                latency,
-                sent,
-                recv,
-            ));
+            metrics_clone
+                .lock()
+                .unwrap()
+                .push((id.to_string(), latency, sent, recv));
         });
 
         // This test verifies the callback mechanism works

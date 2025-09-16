@@ -47,10 +47,7 @@ mod tests {
     #[tokio::test]
     async fn test_connect_to_invalid_address() {
         let mut device = KernelDevice::new("0.0.0.0".to_string(), 9999);
-        let result = tokio::time::timeout(
-            Duration::from_secs(2),
-            device.connect()
-        ).await;
+        let result = tokio::time::timeout(Duration::from_secs(2), device.connect()).await;
 
         // Should timeout or fail
         assert!(result.is_err() || result.unwrap().is_err());
@@ -214,10 +211,8 @@ mod integration_tests {
         let handles: Vec<_> = (0..3)
             .map(|i| {
                 task::spawn(async move {
-                    let device = KernelDevice::new(
-                        format!("192.168.1.{}", 100 + i),
-                        6767 + i as u16
-                    );
+                    let device =
+                        KernelDevice::new(format!("192.168.1.{}", 100 + i), 6767 + i as u16);
                     device.get_info()
                 })
             })
@@ -240,12 +235,10 @@ mod integration_tests {
         let metrics_clone = metrics.clone();
 
         device.set_performance_callback(move |id, latency, sent, recv| {
-            metrics_clone.lock().unwrap().push((
-                id.to_string(),
-                latency,
-                sent,
-                recv,
-            ));
+            metrics_clone
+                .lock()
+                .unwrap()
+                .push((id.to_string(), latency, sent, recv));
         });
 
         // Performance callback is now set
