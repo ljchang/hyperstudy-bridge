@@ -65,8 +65,8 @@ if [[ ! "$VERSION" =~ ^v ]]; then
 fi
 
 # Validate version format
-if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
-    print_error "Invalid version format. Use vX.Y.Z or vX.Y.Z-suffix"
+if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[0-9]+)?)?$ ]]; then
+    print_error "Invalid version format. Use vX.Y.Z or vX.Y.Z-suffix (e.g., v1.0.0-beta.1)"
     exit 1
 fi
 
