@@ -1,0 +1,115 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., v1.0.0)'
+        required: true
+        type: string
+
+jobs:
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get the previous tag
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+          # Generate commit list
+          if [ -z "$PREVIOUS_TAG" ]; then
+            COMMITS=$(git log --pretty=format:"- %s (%h)" --no-merges | head -20)
+          else
+            COMMITS=$(git log --pretty=format:"- %s (%h)" --no-merges ${PREVIOUS_TAG}..HEAD)
+          fi
+
+          # Create release body
+          cat > release_notes.md << EOF
+          ## 🎉 HyperStudy Bridge ${{ steps.get_version.outputs.version }}
+
+          ### What's Changed
+          $COMMITS
+
+          ### Installation
+
+          #### macOS
+          - **Apple Silicon (M1/M2/M3)**: Download \`HyperStudy-Bridge-${{ steps.get_version.outputs.version }}-aarch64-apple-darwin.dmg\`
+          - **Intel Macs**: Download \`HyperStudy-Bridge-${{ steps.get_version.outputs.version }}-x86_64-apple-darwin.dmg\`
+
+          Open the DMG and drag HyperStudy Bridge to your Applications folder.
+
+          #### Verification
+          All macOS builds are:
+          - ✅ Signed with Apple Developer ID certificate
+          - ✅ Notarized by Apple for Gatekeeper approval
+          - ✅ Ready for distribution without security warnings
+
+          ### Full Changelog
+          EOF
+
+          if [ -n "$PREVIOUS_TAG" ]; then
+            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREVIOUS_TAG}...${{ steps.get_version.outputs.version }}" >> release_notes.md
+          else
+            echo "**Initial Release**: https://github.com/${{ github.repository }}/commits/${{ steps.get_version.outputs.version }}" >> release_notes.md
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.get_version.outputs.version }}
+          name: HyperStudy Bridge ${{ steps.get_version.outputs.version }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: ${{ contains(steps.get_version.outputs.version, '-beta') || contains(steps.get_version.outputs.version, '-alpha') || contains(steps.get_version.outputs.version, '-rc') }}
+          generate_release_notes: false
+
+  build-macos:
+    name: Build macOS Releases
+    needs: create-release
+    uses: ./.github/workflows/release-macos.yml
+    with:
+      version: ${{ needs.create-release.outputs.version }}
+    secrets: inherit
+
+  upload-assets:
+    name: Upload Release Assets
+    needs: [create-release, build-macos]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [x86_64-apple-darwin, aarch64-apple-darwin]
+    steps:
+      - name: Download DMG
+        uses: actions/download-artifact@v4
+        with:
+          name: dmg-${{ matrix.arch }}
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.create-release.outputs.version }}
+          files: '*.dmg'
+          fail_on_unmatched_files: false
