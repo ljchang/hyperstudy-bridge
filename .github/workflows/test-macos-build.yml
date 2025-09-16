@@ -47,7 +47,11 @@ jobs:
         if: inputs.skip_signing || github.event.inputs.skip_signing == 'true'
         run: |
           echo "Building without code signing..."
-          npm run tauri:build -- --target ${{ matrix.target }}
+          npm run tauri:build -- --target ${{ matrix.target }} || true
+
+          # Even if DMG fails, the app should be built
+          echo "Checking for built app..."
+          find src-tauri/target -name "*.app" -type d | head -5
 
       - name: Build Tauri App (With Signing)
         if: ${{ !inputs.skip_signing && github.event.inputs.skip_signing != 'true' }}
@@ -65,32 +69,33 @@ jobs:
 
           if [ -z "$DMG_PATH" ]; then
             echo "No DMG found, looking for .app bundle..."
-            APP_PATH=$(find src-tauri/target -name "*.app" -type d | head -1)
+            APP_PATH=$(find src-tauri/target -name "*.app" -type d | grep -v "deps" | head -1)
 
             if [ -n "$APP_PATH" ]; then
               echo "Found app bundle: $APP_PATH"
-              # Create a simple DMG
-              hdiutil create -volname "HyperStudy Bridge" \
-                -srcfolder "$APP_PATH" \
-                -ov -format UDZO \
-                "HyperStudy-Bridge-test.dmg"
-              DMG_PATH="HyperStudy-Bridge-test.dmg"
+
+              # Create a zip of the app bundle for easier download
+              zip -r "HyperStudy-Bridge-${{ matrix.target }}.app.zip" "$APP_PATH"
+              ARTIFACT_PATH="HyperStudy-Bridge-${{ matrix.target }}.app.zip"
+              echo "artifact_path=$ARTIFACT_PATH" >> $GITHUB_ENV
+              echo "artifact_type=app" >> $GITHUB_ENV
             fi
+          else
+            echo "DMG found: $DMG_PATH"
+            echo "artifact_path=$DMG_PATH" >> $GITHUB_ENV
+            echo "artifact_type=dmg" >> $GITHUB_ENV
           fi
 
-          if [ -n "$DMG_PATH" ]; then
-            echo "DMG found: $DMG_PATH"
-            echo "dmg_path=$DMG_PATH" >> $GITHUB_ENV
-          else
+          if [ -z "${ARTIFACT_PATH}${DMG_PATH}" ]; then
             echo "No build artifacts found!"
             exit 1
           fi
 
-      - name: Upload DMG
+      - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: macos-dmg-${{ matrix.target }}
-          path: ${{ env.dmg_path }}
+          name: macos-build-${{ matrix.target }}
+          path: ${{ env.artifact_path }}
           retention-days: 7
 
       - name: Create Download Comment
