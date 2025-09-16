@@ -120,8 +120,8 @@
 
 <!-- Log Viewer Modal -->
 {#if isOpen}
-  <div class="log-modal-overlay" onclick={() => isOpen = false} onkeydown={(e) => { if (e.key === 'Escape') isOpen = false; }}>
-    <div class="log-modal" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+  <div class="log-modal-overlay" role="presentation" onclick={() => isOpen = false} onkeydown={(e) => { if (e.key === 'Escape') isOpen = false; }}>
+    <div class="log-modal" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === 'Escape' && (isOpen = false)}>
       <div class="log-header">
         <div class="log-title">
           <h2>Log Viewer</h2>

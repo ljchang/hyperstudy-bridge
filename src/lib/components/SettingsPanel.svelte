@@ -249,8 +249,8 @@
 
 <!-- Settings Panel Modal -->
 {#if isOpen}
-  <div class="settings-modal-overlay" role="dialog" aria-modal="true" tabindex="-1" onclick={() => isOpen = false} onkeydown={(e) => { if (e.key === 'Escape') isOpen = false; }}>
-    <div class="settings-modal" role="document" onclick={(e) => e.stopPropagation()}>
+  <div class="settings-modal-overlay" role="presentation" onclick={() => isOpen = false} onkeydown={(e) => { if (e.key === 'Escape') isOpen = false; }}>
+    <div class="settings-modal" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === 'Escape' && (isOpen = false)}>
       <div class="settings-header">
         <h2>Settings</h2>
         <div class="header-actions">
@@ -365,8 +365,9 @@
             <div class="settings-section">
               <h3>WebSocket Server</h3>
               <div class="setting-group">
-                <label>Port:</label>
+                <label for="ws-port">Port:</label>
                 <input
+                  id="ws-port"
                   type="number"
                   bind:value={settings.websocket.port}
                   onchange={handleSettingChange}
@@ -392,8 +393,9 @@
               </div>
 
               <div class="setting-group">
-                <label>Max Reconnection Attempts:</label>
+                <label for="max-reconnect">Max Reconnection Attempts:</label>
                 <input
+                  id="max-reconnect"
                   type="number"
                   bind:value={settings.websocket.maxReconnectAttempts}
                   onchange={handleSettingChange}
@@ -404,8 +406,9 @@
               </div>
 
               <div class="setting-group">
-                <label>Reconnection Delay (ms):</label>
+                <label for="reconnect-delay">Reconnection Delay (ms):</label>
                 <input
+                  id="reconnect-delay"
                   type="number"
                   bind:value={settings.websocket.reconnectDelay}
                   onchange={handleSettingChange}
@@ -420,8 +423,9 @@
             <div class="settings-section">
               <h3>Log Configuration</h3>
               <div class="setting-group">
-                <label>Log Level:</label>
+                <label for="log-level">Log Level:</label>
                 <select
+                  id="log-level"
                   bind:value={settings.logging.level}
                   onchange={handleSettingChange}
                   class="setting-select"
@@ -434,8 +438,9 @@
               </div>
 
               <div class="setting-group">
-                <label>Maximum Log Entries:</label>
+                <label for="max-logs">Maximum Log Entries:</label>
                 <input
+                  id="max-logs"
                   type="number"
                   bind:value={settings.logging.maxEntries}
                   onchange={handleSettingChange}
@@ -461,8 +466,9 @@
               </div>
 
               <div class="setting-group">
-                <label>Polling Interval (ms):</label>
+                <label for="poll-interval">Polling Interval (ms):</label>
                 <input
+                  id="poll-interval"
                   type="number"
                   bind:value={settings.logging.pollingInterval}
                   onchange={handleSettingChange}
@@ -492,8 +498,9 @@
               </div>
 
               <div class="setting-group">
-                <label>Metrics Collection Interval (ms):</label>
+                <label for="metrics-interval">Metrics Collection Interval (ms):</label>
                 <input
+                  id="metrics-interval"
                   type="number"
                   bind:value={settings.performance.metricsInterval}
                   onchange={handleSettingChange}
@@ -565,15 +572,15 @@
               <h3>Application Information</h3>
               <div class="info-grid">
                 <div class="info-item">
-                  <label>Application Version:</label>
+                  <span class="info-label">Application Version:</span>
                   <span>{versionInfo.app}</span>
                 </div>
                 <div class="info-item">
-                  <label>Tauri Version:</label>
+                  <span class="info-label">Tauri Version:</span>
                   <span>{versionInfo.tauri}</span>
                 </div>
                 <div class="info-item">
-                  <label>Build:</label>
+                  <span class="info-label">Build:</span>
                   <span>{versionInfo.build}</span>
                 </div>
               </div>
@@ -583,11 +590,11 @@
               <h3>System Information</h3>
               <div class="info-grid">
                 <div class="info-item">
-                  <label>Platform:</label>
+                  <span class="info-label">Platform:</span>
                   <span>{navigator.platform}</span>
                 </div>
                 <div class="info-item">
-                  <label>User Agent:</label>
+                  <span class="info-label">User Agent:</span>
                   <span class="user-agent">{navigator.userAgent}</span>
                 </div>
               </div>
@@ -902,11 +909,10 @@
     align-items: center;
   }
 
-  .info-item label {
+  .info-label {
     color: var(--color-text-secondary);
     font-size: 0.875rem;
     font-weight: 500;
-    margin: 0;
   }
 
   .info-item span {

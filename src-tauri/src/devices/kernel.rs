@@ -629,3 +629,6 @@ impl Device for KernelDevice {
         }
     }
 }
+
+#[cfg(test)]
+mod kernel_tests;

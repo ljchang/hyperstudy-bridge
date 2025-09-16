@@ -236,8 +236,8 @@
 
 <!-- LSL Configuration Panel -->
 {#if isOpen}
-  <div class="lsl-modal-overlay" role="dialog" aria-modal="true" tabindex="-1" onclick={() => isOpen = false} onkeydown={(e) => { if (e.key === 'Escape') isOpen = false; }}>
-    <div class="lsl-modal" role="document" onclick={(e) => e.stopPropagation()}>
+  <div class="lsl-modal-overlay" role="presentation" onclick={() => isOpen = false} onkeydown={(e) => { if (e.key === 'Escape') isOpen = false; }}>
+    <div class="lsl-modal" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === 'Escape' && (isOpen = false)}>
       <div class="lsl-header">
         <div class="lsl-title">
           <h2>LSL Stream Management</h2>

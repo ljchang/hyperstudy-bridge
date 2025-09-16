@@ -357,8 +357,8 @@
 </script>
 
 {#if isOpen && device}
-  <div class="modal-overlay" onclick={handleClose} onkeydown={handleKeydown}>
-    <div class="modal" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+  <div class="modal-overlay" role="presentation" onclick={handleClose} onkeydown={handleKeydown}>
+    <div class="modal" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === 'Escape' && handleClose()}>
       <div class="modal-header">
         <h2>Configure {device.name}</h2>
         <button class="close-btn" onclick={handleClose}>×</button>

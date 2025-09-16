@@ -84,6 +84,15 @@ function connect() {
 function handleMessage(message) {
     console.log('Received message:', message);
 
+    // Call all registered message handlers
+    messageHandlers.forEach(handler => {
+        try {
+            handler(message);
+        } catch (error) {
+            console.error('Message handler error:', error);
+        }
+    });
+
     switch (message.type) {
         case 'status':
             // Handle both message.status and message.payload for backwards compatibility
@@ -324,6 +333,25 @@ export function disconnect() {
 // Initialize connection and Tauri listeners
 connect();
 tauriService.setupEventListeners();
+
+// Generic message sending function
+export function sendMessage(message) {
+    return send(message);
+}
+
+// Subscribe to message updates (for compatibility)
+export function subscribe(callback) {
+    // Create a unique handler ID
+    const handlerId = generateId();
+
+    // Add the callback to message handlers
+    messageHandlers.set(handlerId, callback);
+
+    // Return unsubscribe function
+    return () => {
+        messageHandlers.delete(handlerId);
+    };
+}
 
 // Export getters for reactive state (Svelte 5 pattern for reassigned state)
 export function getStatus() { return status; }

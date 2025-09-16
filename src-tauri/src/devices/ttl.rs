@@ -267,3 +267,6 @@ impl Device for TtlDevice {
         }
     }
 }
+
+#[cfg(test)]
+mod ttl_tests;  // Import test module
