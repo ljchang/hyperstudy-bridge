@@ -4,7 +4,7 @@ This document tracks development progress across all agents. Each agent should u
 
 **Status Legend**: ⏳ Pending | 🚧 In Progress | ✅ Completed | ❌ Blocked
 
-## 🎯 Overall Progress: 85% Complete
+## 🎯 Overall Progress: 92% Complete
 
 ### ✅ Major Milestones Achieved:
 - **All 5 device modules** implemented (TTL, Kernel, Pupil, Biopac, LSL)
@@ -13,7 +13,10 @@ This document tracks development progress across all agents. Each agent should u
 - **Performance monitoring** integrated with <1ms TTL latency
 - **Comprehensive test suite** (14,800+ lines of test code)
 - **CI/CD pipelines** configured and running
-- **Full documentation** complete
+- **Full documentation** complete (API, User Guide, Developer Guide, Troubleshooting)
+- **macOS code signing & notarization** fully configured
+- **Automated release workflow** with GitHub Actions
+- **Build scripts** for local development and CI/CD
 
 ## Phase 1: Project Setup and Infrastructure
 
@@ -241,20 +244,22 @@ pub struct LslDevice {
 ## Phase 6: Documentation and Deployment
 
 ### Documentation Tasks
-- [ ] ⏳ API documentation
-- [ ] ⏳ User guide
-- [ ] ⏳ Developer guide
-- [ ] ⏳ Troubleshooting guide
+- [x] ✅ API documentation (API_DOCUMENTATION.md)
+- [x] ✅ User guide (USER_GUIDE.md)
+- [x] ✅ Developer guide (DEVELOPER_GUIDE.md)
+- [x] ✅ Troubleshooting guide (TROUBLESHOOTING_GUIDE.md)
 - [ ] ⏳ Video tutorials
 
 ### DevOps Agent Tasks
-- [ ] ⏳ Configure code signing for macOS
-- [ ] ⏳ Set up notarization workflow
-- [ ] ⏳ Create DMG installer
+- [x] ✅ Configure code signing for macOS (tauri.macos.conf.json, entitlements.plist)
+- [x] ✅ Set up notarization workflow (scripts/notarize.sh, release-macos.yml)
+- [x] ✅ Create DMG installer (automated in build scripts)
+- [x] ✅ macOS signing documentation (MACOS_SIGNING_SETUP.md)
+- [x] ✅ Local build scripts (build-and-sign-mac.sh)
 - [ ] ⏳ Windows MSI installer
 - [ ] ⏳ Linux AppImage
 - [ ] ⏳ Auto-update system
-- [ ] ⏳ Release notes automation
+- [x] ✅ Release notes automation (in release.yml)
 
 ## Performance Benchmarks
 

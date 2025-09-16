@@ -1,0 +1,297 @@
+name: macOS Release with Notarization
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., v1.0.0)'
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-notarize:
+    name: Build and Notarize macOS
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        target:
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+    outputs:
+      dmg-intel: ${{ steps.artifacts.outputs.dmg_intel }}
+      dmg-arm: ${{ steps.artifacts.outputs.dmg_arm }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: macos-${{ matrix.target }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup Keychain
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD || 'actions' }}
+        run: |
+          # Create variables
+          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+          # Import certificate from secrets
+          echo -n "$APPLE_CERTIFICATE" | base64 --decode -o $CERTIFICATE_PATH
+
+          # Create temporary keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          # Import certificate to keychain
+          security import $CERTIFICATE_PATH -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+
+          # Clean up
+          rm $CERTIFICATE_PATH
+
+      - name: Build Tauri App
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          TAURI_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          # Build with signing
+          npm run tauri:build -- --target ${{ matrix.target }} --config src-tauri/tauri.macos.conf.json
+
+      - name: Notarize DMG
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          # Find the DMG
+          DMG_PATH=$(find src-tauri/target -name "*.dmg" -type f | head -1)
+          echo "Found DMG: $DMG_PATH"
+
+          # Run notarization script
+          ./scripts/notarize.sh --dmg "$DMG_PATH" --skip-signing
+
+      - name: Prepare artifacts
+        id: artifacts
+        run: |
+          # Find notarized DMG
+          DMG_PATH=$(find src-tauri/target -name "*-notarized.dmg" -type f | head -1)
+
+          if [ -z "$DMG_PATH" ]; then
+            # Fallback to regular DMG if notarized version not found
+            DMG_PATH=$(find src-tauri/target -name "*.dmg" -type f | grep -v notarized | head -1)
+          fi
+
+          # Rename for clarity
+          DMG_NAME="HyperStudy-Bridge-${{ inputs.version }}-${{ matrix.target }}.dmg"
+          cp "$DMG_PATH" "$DMG_NAME"
+
+          # Set output based on architecture
+          if [[ "${{ matrix.target }}" == "x86_64-apple-darwin" ]]; then
+            echo "dmg_intel=$DMG_NAME" >> $GITHUB_OUTPUT
+          else
+            echo "dmg_arm=$DMG_NAME" >> $GITHUB_OUTPUT
+          fi
+
+          echo "dmg_path=$DMG_NAME" >> $GITHUB_OUTPUT
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmg-${{ matrix.target }}
+          path: ${{ steps.artifacts.outputs.dmg_path }}
+          retention-days: 7
+
+      - name: Cleanup Keychain
+        if: always()
+        run: |
+          security delete-keychain $RUNNER_TEMP/app-signing.keychain-db || true
+
+  verify-notarization:
+    name: Verify Notarization
+    needs: build-and-notarize
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        target:
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+    steps:
+      - name: Download DMG artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dmg-${{ matrix.target }}
+
+      - name: Verify notarization
+        run: |
+          DMG_FILE=$(ls *.dmg | head -1)
+          echo "Verifying: $DMG_FILE"
+
+          # Check if DMG is notarized
+          if xcrun stapler validate "$DMG_FILE"; then
+            echo "✅ DMG is properly notarized and stapled"
+          else
+            echo "❌ DMG notarization validation failed"
+            exit 1
+          fi
+
+          # Check Gatekeeper approval
+          spctl -a -t open --context context:primary-signature -v "$DMG_FILE" || true
+
+      - name: Test installation
+        run: |
+          DMG_FILE=$(ls *.dmg | head -1)
+          echo "Testing installation of: $DMG_FILE"
+
+          # Mount DMG
+          hdiutil attach "$DMG_FILE"
+
+          # List contents
+          ls -la /Volumes/HyperStudy*
+
+          # Verify app bundle exists
+          if [ -d "/Volumes/HyperStudy Bridge/HyperStudy Bridge.app" ]; then
+            echo "✅ App bundle found in DMG"
+          else
+            echo "❌ App bundle not found in DMG"
+            exit 1
+          fi
+
+          # Unmount DMG
+          hdiutil detach /Volumes/HyperStudy* || true
+
+  create-universal-binary:
+    name: Create Universal Binary
+    needs: build-and-notarize
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Intel DMG
+        uses: actions/download-artifact@v4
+        with:
+          name: dmg-x86_64-apple-darwin
+          path: ./intel
+
+      - name: Download ARM DMG
+        uses: actions/download-artifact@v4
+        with:
+          name: dmg-aarch64-apple-darwin
+          path: ./arm
+
+      - name: Create Universal DMG
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          # Extract apps from both DMGs
+          hdiutil attach ./intel/*.dmg -mountpoint /Volumes/Intel
+          cp -R "/Volumes/Intel/HyperStudy Bridge.app" ./intel-app
+          hdiutil detach /Volumes/Intel
+
+          hdiutil attach ./arm/*.dmg -mountpoint /Volumes/ARM
+          cp -R "/Volumes/ARM/HyperStudy Bridge.app" ./arm-app
+          hdiutil detach /Volumes/ARM
+
+          # Create universal binary
+          mkdir -p "universal-app/HyperStudy Bridge.app"
+          cp -R ./intel-app/* "universal-app/HyperStudy Bridge.app/"
+
+          # Merge binaries
+          BINARY_PATH="universal-app/HyperStudy Bridge.app/Contents/MacOS/HyperStudy Bridge"
+          lipo -create \
+            "./intel-app/Contents/MacOS/HyperStudy Bridge" \
+            "./arm-app/Contents/MacOS/HyperStudy Bridge" \
+            -output "$BINARY_PATH"
+
+          # Sign universal app
+          codesign --force --deep --sign "$APPLE_SIGNING_IDENTITY" \
+            --entitlements src-tauri/entitlements.plist \
+            "universal-app/HyperStudy Bridge.app"
+
+          # Create DMG with universal app
+          npm install -g create-dmg
+          create-dmg "universal-app/HyperStudy Bridge.app" . || true
+
+          # Find created DMG
+          UNIVERSAL_DMG=$(ls *.dmg | grep -v Intel | grep -v ARM | head -1)
+
+          if [ -z "$UNIVERSAL_DMG" ]; then
+            # Fallback: Create DMG manually
+            hdiutil create -volname "HyperStudy Bridge" \
+              -srcfolder "universal-app/HyperStudy Bridge.app" \
+              -ov -format UDZO \
+              "HyperStudy-Bridge-${{ inputs.version }}-universal.dmg"
+            UNIVERSAL_DMG="HyperStudy-Bridge-${{ inputs.version }}-universal.dmg"
+          fi
+
+          # Sign and notarize universal DMG
+          codesign --force --sign "$APPLE_SIGNING_IDENTITY" "$UNIVERSAL_DMG"
+
+          # Notarize
+          xcrun notarytool submit "$UNIVERSAL_DMG" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+
+          # Staple
+          xcrun stapler staple "$UNIVERSAL_DMG"
+
+          echo "universal_dmg=$UNIVERSAL_DMG" >> $GITHUB_ENV
+
+      - name: Upload Universal DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmg-universal
+          path: ${{ env.universal_dmg }}
+          retention-days: 7
+
+  upload-to-release:
+    name: Upload to Release
+    needs: [build-and-notarize, create-universal-binary]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download all DMGs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dmg-*
+          merge-multiple: true
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            *.dmg
+          fail_on_unmatched_files: false
