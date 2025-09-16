@@ -36,45 +36,39 @@ jobs:
       - name: Generate changelog
         id: changelog
         run: |
-          # Get the previous tag
-          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          # Use the changelog generator script
+          ./scripts/generate-changelog.sh ${{ steps.get_version.outputs.version }} > generated_changelog.md
 
-          # Generate commit list
-          if [ -z "$PREVIOUS_TAG" ]; then
-            COMMITS=$(git log --pretty=format:"- %s (%h)" --no-merges | head -20)
-          else
-            COMMITS=$(git log --pretty=format:"- %s (%h)" --no-merges ${PREVIOUS_TAG}..HEAD)
-          fi
-
-          # Create release body
-          cat > release_notes.md << EOF
+          # Create release body with installation instructions
+          cat > release_notes.md << 'EOF'
           ## 🎉 HyperStudy Bridge ${{ steps.get_version.outputs.version }}
 
-          ### What's Changed
-          $COMMITS
+          EOF
 
-          ### Installation
+          # Add generated changelog
+          cat generated_changelog.md >> release_notes.md
 
-          #### macOS
-          - **Apple Silicon (M1/M2/M3)**: Download \`HyperStudy-Bridge-${{ steps.get_version.outputs.version }}-aarch64-apple-darwin.dmg\`
-          - **Intel Macs**: Download \`HyperStudy-Bridge-${{ steps.get_version.outputs.version }}-x86_64-apple-darwin.dmg\`
+          # Add installation instructions
+          cat >> release_notes.md << 'EOF'
+
+          ---
+
+          ## 📦 Installation
+
+          ### macOS
+          - **Apple Silicon (M1/M2/M3)**: Download `HyperStudy-Bridge-${{ steps.get_version.outputs.version }}-aarch64-apple-darwin.dmg`
+          - **Intel Macs**: Download `HyperStudy-Bridge-${{ steps.get_version.outputs.version }}-x86_64-apple-darwin.dmg`
 
           Open the DMG and drag HyperStudy Bridge to your Applications folder.
 
-          #### Verification
+          ### Verification
           All macOS builds are:
           - ✅ Signed with Apple Developer ID certificate
           - ✅ Notarized by Apple for Gatekeeper approval
           - ✅ Ready for distribution without security warnings
 
-          ### Full Changelog
+          To verify: `spctl -a -t execute -vv "/Applications/HyperStudy Bridge.app"`
           EOF
-
-          if [ -n "$PREVIOUS_TAG" ]; then
-            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREVIOUS_TAG}...${{ steps.get_version.outputs.version }}" >> release_notes.md
-          else
-            echo "**Initial Release**: https://github.com/${{ github.repository }}/commits/${{ steps.get_version.outputs.version }}" >> release_notes.md
-          fi
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
