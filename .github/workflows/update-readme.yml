@@ -1,0 +1,58 @@
+name: Update README Download Links
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-readme:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get latest release info
+        id: release
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const release = await github.rest.repos.getLatestRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo
+            });
+
+            const intelAsset = release.data.assets.find(a =>
+              a.name.includes('x86_64-apple-darwin'));
+            const armAsset = release.data.assets.find(a =>
+              a.name.includes('aarch64-apple-darwin'));
+
+            return {
+              version: release.data.tag_name,
+              intelUrl: intelAsset?.browser_download_url || '#',
+              armUrl: armAsset?.browser_download_url || '#',
+              releaseUrl: release.data.html_url
+            };
+
+      - name: Update README
+        run: |
+          RELEASE_INFO='${{ steps.release.outputs.result }}'
+          VERSION=$(echo "$RELEASE_INFO" | jq -r '.version')
+          INTEL_URL=$(echo "$RELEASE_INFO" | jq -r '.intelUrl')
+          ARM_URL=$(echo "$RELEASE_INFO" | jq -r '.armUrl')
+
+          # Update download links in README
+          sed -i "s|\[Intel\](https://github.com/ljchang/hyperstudy-bridge/releases/latest/download/[^)]*)|[Intel]($INTEL_URL)|g" README.md
+          sed -i "s|\[Apple Silicon\](https://github.com/ljchang/hyperstudy-bridge/releases/latest/download/[^)]*)|[Apple Silicon]($ARM_URL)|g" README.md
+
+      - name: Commit changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add README.md
+          git diff --staged --quiet || git commit -m "docs: Update README download links for ${{ steps.release.outputs.result.version }}"
+          git push

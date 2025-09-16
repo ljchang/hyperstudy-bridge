@@ -2,6 +2,23 @@
 
 A unified, high-performance desktop application for bridging HyperStudy web experiments with research hardware devices.
 
+<div align="center">
+
+[![Release](https://img.shields.io/github/v/release/ljchang/hyperstudy-bridge?include_prereleases&style=for-the-badge)](https://github.com/ljchang/hyperstudy-bridge/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/ljchang/hyperstudy-bridge/total?style=for-the-badge)](https://github.com/ljchang/hyperstudy-bridge/releases)
+[![License](https://img.shields.io/github/license/ljchang/hyperstudy-bridge?style=for-the-badge)](LICENSE)
+
+### [⬇️ Download Latest Release](https://github.com/ljchang/hyperstudy-bridge/releases/latest)
+
+| Platform | Download |
+|----------|----------|
+| **macOS (Apple Silicon)** | [![Download ARM](https://img.shields.io/badge/Download-Apple%20Silicon-blue?style=flat-square&logo=apple)](https://github.com/ljchang/hyperstudy-bridge/releases/latest) |
+| **macOS (Intel)** | [![Download Intel](https://img.shields.io/badge/Download-Intel-blue?style=flat-square&logo=apple)](https://github.com/ljchang/hyperstudy-bridge/releases/latest) |
+
+_All macOS builds are signed and notarized by Apple for security._
+
+</div>
+
 ## Overview
 
 HyperStudy Bridge provides a reliable, low-latency communication layer between the HyperStudy web application and various research devices including fNIRS, eye trackers, physiological sensors, and TTL pulse generators. Built with Tauri and Rust for maximum performance and minimal resource usage.
@@ -30,19 +47,15 @@ HyperStudy Bridge provides a reliable, low-latency communication layer between t
 ### Installation
 
 #### macOS
-1. Download the latest `.dmg` from [Releases](https://github.com/yourusername/hyperstudy-bridge/releases)
+1. Download the appropriate `.dmg` for your Mac from the [⬇️ Download section above](#-download-latest-release)
 2. Open the DMG and drag HyperStudy Bridge to Applications
 3. Launch from Applications folder
 
-#### Windows
-1. Download the latest `.msi` installer from [Releases](https://github.com/yourusername/hyperstudy-bridge/releases)
-2. Run the installer
-3. Launch from Start Menu
+#### Windows (Coming Soon)
+1. Windows installer will be available in future releases
 
-#### Linux
-1. Download the latest `.AppImage` from [Releases](https://github.com/yourusername/hyperstudy-bridge/releases)
-2. Make executable: `chmod +x HyperStudy-Bridge.AppImage`
-3. Run: `./HyperStudy-Bridge.AppImage`
+#### Linux (Coming Soon)
+1. Linux AppImage will be available in future releases
 
 ### Usage
 
