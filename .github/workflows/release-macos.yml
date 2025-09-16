@@ -188,98 +188,9 @@ jobs:
           # Unmount DMG
           hdiutil detach /Volumes/HyperStudy* || true
 
-  create-universal-binary:
-    name: Create Universal Binary
-    needs: build-and-notarize
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download Intel DMG
-        uses: actions/download-artifact@v4
-        with:
-          name: dmg-x86_64-apple-darwin
-          path: ./intel
-
-      - name: Download ARM DMG
-        uses: actions/download-artifact@v4
-        with:
-          name: dmg-aarch64-apple-darwin
-          path: ./arm
-
-      - name: Create Universal DMG
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: |
-          # Extract apps from both DMGs
-          hdiutil attach ./intel/*.dmg -mountpoint /Volumes/Intel
-          cp -R "/Volumes/Intel/HyperStudy Bridge.app" ./intel-app
-          hdiutil detach /Volumes/Intel
-
-          hdiutil attach ./arm/*.dmg -mountpoint /Volumes/ARM
-          cp -R "/Volumes/ARM/HyperStudy Bridge.app" ./arm-app
-          hdiutil detach /Volumes/ARM
-
-          # Create universal binary
-          mkdir -p "universal-app/HyperStudy Bridge.app"
-          cp -R ./intel-app/* "universal-app/HyperStudy Bridge.app/"
-
-          # Merge binaries
-          BINARY_PATH="universal-app/HyperStudy Bridge.app/Contents/MacOS/HyperStudy Bridge"
-          lipo -create \
-            "./intel-app/Contents/MacOS/HyperStudy Bridge" \
-            "./arm-app/Contents/MacOS/HyperStudy Bridge" \
-            -output "$BINARY_PATH"
-
-          # Sign universal app
-          codesign --force --deep --sign "$APPLE_SIGNING_IDENTITY" \
-            --entitlements src-tauri/entitlements.plist \
-            "universal-app/HyperStudy Bridge.app"
-
-          # Create DMG with universal app
-          npm install -g create-dmg
-          create-dmg "universal-app/HyperStudy Bridge.app" . || true
-
-          # Find created DMG
-          UNIVERSAL_DMG=$(ls *.dmg | grep -v Intel | grep -v ARM | head -1)
-
-          if [ -z "$UNIVERSAL_DMG" ]; then
-            # Fallback: Create DMG manually
-            hdiutil create -volname "HyperStudy Bridge" \
-              -srcfolder "universal-app/HyperStudy Bridge.app" \
-              -ov -format UDZO \
-              "HyperStudy-Bridge-${{ inputs.version }}-universal.dmg"
-            UNIVERSAL_DMG="HyperStudy-Bridge-${{ inputs.version }}-universal.dmg"
-          fi
-
-          # Sign and notarize universal DMG
-          codesign --force --sign "$APPLE_SIGNING_IDENTITY" "$UNIVERSAL_DMG"
-
-          # Notarize
-          xcrun notarytool submit "$UNIVERSAL_DMG" \
-            --apple-id "$APPLE_ID" \
-            --password "$APPLE_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" \
-            --wait
-
-          # Staple
-          xcrun stapler staple "$UNIVERSAL_DMG"
-
-          echo "universal_dmg=$UNIVERSAL_DMG" >> $GITHUB_ENV
-
-      - name: Upload Universal DMG
-        uses: actions/upload-artifact@v4
-        with:
-          name: dmg-universal
-          path: ${{ env.universal_dmg }}
-          retention-days: 7
-
   upload-to-release:
     name: Upload to Release
-    needs: [build-and-notarize, create-universal-binary]
+    needs: build-and-notarize
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     steps:
