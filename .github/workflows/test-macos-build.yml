@@ -1,0 +1,112 @@
+name: Test macOS Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_signing:
+        description: 'Skip code signing'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-macos:
+    name: Build macOS (Test)
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        target:
+          - aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: macos-${{ matrix.target }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Tauri App (No Signing)
+        if: inputs.skip_signing || github.event.inputs.skip_signing == 'true'
+        run: |
+          echo "Building without code signing..."
+          npm run tauri:build -- --target ${{ matrix.target }}
+
+      - name: Build Tauri App (With Signing)
+        if: ${{ !inputs.skip_signing && github.event.inputs.skip_signing != 'true' }}
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
+          TAURI_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
+        run: |
+          echo "Building with ad-hoc signing..."
+          npm run tauri:build -- --target ${{ matrix.target }} --config src-tauri/tauri.macos.conf.json
+
+      - name: Find and Upload Artifacts
+        run: |
+          # Find the DMG
+          DMG_PATH=$(find src-tauri/target -name "*.dmg" -type f | head -1)
+
+          if [ -z "$DMG_PATH" ]; then
+            echo "No DMG found, looking for .app bundle..."
+            APP_PATH=$(find src-tauri/target -name "*.app" -type d | head -1)
+
+            if [ -n "$APP_PATH" ]; then
+              echo "Found app bundle: $APP_PATH"
+              # Create a simple DMG
+              hdiutil create -volname "HyperStudy Bridge" \
+                -srcfolder "$APP_PATH" \
+                -ov -format UDZO \
+                "HyperStudy-Bridge-test.dmg"
+              DMG_PATH="HyperStudy-Bridge-test.dmg"
+            fi
+          fi
+
+          if [ -n "$DMG_PATH" ]; then
+            echo "DMG found: $DMG_PATH"
+            echo "dmg_path=$DMG_PATH" >> $GITHUB_ENV
+          else
+            echo "No build artifacts found!"
+            exit 1
+          fi
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg-${{ matrix.target }}
+          path: ${{ env.dmg_path }}
+          retention-days: 7
+
+      - name: Create Download Comment
+        if: success()
+        run: |
+          echo "## 🎉 Build Successful!"
+          echo ""
+          echo "### Download the test build:"
+          echo "The DMG file has been uploaded as an artifact."
+          echo ""
+          echo "To download:"
+          echo "1. Go to the [Actions tab](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          echo "2. Scroll down to 'Artifacts'"
+          echo "3. Download 'macos-dmg-${{ matrix.target }}'"
+          echo ""
+          echo "### Build Details:"
+          echo "- Target: ${{ matrix.target }}"
+          echo "- Signing: ${{ inputs.skip_signing && 'Skipped' || 'Ad-hoc' }}"
+          echo "- Build Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
