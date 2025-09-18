@@ -35,6 +35,9 @@ pub enum CommandAction {
     Connect,
     Disconnect,
     Send,
+    SendEvent,      // For sending formatted events (Kernel, Pupil)
+    SendPulse,      // For TTL pulse commands
+    TestConnection, // For testing device connectivity without maintaining connection
     Configure,
     Status,
     Heartbeat,

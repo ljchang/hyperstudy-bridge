@@ -398,6 +398,149 @@ async fn handle_device_command(
                 }
             }
         }
+        CommandAction::TestConnection => {
+            info!("Testing connection for device: {}", device_id);
+
+            // Create a temporary device instance for testing
+            let mut test_device: Box<dyn crate::devices::Device> = match device_id.as_str() {
+                "ttl" => {
+                    let port = payload.as_ref()
+                        .and_then(|p| p.get("port"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("/dev/ttyUSB0");
+                    Box::new(TtlDevice::new(port.to_string()))
+                }
+                "kernel" => {
+                    let ip = payload.as_ref()
+                        .and_then(|p| p.get("ip"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("127.0.0.1");
+                    Box::new(KernelDevice::new(ip.to_string()))
+                }
+                "pupil" => {
+                    let url = payload.as_ref()
+                        .and_then(|p| p.get("url"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("localhost:8081");
+                    Box::new(PupilDevice::new(url.to_string()))
+                }
+                "biopac" => {
+                    let addr = payload.as_ref()
+                        .and_then(|p| p.get("address"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("localhost");
+                    Box::new(BiopacDevice::new(addr.to_string()))
+                }
+                "mock" => Box::new(MockDevice::new(
+                    format!("mock_test_{}", Uuid::new_v4()),
+                    "Mock Test Device".to_string(),
+                )),
+                _ => {
+                    let _ = tx
+                        .send(BridgeResponse::device_error(
+                            device_id.clone(),
+                            "Unsupported device type".to_string(),
+                        ))
+                        .await;
+
+                    if let Some(req_id) = id {
+                        let _ = tx
+                            .send(BridgeResponse::ack(
+                                req_id,
+                                false,
+                                Some("Unsupported device type".to_string()),
+                            ))
+                            .await;
+                    }
+                    return;
+                }
+            };
+
+            // Test the connection
+            match test_device.test_connection().await {
+                Ok(reachable) => {
+                    info!("Connection test for {} device: {}", device_id, if reachable { "SUCCESS" } else { "FAILED" });
+
+                    if let Some(req_id) = id {
+                        let _ = tx
+                            .send(BridgeResponse::ack(
+                                req_id,
+                                reachable,
+                                Some(if reachable {
+                                    format!("{} device is reachable", device_id)
+                                } else {
+                                    format!("{} device is not reachable", device_id)
+                                }),
+                            ))
+                            .await;
+                    }
+                }
+                Err(e) => {
+                    warn!("Connection test failed for {}: {}", device_id, e);
+
+                    if let Some(req_id) = id {
+                        let _ = tx
+                            .send(BridgeResponse::ack(
+                                req_id,
+                                false,
+                                Some(format!("Test failed: {}", e)),
+                            ))
+                            .await;
+                    }
+                }
+            }
+        }
+        CommandAction::SendEvent => {
+            if let Some(device_lock) = state.get_device(&device_id).await {
+                let mut device = device_lock.write().await;
+
+                let event = payload.unwrap_or_else(|| json!({}));
+
+                match device.send_event(event).await {
+                    Ok(_) => {
+                        if let Some(req_id) = id {
+                            let _ = tx
+                                .send(BridgeResponse::ack(
+                                    req_id,
+                                    true,
+                                    Some("Event sent".to_string()),
+                                ))
+                                .await;
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tx
+                            .send(BridgeResponse::device_error(device_id, e.to_string()))
+                            .await;
+
+                        if let Some(req_id) = id {
+                            let _ = tx
+                                .send(BridgeResponse::ack(req_id, false, Some(e.to_string())))
+                                .await;
+                        }
+                    }
+                }
+            } else {
+                // Device not connected yet - try to auto-connect if we have config
+                warn!("Device {} not connected, cannot send event", device_id);
+                let _ = tx
+                    .send(BridgeResponse::device_error(
+                        device_id.clone(),
+                        "Device not connected. Please connect first.".to_string(),
+                    ))
+                    .await;
+
+                if let Some(req_id) = id {
+                    let _ = tx
+                        .send(BridgeResponse::ack(
+                            req_id,
+                            false,
+                            Some("Device not connected".to_string()),
+                        ))
+                        .await;
+                }
+            }
+        }
         CommandAction::Status => {
             if let Some(status) = state.get_device_status(&device_id).await {
                 let _ = tx.send(BridgeResponse::status(device_id, status)).await;

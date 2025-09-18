@@ -628,6 +628,38 @@ impl Device for KernelDevice {
             Err(DeviceError::NotConnected)
         }
     }
+
+    /// Test if the Kernel device can be reached without maintaining a connection
+    async fn test_connection(&mut self) -> Result<bool, DeviceError> {
+        info!(
+            "Testing connection to Kernel Flow2 at {}:{}",
+            self.config.ip_address, self.config.port
+        );
+
+        match self.establish_connection().await {
+            Ok(mut socket) => {
+                // Successfully connected, now close the connection
+                let _ = socket.shutdown().await;
+                info!("Kernel Flow2 connection test successful");
+                Ok(true)
+            }
+            Err(e) => {
+                warn!("Kernel Flow2 connection test failed: {}", e);
+                Ok(false)
+            }
+        }
+    }
+
+    /// Send a formatted event to the Kernel device
+    async fn send_event(&mut self, event: serde_json::Value) -> Result<(), DeviceError> {
+        // Format the event according to Kernel protocol
+        // Expected format: timestamp, event_name, value as JSON
+        let event_str = event.to_string();
+        let data = format!("{}\n", event_str);
+
+        // Use the regular send method which handles connection state
+        self.send(data.as_bytes()).await
+    }
 }
 
 #[cfg(test)]

@@ -108,6 +108,25 @@ pub trait Device: Send + Sync + Debug {
     async fn heartbeat(&mut self) -> Result<(), DeviceError> {
         Ok(())
     }
+
+    /// Test if the device can be reached without establishing a persistent connection
+    async fn test_connection(&mut self) -> Result<bool, DeviceError> {
+        // Default implementation: try to connect and disconnect
+        match self.connect().await {
+            Ok(_) => {
+                let _ = self.disconnect().await;
+                Ok(true)
+            }
+            Err(_) => Ok(false),
+        }
+    }
+
+    /// Send a device-specific event (for Kernel, Pupil, etc.)
+    async fn send_event(&mut self, event: serde_json::Value) -> Result<(), DeviceError> {
+        // Default implementation: serialize and send as bytes
+        let data = event.to_string();
+        self.send(data.as_bytes()).await
+    }
 }
 
 pub type BoxedDevice = Box<dyn Device + Send + Sync + 'static>;
