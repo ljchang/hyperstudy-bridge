@@ -72,7 +72,7 @@ async fn handle_connection(
     let send_task = tokio::spawn(async move {
         while let Some(response) = rx.recv().await {
             if let Ok(msg) = MessageHandler::serialize_response(&response) {
-                if ws_sender.send(Message::Text(msg)).await.is_err() {
+                if ws_sender.send(Message::Text(msg.into())).await.is_err() {
                     break;
                 }
             }

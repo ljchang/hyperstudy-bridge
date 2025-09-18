@@ -522,7 +522,7 @@ impl Device for PupilDevice {
             // Apply send timeout
             let send_timeout = tokio::time::Duration::from_millis(self.config.timeout_ms);
 
-            match tokio::time::timeout(send_timeout, ws.send(Message::Text(message.to_string())))
+            match tokio::time::timeout(send_timeout, ws.send(Message::Text(message.to_string().into())))
                 .await
             {
                 Ok(Ok(())) => {
@@ -559,11 +559,11 @@ impl Device for PupilDevice {
                         warn!("Failed to process received message: {}", e);
                     }
 
-                    Ok(text.into_bytes())
+                    Ok(text.as_bytes().to_vec())
                 }
                 Ok(Some(Ok(Message::Binary(data)))) => {
                     debug!("Received {} bytes from Pupil", data.len());
-                    Ok(data)
+                    Ok(data.to_vec())
                 }
                 Ok(Some(Ok(Message::Close(frame)))) => {
                     info!("WebSocket closed by remote: {:?}", frame);
@@ -703,7 +703,7 @@ impl Device for PupilDevice {
         if let Some(ref mut ws) = self.ws_client {
             let ping_timeout = tokio::time::Duration::from_millis(self.config.timeout_ms);
 
-            match tokio::time::timeout(ping_timeout, ws.send(Message::Ping(Vec::new()))).await {
+            match tokio::time::timeout(ping_timeout, ws.send(Message::Ping(Vec::new().into()))).await {
                 Ok(Ok(())) => {
                     debug!("Heartbeat ping sent successfully");
                     Ok(())

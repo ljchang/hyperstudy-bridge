@@ -255,7 +255,7 @@ impl PerformanceMonitor {
     pub async fn update_system_metrics(&self) {
         let mut system = self.system.write().await;
         system.refresh_memory();
-        system.refresh_cpu();
+        system.refresh_cpu_all();
 
         // Get memory usage (simplified for compatibility)
         let memory_bytes = system.total_memory();
