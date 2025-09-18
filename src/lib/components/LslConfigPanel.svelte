@@ -187,13 +187,15 @@
     }
   }
 
+  // Store cleanup functions
+  let unsubscribe = null;
+
   // Setup WebSocket message listener
   onMount(() => {
     // Listen for LSL messages
-    const unsubscribe = bridgeStore.subscribe((messages) => {
-      const latestMessage = messages[messages.length - 1];
-      if (latestMessage) {
-        handleLslMessage(latestMessage);
+    unsubscribe = bridgeStore.subscribe((message) => {
+      if (message) {
+        handleLslMessage(message);
       }
     });
 
@@ -203,33 +205,53 @@
       getSyncStatus();
     }
 
-    // Setup auto-refresh interval
-    refreshInterval = setInterval(() => {
-      if (isOpen) {
-        refreshStreams();
-        getSyncStatus();
-      }
-    }, 5000); // Refresh every 5 seconds
-
-    return () => {
-      unsubscribe();
-      if (refreshInterval) {
-        clearInterval(refreshInterval);
-      }
-    };
-  });
-
-  onDestroy(() => {
-    if (refreshInterval) {
-      clearInterval(refreshInterval);
+    // Setup auto-refresh interval only if panel is open
+    if (isOpen) {
+      refreshInterval = setInterval(() => {
+        if (isOpen) {
+          refreshStreams();
+          getSyncStatus();
+        }
+      }, 5000); // Refresh every 5 seconds
     }
   });
 
-  // Effect to refresh when modal opens
+  onDestroy(() => {
+    // Clean up subscription
+    if (unsubscribe) {
+      unsubscribe();
+      unsubscribe = null;
+    }
+
+    // Clean up interval
+    if (refreshInterval) {
+      clearInterval(refreshInterval);
+      refreshInterval = null;
+    }
+  });
+
+  // Effect to handle modal open/close
   $effect(() => {
     if (isOpen) {
+      // Start fresh when opening
       refreshStreams();
       getSyncStatus();
+
+      // Setup interval if not already running
+      if (!refreshInterval) {
+        refreshInterval = setInterval(() => {
+          if (isOpen) {
+            refreshStreams();
+            getSyncStatus();
+          }
+        }, 5000);
+      }
+    } else {
+      // Clean up when closing
+      if (refreshInterval) {
+        clearInterval(refreshInterval);
+        refreshInterval = null;
+      }
     }
   });
 </script>

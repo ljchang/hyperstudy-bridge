@@ -200,6 +200,10 @@ async function exportLogs() {
 
 // Add frontend log (for local logging)
 function log(level, message, device = null) {
+    // Initialize if not already done
+    if (logs.length === 0 && !isPolling) {
+        init();
+    }
     addLog(level, message, device, 'frontend');
 }
 
@@ -217,8 +221,8 @@ function cleanup() {
     stopPolling();
 }
 
-// Auto-initialize when store is imported
-init();
+// Don't auto-initialize - let components control the lifecycle
+// init();
 
 // Export public API as functions
 export const getLogs = () => logs;
@@ -241,7 +245,8 @@ export {
     startPolling,
     stopPolling,
     fetchLogs,
-    cleanup
+    cleanup,
+    init
 };
 
 // Filter setter exports

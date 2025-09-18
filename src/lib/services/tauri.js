@@ -2,7 +2,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { writable } from 'svelte/store';
 
-// Store for backend events
+// Store for backend events with circular buffer
+const MAX_BACKEND_EVENTS = 100;
 export const backendEvents = writable([]);
 
 // Tauri command wrappers
@@ -134,51 +135,67 @@ export async function setupEventListeners() {
     // Device status updates
     const unlistenStatus = await listen('device_status_changed', (event) => {
         console.log('Device status changed:', event.payload);
-        backendEvents.update(events => [...events, {
-            type: 'status',
-            ...event.payload,
-            timestamp: Date.now()
-        }]);
+        backendEvents.update(events => {
+            const newEvents = [...events, {
+                type: 'status',
+                ...event.payload,
+                timestamp: Date.now()
+            }];
+            // Maintain circular buffer to prevent memory leak
+            return newEvents.slice(-MAX_BACKEND_EVENTS);
+        });
     });
 
     // Device data events
     const unlistenData = await listen('device_data', (event) => {
         console.log('Device data received:', event.payload);
-        backendEvents.update(events => [...events, {
-            type: 'data',
-            ...event.payload,
-            timestamp: Date.now()
-        }]);
+        backendEvents.update(events => {
+            const newEvents = [...events, {
+                type: 'data',
+                ...event.payload,
+                timestamp: Date.now()
+            }];
+            return newEvents.slice(-MAX_BACKEND_EVENTS);
+        });
     });
 
     // Error events
     const unlistenError = await listen('device_error', (event) => {
         console.error('Device error:', event.payload);
-        backendEvents.update(events => [...events, {
-            type: 'error',
-            ...event.payload,
-            timestamp: Date.now()
-        }]);
+        backendEvents.update(events => {
+            const newEvents = [...events, {
+                type: 'error',
+                ...event.payload,
+                timestamp: Date.now()
+            }];
+            return newEvents.slice(-MAX_BACKEND_EVENTS);
+        });
     });
 
     // Connection events
     const unlistenConnection = await listen('bridge_connection', (event) => {
         console.log('Bridge connection event:', event.payload);
-        backendEvents.update(events => [...events, {
-            type: 'connection',
-            ...event.payload,
-            timestamp: Date.now()
-        }]);
+        backendEvents.update(events => {
+            const newEvents = [...events, {
+                type: 'connection',
+                ...event.payload,
+                timestamp: Date.now()
+            }];
+            return newEvents.slice(-MAX_BACKEND_EVENTS);
+        });
     });
 
     // Performance metrics
     const unlistenMetrics = await listen('performance_metrics', (event) => {
         console.log('Performance metrics:', event.payload);
-        backendEvents.update(events => [...events, {
-            type: 'metrics',
-            ...event.payload,
-            timestamp: Date.now()
-        }]);
+        backendEvents.update(events => {
+            const newEvents = [...events, {
+                type: 'metrics',
+                ...event.payload,
+                timestamp: Date.now()
+            }];
+            return newEvents.slice(-MAX_BACKEND_EVENTS);
+        });
     });
 
     eventUnlisteners = [

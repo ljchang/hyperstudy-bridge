@@ -24,8 +24,23 @@
   $effect(() => {
     if (autoScroll && logContainer && logs.length > 0) {
       requestAnimationFrame(() => {
-        logContainer.scrollTop = logContainer.scrollHeight;
+        if (logContainer) {
+          logContainer.scrollTop = logContainer.scrollHeight;
+        }
       });
+    }
+  });
+
+  // Effect to handle modal open/close
+  $effect(() => {
+    if (isOpen) {
+      // Start polling when opening if not already running
+      if (!isPolling) {
+        logsStore.init();
+      }
+    } else {
+      // Stop polling when closing to prevent memory leaks
+      logsStore.stopPolling();
     }
   });
 
@@ -110,11 +125,12 @@
   }
 
   onMount(() => {
-    // Store automatically starts polling
+    // Component mounted, but let the effect handle initialization
   });
 
   onDestroy(() => {
-    // Store handles cleanup
+    // Always stop polling when component is destroyed
+    logsStore.stopPolling();
   });
 </script>
 

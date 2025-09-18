@@ -10,6 +10,7 @@ let lastError = $state(null);
 let metrics = $state({});
 let ws = $state(null);
 let reconnectAttempts = $state(0);
+let reconnectTimeout = null;
 const maxReconnectAttempts = 5;
 const reconnectDelay = 1000;
 
@@ -66,12 +67,21 @@ function connect() {
             });
             devices = new Map(devices);
 
+            // Clear any existing reconnection timeout
+            if (reconnectTimeout) {
+                clearTimeout(reconnectTimeout);
+                reconnectTimeout = null;
+            }
+
             // Attempt reconnection
             if (reconnectAttempts < maxReconnectAttempts) {
                 reconnectAttempts++;
                 const delay = reconnectDelay * Math.pow(2, reconnectAttempts - 1);
                 console.log(`Reconnecting in ${delay}ms... (attempt ${reconnectAttempts})`);
-                setTimeout(() => connect(), delay);
+                reconnectTimeout = setTimeout(() => {
+                    reconnectTimeout = null;
+                    connect();
+                }, delay);
             }
         };
     } catch (error) {
@@ -322,11 +332,22 @@ export async function sendCommand(deviceId, command) {
 }
 
 export function disconnect() {
+    // Clear reconnection timeout if pending
+    if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = null;
+    }
+
     if (ws) {
         reconnectAttempts = maxReconnectAttempts; // Prevent auto-reconnect
         ws.close();
         ws = null;
     }
+
+    // Clear all callbacks and handlers
+    requestCallbacks.clear();
+    messageHandlers.clear();
+
     tauriService.cleanupEventListeners();
 }
 
