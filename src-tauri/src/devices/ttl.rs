@@ -148,8 +148,10 @@ impl TtlDevice {
             if let serialport::SerialPortType::UsbPort(usb_info) = &port.port_type {
                 // Check if this is an Adafruit RP2040 (our TTL device)
                 // On macOS, skip /dev/tty.* ports (duplicates of /dev/cu.*)
-                if usb_info.vid == Self::TTL_USB_VID && usb_info.pid == Self::TTL_USB_PID
-                    && !port.port_name.starts_with("/dev/tty.") {
+                if usb_info.vid == Self::TTL_USB_VID
+                    && usb_info.pid == Self::TTL_USB_PID
+                    && !port.port_name.starts_with("/dev/tty.")
+                {
                     let device_info = serde_json::json!({
                         "port": port.port_name,
                         "serial_number": usb_info.serial_number.as_ref().unwrap_or(&"Unknown".to_string()),
@@ -159,16 +161,24 @@ impl TtlDevice {
                         "pid": format!("0x{:04X}", usb_info.pid),
                     });
                     ttl_devices.push(device_info);
-                    info!("Found TTL device: {} (S/N: {})",
+                    info!(
+                        "Found TTL device: {} (S/N: {})",
                         port.port_name,
-                        usb_info.serial_number.as_ref().unwrap_or(&"Unknown".to_string())
+                        usb_info
+                            .serial_number
+                            .as_ref()
+                            .unwrap_or(&"Unknown".to_string())
                     );
                 }
             }
         }
 
         let result = if ttl_devices.is_empty() {
-            info!("No TTL devices found (VID: 0x{:04X}, PID: 0x{:04X})", Self::TTL_USB_VID, Self::TTL_USB_PID);
+            info!(
+                "No TTL devices found (VID: 0x{:04X}, PID: 0x{:04X})",
+                Self::TTL_USB_VID,
+                Self::TTL_USB_PID
+            );
             serde_json::json!({
                 "devices": ttl_devices,
                 "autoSelected": null,
@@ -183,7 +193,10 @@ impl TtlDevice {
                 "count": 1
             })
         } else {
-            info!("Found {} TTL devices - manual selection required", ttl_devices.len());
+            info!(
+                "Found {} TTL devices - manual selection required",
+                ttl_devices.len()
+            );
             serde_json::json!({
                 "devices": ttl_devices,
                 "autoSelected": null,
@@ -205,7 +218,10 @@ impl TtlDevice {
                 if usb_info.vid == Self::TTL_USB_VID && usb_info.pid == Self::TTL_USB_PID {
                     if let Some(ref sn) = usb_info.serial_number {
                         if sn == serial_number {
-                            info!("Found TTL device with serial number {} at port {}", serial_number, port.port_name);
+                            info!(
+                                "Found TTL device with serial number {} at port {}",
+                                serial_number, port.port_name
+                            );
                             return Ok(Some(port.port_name));
                         }
                     }

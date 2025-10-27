@@ -404,28 +404,32 @@ async fn handle_device_command(
             // Create a temporary device instance for testing
             let mut test_device: Box<dyn crate::devices::Device> = match device_id.as_str() {
                 "ttl" => {
-                    let port = payload.as_ref()
+                    let port = payload
+                        .as_ref()
                         .and_then(|p| p.get("port"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("/dev/cu.usbmodem101");
                     Box::new(TtlDevice::new(port.to_string()))
                 }
                 "kernel" => {
-                    let ip = payload.as_ref()
+                    let ip = payload
+                        .as_ref()
                         .and_then(|p| p.get("ip"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("127.0.0.1");
                     Box::new(KernelDevice::new(ip.to_string()))
                 }
                 "pupil" => {
-                    let url = payload.as_ref()
+                    let url = payload
+                        .as_ref()
                         .and_then(|p| p.get("url"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("localhost:8081");
                     Box::new(PupilDevice::new(url.to_string()))
                 }
                 "biopac" => {
-                    let addr = payload.as_ref()
+                    let addr = payload
+                        .as_ref()
                         .and_then(|p| p.get("address"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("localhost");
@@ -459,7 +463,11 @@ async fn handle_device_command(
             // Test the connection
             match test_device.test_connection().await {
                 Ok(reachable) => {
-                    info!("Connection test for {} device: {}", device_id, if reachable { "SUCCESS" } else { "FAILED" });
+                    info!(
+                        "Connection test for {} device: {}",
+                        device_id,
+                        if reachable { "SUCCESS" } else { "FAILED" }
+                    );
 
                     if let Some(req_id) = id {
                         let _ = tx

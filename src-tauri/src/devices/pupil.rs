@@ -522,8 +522,11 @@ impl Device for PupilDevice {
             // Apply send timeout
             let send_timeout = tokio::time::Duration::from_millis(self.config.timeout_ms);
 
-            match tokio::time::timeout(send_timeout, ws.send(Message::Text(message.to_string().into())))
-                .await
+            match tokio::time::timeout(
+                send_timeout,
+                ws.send(Message::Text(message.to_string().into())),
+            )
+            .await
             {
                 Ok(Ok(())) => {
                     debug!("Sent message to Pupil: {}", message);
@@ -703,7 +706,9 @@ impl Device for PupilDevice {
         if let Some(ref mut ws) = self.ws_client {
             let ping_timeout = tokio::time::Duration::from_millis(self.config.timeout_ms);
 
-            match tokio::time::timeout(ping_timeout, ws.send(Message::Ping(Vec::new().into()))).await {
+            match tokio::time::timeout(ping_timeout, ws.send(Message::Ping(Vec::new().into())))
+                .await
+            {
                 Ok(Ok(())) => {
                     debug!("Heartbeat ping sent successfully");
                     Ok(())
