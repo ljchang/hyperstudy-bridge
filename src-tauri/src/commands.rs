@@ -127,7 +127,7 @@ pub async fn connect_device(
             let port = config
                 .get("port")
                 .and_then(|v| v.as_str())
-                .unwrap_or("/dev/ttyUSB0");
+                .unwrap_or("/dev/cu.usbmodem101");
             let mut ttl_device = TtlDevice::new(port.to_string());
 
             // Set up performance monitoring callback
@@ -463,7 +463,7 @@ pub async fn load_configuration() -> Result<serde_json::Value, ()> {
     // TODO: Load from config file
     Ok(json!({
         "auto_connect": false,
-        "default_ttl_port": "/dev/ttyUSB0",
+        "default_ttl_port": "/dev/cu.usbmodem101",
         "websocket_port": 9000,
         "log_level": "info"
     }))
@@ -519,6 +519,41 @@ pub async fn check_ttl_latency_compliance(
             "No TTL latency data available for device {}",
             device_id
         )))
+    }
+}
+
+#[tauri::command]
+pub async fn list_all_serial_ports_debug() -> Result<CommandResult<Vec<serde_json::Value>>, ()> {
+    match TtlDevice::list_all_ports_debug() {
+        Ok(ports) => Ok(CommandResult::success(ports)),
+        Err(e) => Ok(CommandResult::error(format!(
+            "Failed to list serial ports: {}",
+            e
+        ))),
+    }
+}
+
+#[tauri::command]
+pub async fn list_ttl_devices() -> Result<CommandResult<serde_json::Value>, ()> {
+    match TtlDevice::list_ttl_devices() {
+        Ok(devices) => Ok(CommandResult::success(devices)),
+        Err(e) => Ok(CommandResult::error(format!(
+            "Failed to list TTL devices: {}",
+            e
+        ))),
+    }
+}
+
+#[tauri::command]
+pub async fn find_ttl_port_by_serial(
+    serial_number: String,
+) -> Result<CommandResult<Option<String>>, ()> {
+    match TtlDevice::find_port_by_serial(&serial_number) {
+        Ok(port) => Ok(CommandResult::success(port)),
+        Err(e) => Ok(CommandResult::error(format!(
+            "Failed to search for TTL device: {}",
+            e
+        ))),
     }
 }
 

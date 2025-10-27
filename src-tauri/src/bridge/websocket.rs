@@ -209,7 +209,7 @@ async fn handle_device_command(
                     let port = config
                         .get("port")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("/dev/ttyUSB0");
+                        .unwrap_or("/dev/cu.usbmodem101");
                     Box::new(TtlDevice::new(port.to_string()))
                 }
                 "kernel" => {
@@ -407,7 +407,7 @@ async fn handle_device_command(
                     let port = payload.as_ref()
                         .and_then(|p| p.get("port"))
                         .and_then(|v| v.as_str())
-                        .unwrap_or("/dev/ttyUSB0");
+                        .unwrap_or("/dev/cu.usbmodem101");
                     Box::new(TtlDevice::new(port.to_string()))
                 }
                 "kernel" => {

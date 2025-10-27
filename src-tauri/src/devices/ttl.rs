@@ -79,11 +79,142 @@ impl TtlDevice {
         self.performance_callback = Some(Box::new(callback));
     }
 
+    // Adafruit RP2040 USB VID/PID
+    const TTL_USB_VID: u16 = 0x239A;
+    const TTL_USB_PID: u16 = 0x80F1;
+
     pub fn list_ports() -> Result<Vec<String>, DeviceError> {
         let ports =
             serialport::available_ports().map_err(|e| DeviceError::SerialError(e.to_string()))?;
 
         Ok(ports.into_iter().map(|p| p.port_name).collect())
+    }
+
+    /// Debug function to list ALL serial ports with detailed USB info
+    pub fn list_all_ports_debug() -> Result<Vec<serde_json::Value>, DeviceError> {
+        let ports =
+            serialport::available_ports().map_err(|e| DeviceError::SerialError(e.to_string()))?;
+
+        let mut all_ports = Vec::new();
+
+        for port in ports {
+            let port_info = match &port.port_type {
+                serialport::SerialPortType::UsbPort(usb_info) => {
+                    serde_json::json!({
+                        "port": port.port_name,
+                        "type": "USB",
+                        "vid": format!("0x{:04X}", usb_info.vid),
+                        "pid": format!("0x{:04X}", usb_info.pid),
+                        "serial_number": usb_info.serial_number.as_ref().unwrap_or(&"None".to_string()),
+                        "manufacturer": usb_info.manufacturer.as_ref().unwrap_or(&"None".to_string()),
+                        "product": usb_info.product.as_ref().unwrap_or(&"None".to_string()),
+                    })
+                }
+                serialport::SerialPortType::BluetoothPort => {
+                    serde_json::json!({
+                        "port": port.port_name,
+                        "type": "Bluetooth",
+                    })
+                }
+                serialport::SerialPortType::PciPort => {
+                    serde_json::json!({
+                        "port": port.port_name,
+                        "type": "PCI",
+                    })
+                }
+                serialport::SerialPortType::Unknown => {
+                    serde_json::json!({
+                        "port": port.port_name,
+                        "type": "Unknown",
+                    })
+                }
+            };
+            all_ports.push(port_info);
+        }
+
+        info!("Found {} serial ports total", all_ports.len());
+        Ok(all_ports)
+    }
+
+    /// List TTL devices by filtering on VID/PID and return detailed info
+    /// Returns a JSON object with 'devices' array and 'autoSelected' port if only one device found
+    pub fn list_ttl_devices() -> Result<serde_json::Value, DeviceError> {
+        let ports =
+            serialport::available_ports().map_err(|e| DeviceError::SerialError(e.to_string()))?;
+
+        let mut ttl_devices = Vec::new();
+
+        for port in ports {
+            if let serialport::SerialPortType::UsbPort(usb_info) = &port.port_type {
+                // Check if this is an Adafruit RP2040 (our TTL device)
+                // On macOS, skip /dev/tty.* ports (duplicates of /dev/cu.*)
+                if usb_info.vid == Self::TTL_USB_VID && usb_info.pid == Self::TTL_USB_PID
+                    && !port.port_name.starts_with("/dev/tty.") {
+                    let device_info = serde_json::json!({
+                        "port": port.port_name,
+                        "serial_number": usb_info.serial_number.as_ref().unwrap_or(&"Unknown".to_string()),
+                        "manufacturer": usb_info.manufacturer.as_ref().unwrap_or(&"Unknown".to_string()),
+                        "product": usb_info.product.as_ref().unwrap_or(&"Unknown".to_string()),
+                        "vid": format!("0x{:04X}", usb_info.vid),
+                        "pid": format!("0x{:04X}", usb_info.pid),
+                    });
+                    ttl_devices.push(device_info);
+                    info!("Found TTL device: {} (S/N: {})",
+                        port.port_name,
+                        usb_info.serial_number.as_ref().unwrap_or(&"Unknown".to_string())
+                    );
+                }
+            }
+        }
+
+        let result = if ttl_devices.is_empty() {
+            info!("No TTL devices found (VID: 0x{:04X}, PID: 0x{:04X})", Self::TTL_USB_VID, Self::TTL_USB_PID);
+            serde_json::json!({
+                "devices": ttl_devices,
+                "autoSelected": null,
+                "count": 0
+            })
+        } else if ttl_devices.len() == 1 {
+            let auto_port = ttl_devices[0]["port"].as_str().unwrap_or("");
+            info!("Auto-selecting single TTL device: {}", auto_port);
+            serde_json::json!({
+                "devices": ttl_devices,
+                "autoSelected": auto_port,
+                "count": 1
+            })
+        } else {
+            info!("Found {} TTL devices - manual selection required", ttl_devices.len());
+            serde_json::json!({
+                "devices": ttl_devices,
+                "autoSelected": null,
+                "count": ttl_devices.len()
+            })
+        };
+
+        Ok(result)
+    }
+
+    /// Find a TTL device port by serial number
+    pub fn find_port_by_serial(serial_number: &str) -> Result<Option<String>, DeviceError> {
+        let ports =
+            serialport::available_ports().map_err(|e| DeviceError::SerialError(e.to_string()))?;
+
+        for port in ports {
+            if let serialport::SerialPortType::UsbPort(usb_info) = &port.port_type {
+                // Only check devices with matching VID/PID
+                if usb_info.vid == Self::TTL_USB_VID && usb_info.pid == Self::TTL_USB_PID {
+                    if let Some(ref sn) = usb_info.serial_number {
+                        if sn == serial_number {
+                            info!("Found TTL device with serial number {} at port {}", serial_number, port.port_name);
+                            return Ok(Some(port.port_name));
+                        }
+                    }
+                }
+            }
+        }
+
+        info!("No TTL device found with serial number: {}", serial_number);
+        Ok(None)
     }
 
     async fn send_pulse(&mut self) -> Result<(), DeviceError> {

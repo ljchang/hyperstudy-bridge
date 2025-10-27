@@ -1,15 +1,18 @@
 <script>
+  import { onMount } from 'svelte';
+  import { listTtlDevices } from '../services/tauri.js';
+
   // Use Svelte 5 $props() rune
   let { isOpen = false, onAdd = () => {}, onClose = () => {} } = $props();
 
-  // Available device types
-  const availableDevices = [
+  // Available device types - TTL port will be auto-detected
+  let availableDevices = $state([
     {
       id: 'ttl',
       name: 'TTL Pulse Generator',
       type: 'Adafruit RP2040',
       connection: 'USB Serial',
-      config: { port: '/dev/ttyUSB0' }
+      config: { port: '/dev/cu.usbmodem101' } // Fallback default
     },
     {
       id: 'kernel',
@@ -39,9 +42,41 @@
       connection: 'Virtual',
       config: {}
     }
-  ];
+  ]);
 
   let selectedDevices = $state(new Set());
+
+  // Auto-detect TTL device on mount
+  onMount(async () => {
+    try {
+      const result = await listTtlDevices();
+      if (result.success && result.data) {
+        const { autoSelected, devices } = result.data;
+
+        // If we have an auto-selected device, update the TTL config
+        if (autoSelected) {
+          console.log('Auto-detected TTL device:', autoSelected);
+          const ttlDevice = availableDevices.find(d => d.id === 'ttl');
+          if (ttlDevice) {
+            ttlDevice.config.port = autoSelected;
+            // Trigger reactivity
+            availableDevices = [...availableDevices];
+          }
+        } else if (devices && devices.length > 0) {
+          // Multiple devices found - use the first one as default
+          console.log('Multiple TTL devices found, using first:', devices[0].port);
+          const ttlDevice = availableDevices.find(d => d.id === 'ttl');
+          if (ttlDevice) {
+            ttlDevice.config.port = devices[0].port;
+            availableDevices = [...availableDevices];
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to auto-detect TTL device:', error);
+      // Keep using the fallback default port
+    }
+  });
 
   function toggleDevice(deviceId, event) {
     // Cmd+Click or Ctrl+Click for multi-select

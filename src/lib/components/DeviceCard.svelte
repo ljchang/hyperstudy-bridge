@@ -1,5 +1,6 @@
 <script>
   import * as bridgeStore from '../stores/websocket.svelte.js';
+  import { sendTtlPulse } from '../services/tauri.js';
   import DeviceConfigModal from './DeviceConfigModal.svelte';
 
   let { device } = $props();
@@ -28,21 +29,31 @@
   }
 
   async function toggleConnection() {
-    if (device.status === 'disconnected' || device.status === 'error') {
+    console.log(`toggleConnection called! Status: ${device.status}`);
+    alert(`Button clicked! Current status: ${device.status}`);
+
+    // Allow connection from disconnected, error, or unknown status
+    if (device.status !== 'connected' && device.status !== 'connecting') {
       console.log(`Connecting ${device.name}...`);
+      console.log(`Device config:`, device.config);
+      console.log(`Device status:`, device.status);
       try {
-        await bridgeStore.connectDevice(device.id, device.config);
-        console.log(`Successfully connected ${device.name}`);
+        const result = await bridgeStore.connectDevice(device.id, device.config);
+        console.log(`Successfully connected ${device.name}`, result);
+        alert(`Connected to ${device.name}`);
       } catch (error) {
         console.error(`Failed to connect ${device.name}:`, error);
+        alert(`Failed to connect: ${error.message || error}`);
       }
     } else if (device.status === 'connected') {
       console.log(`Disconnecting ${device.name}...`);
       try {
         await bridgeStore.disconnectDevice(device.id);
         console.log(`Successfully disconnected ${device.name}`);
+        alert(`Disconnected from ${device.name}`);
       } catch (error) {
         console.error(`Failed to disconnect ${device.name}:`, error);
+        alert(`Failed to disconnect: ${error.message || error}`);
       }
     }
   }
@@ -50,6 +61,23 @@
   async function configureDevice() {
     console.log(`Configuring ${device.name}...`);
     showConfigModal = true;
+  }
+
+  async function sendTestPulse() {
+    if (device.id !== 'ttl') return;
+
+    try {
+      console.log('Sending test pulse to:', device.config.port);
+      const result = await sendTtlPulse(device.config.port);
+      if (result.success) {
+        alert('✅ Test pulse sent successfully!');
+      } else {
+        alert(`❌ Failed to send pulse: ${result.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error sending test pulse:', error);
+      alert(`❌ Error: ${error.message || error}`);
+    }
   }
 
   async function handleConfigSave(deviceId, newConfig) {
@@ -125,14 +153,22 @@
   </div>
   
   <div class="device-actions">
-    <button 
+    <button
       class="action-btn connect-btn"
       onclick={toggleConnection}
       disabled={device.status === 'connecting'}
     >
       {device.status === 'connected' ? 'Disconnect' : 'Connect'}
     </button>
-    <button 
+    {#if device.id === 'ttl' && device.status === 'connected'}
+      <button
+        class="action-btn pulse-btn"
+        onclick={sendTestPulse}
+      >
+        Send Pulse
+      </button>
+    {/if}
+    <button
       class="action-btn config-btn"
       onclick={configureDevice}
     >
@@ -269,5 +305,17 @@
     background: rgba(255, 255, 255, 0.1);
     color: var(--color-text-primary);
     border-color: var(--color-border-hover);
+  }
+
+  .pulse-btn {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    font-weight: 600;
+  }
+
+  .pulse-btn:hover {
+    background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
   }
 </style>

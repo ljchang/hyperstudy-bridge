@@ -96,6 +96,25 @@ export async function listSerialPorts() {
     }
 }
 
+// TTL device discovery with VID/PID filtering
+export async function listTtlDevices() {
+    try {
+        return await invoke('list_ttl_devices');
+    } catch (error) {
+        console.error('Failed to list TTL devices:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+export async function findTtlPortBySerial(serialNumber) {
+    try {
+        return await invoke('find_ttl_port_by_serial', { serialNumber });
+    } catch (error) {
+        console.error('Failed to find TTL device by serial:', error);
+        return { success: false, error: error.message };
+    }
+}
+
 // Device discovery
 export async function discoverDevices() {
     try {
@@ -392,6 +411,8 @@ export const tauriService = {
     sendDeviceCommand,
     sendTtlPulse,
     listSerialPorts,
+    listTtlDevices,
+    findTtlPortBySerial,
     discoverDevices,
     getDeviceMetrics,
     getSystemDiagnostics,

@@ -1,4 +1,5 @@
 <script>
+  import { listTtlDevices } from '../services/tauri.js';
 
   // Use Svelte 5 $props() rune
   let { isOpen = false, device = null, onSave = () => {}, onClose = () => {} } = $props();
@@ -10,16 +11,21 @@
   let isSubmitting = $state(false);
   let activeTab = $state('device'); // 'device' or 'lsl'
 
+  // TTL device detection state
+  let detectedTtlDevices = $state([]);
+  let isDetecting = $state(false);
+  let showDeviceSelector = $state(false);
+
   // Device configuration templates with validation rules
   const deviceConfigs = {
     ttl: {
       port: {
         label: 'Serial Port',
         type: 'text',
-        placeholder: '/dev/ttyUSB0 (Linux) or /dev/tty.usbmodem (macOS)',
+        placeholder: '/dev/cu.usbmodem or /dev/tty.usbmodem (macOS), /dev/ttyUSB0 (Linux)',
         required: true,
-        pattern: '^(/dev/tty\\.|/dev/ttyUSB|COM\\d+)',
-        errorMessage: 'Invalid port format. Expected /dev/ttyUSB0, /dev/tty.usbmodem1234, or COM1'
+        pattern: '^(/dev/(tty\\.|cu\\.|ttyUSB)|COM\\d+)',
+        errorMessage: 'Invalid port format. Expected /dev/cu.*, /dev/tty.*, /dev/ttyUSB*, or COM*'
       },
       baudRate: {
         label: 'Baud Rate',
@@ -190,7 +196,55 @@
     }
   });
 
-  function initializeForm() {
+  // Detect TTL devices
+  async function detectTtlDevices() {
+    isDetecting = true;
+    detectedTtlDevices = [];
+    showDeviceSelector = false;
+
+    try {
+      const result = await listTtlDevices();
+      console.log('Detection result:', result);
+
+      if (result.success && result.data) {
+        const { devices, autoSelected, count } = result.data;
+        detectedTtlDevices = devices || [];
+
+        console.log('Detected TTL devices:', detectedTtlDevices);
+        console.log('Auto-selected:', autoSelected);
+        console.log('Count:', count);
+
+        // Always show the selector if we have devices, so user can see what was found
+        if (detectedTtlDevices.length > 0) {
+          showDeviceSelector = true;
+
+          // If only one device, also auto-fill it
+          if (autoSelected) {
+            formData.port = autoSelected;
+          }
+        } else {
+          console.warn('No TTL devices found with VID: 0x239A, PID: 0x80F1');
+          alert('No TTL devices found. Make sure your device is connected.');
+        }
+      } else {
+        console.error('Detection failed:', result.error);
+        alert(`Failed to detect devices: ${result.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Failed to detect TTL devices:', error);
+      alert(`Error detecting devices: ${error.message}`);
+    } finally {
+      isDetecting = false;
+    }
+  }
+
+  // Select a detected device
+  function selectDetectedDevice(port) {
+    formData.port = port;
+    showDeviceSelector = false;
+  }
+
+  async function initializeForm() {
     const config = deviceConfigs[device.id];
     if (!config) return;
 
@@ -206,6 +260,11 @@
     });
 
     formData = newFormData;
+
+    // Auto-detect TTL devices on load
+    if (device.id === 'ttl') {
+      await detectTtlDevices();
+    }
 
     // Initialize LSL configuration
     const lslConfigTemplate = deviceConfigs.lsl;
@@ -425,17 +484,51 @@
                       <span class="checkbox-label">Enable {fieldConfig.label}</span>
                     </label>
                   {:else}
-                    <input
-                      id={fieldName}
-                      type={fieldConfig.type}
-                      class="form-input"
-                      class:error={errors[fieldName]}
-                      placeholder={fieldConfig.placeholder || ''}
-                      min={fieldConfig.min}
-                      max={fieldConfig.max}
-                      value={formData[fieldName]}
-                      oninput={(e) => handleFieldChange(fieldName, e.target.value)}
-                    />
+                    <div class="input-with-button">
+                      <input
+                        id={fieldName}
+                        type={fieldConfig.type}
+                        class="form-input"
+                        class:error={errors[fieldName]}
+                        placeholder={fieldConfig.placeholder || ''}
+                        min={fieldConfig.min}
+                        max={fieldConfig.max}
+                        value={formData[fieldName]}
+                        oninput={(e) => handleFieldChange(fieldName, e.target.value)}
+                      />
+                      {#if device.id === 'ttl' && fieldName === 'port'}
+                        <button
+                          type="button"
+                          class="detect-btn"
+                          onclick={detectTtlDevices}
+                          disabled={isDetecting}
+                        >
+                          {isDetecting ? 'Detecting...' : 'Detect'}
+                        </button>
+                      {/if}
+                    </div>
+
+                    <!-- Show detected devices dropdown for TTL port -->
+                    {#if device.id === 'ttl' && fieldName === 'port' && showDeviceSelector && detectedTtlDevices.length > 0}
+                      <div class="device-selector">
+                        <div class="selector-header">Found {detectedTtlDevices.length} device(s):</div>
+                        {#each detectedTtlDevices as ttlDevice}
+                          <button
+                            type="button"
+                            class="device-option"
+                            onclick={() => selectDetectedDevice(ttlDevice.port)}
+                          >
+                            <div class="device-option-main">
+                              <strong>{ttlDevice.port}</strong>
+                              <span class="device-serial">S/N: {ttlDevice.serial_number}</span>
+                            </div>
+                            <div class="device-option-details">
+                              {ttlDevice.manufacturer} - {ttlDevice.product}
+                            </div>
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
                   {/if}
 
                   {#if errors[fieldName]}
@@ -872,5 +965,91 @@
     padding-right: 2.5rem;
     appearance: none;
     cursor: pointer;
+  }
+  .input-with-button {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .input-with-button .form-input {
+    flex: 1;
+  }
+
+  .detect-btn {
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--color-primary);
+    border-radius: 6px;
+    background: var(--color-primary);
+    color: white;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 0.875rem;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .detect-btn:hover:not(:disabled) {
+    background: var(--color-primary-hover);
+  }
+
+  .detect-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .device-selector {
+    margin-top: 0.75rem;
+    padding: 0.75rem;
+    background: var(--color-surface-elevated);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+  }
+
+  .selector-header {
+    font-size: 0.875rem;
+    color: var(--color-text-secondary);
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+  }
+
+  .device-option {
+    width: 100%;
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    background: var(--color-surface);
+    color: var(--color-text-primary);
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .device-option:last-child {
+    margin-bottom: 0;
+  }
+
+  .device-option:hover {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: white;
+  }
+
+  .device-option-main {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.25rem;
+  }
+
+  .device-serial {
+    font-size: 0.75rem;
+    font-family: 'SF Mono', Monaco, monospace;
+    opacity: 0.8;
+  }
+
+  .device-option-details {
+    font-size: 0.75rem;
+    opacity: 0.7;
   }
 </style>
