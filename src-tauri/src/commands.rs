@@ -81,13 +81,20 @@ pub async fn stop_bridge_server(
 ) -> Result<CommandResult<String>, ()> {
     info!("Stopping bridge server...");
 
-    // Disconnect all devices
-    let devices = state.devices.write().await;
-    for (_id, device) in devices.iter() {
-        let mut device = device.write().await;
-        let _ = device.disconnect().await;
+    // Collect device IDs first to avoid holding lock across await
+    let device_ids: Vec<String> = {
+        let devices = state.devices.read().await;
+        devices.keys().cloned().collect()
+    };
+
+    // Disconnect each device individually (lock released between iterations)
+    for device_id in device_ids {
+        if let Some(device_lock) = state.get_device(&device_id).await {
+            let mut device = device_lock.write().await;
+            let _ = device.disconnect().await;
+            drop(device); // Explicitly release lock before next iteration
+        }
     }
-    drop(devices);
 
     // Clear all connections
     state.connections.clear();

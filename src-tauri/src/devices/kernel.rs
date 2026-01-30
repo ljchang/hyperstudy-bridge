@@ -13,6 +13,7 @@ const MAX_RECONNECT_ATTEMPTS: u32 = 10;
 const INITIAL_RECONNECT_DELAY_MS: u64 = 1000;
 const MAX_RECONNECT_DELAY_MS: u64 = 30000;
 const CONNECTION_TIMEOUT_MS: u64 = 5000;
+const IO_TIMEOUT_MS: u64 = 5000; // Timeout for individual read/write operations
 const READ_BUFFER_SIZE: usize = 8192;
 
 /// Event structure conforming to the Kernel Tasks SDK protocol.
@@ -419,26 +420,39 @@ impl Device for KernelDevice {
         let device_id = self.get_info().id;
 
         if let Some(ref mut socket) = self.socket {
+            let io_timeout = Duration::from_millis(IO_TIMEOUT_MS);
+
             // Measure latency for the operation
             let start = Instant::now();
-            let result = socket.write_all(data).await;
+            let result = timeout(io_timeout, socket.write_all(data)).await;
             let latency = start.elapsed();
 
             match result {
-                Ok(_) => {
-                    if let Err(flush_err) = socket.flush().await {
-                        if self.is_io_error_connection_lost(&flush_err) {
+                Ok(Ok(_)) => {
+                    // Flush with timeout
+                    match timeout(io_timeout, socket.flush()).await {
+                        Ok(Ok(_)) => {}
+                        Ok(Err(flush_err)) => {
+                            if self.is_io_error_connection_lost(&flush_err) {
+                                self.socket = None;
+                                self.status = DeviceStatus::Error;
+                                return Err(DeviceError::ConnectionFailed(format!(
+                                    "Connection lost during flush: {}",
+                                    flush_err
+                                )));
+                            } else {
+                                return Err(DeviceError::CommunicationError(format!(
+                                    "Flush failed: {}",
+                                    flush_err
+                                )));
+                            }
+                        }
+                        Err(_) => {
                             self.socket = None;
                             self.status = DeviceStatus::Error;
-                            return Err(DeviceError::ConnectionFailed(format!(
-                                "Connection lost during flush: {}",
-                                flush_err
-                            )));
-                        } else {
-                            return Err(DeviceError::CommunicationError(format!(
-                                "Flush failed: {}",
-                                flush_err
-                            )));
+                            return Err(DeviceError::CommunicationError(
+                                "Flush timed out".to_string(),
+                            ));
                         }
                     }
 
@@ -457,7 +471,7 @@ impl Device for KernelDevice {
                     );
                     Ok(())
                 }
-                Err(send_err) => {
+                Ok(Err(send_err)) => {
                     if self.is_io_error_connection_lost(&send_err) {
                         self.socket = None;
                         self.status = DeviceStatus::Error;
@@ -471,6 +485,14 @@ impl Device for KernelDevice {
                             send_err
                         )))
                     }
+                }
+                Err(_) => {
+                    // Timeout elapsed
+                    self.socket = None;
+                    self.status = DeviceStatus::Error;
+                    Err(DeviceError::CommunicationError(
+                        "Send timed out".to_string(),
+                    ))
                 }
             }
         } else {
@@ -493,17 +515,19 @@ impl Device for KernelDevice {
         let device_id = self.get_info().id;
 
         if let Some(ref mut socket) = self.socket {
+            let io_timeout = Duration::from_millis(IO_TIMEOUT_MS);
+
             // Prepare buffer for reading
             self.buffer.clear();
             self.buffer.resize(self.config.buffer_size, 0);
 
-            // Measure latency for the read operation
+            // Measure latency for the read operation with timeout
             let start = Instant::now();
-            let read_result = socket.read(&mut self.buffer).await;
+            let read_result = timeout(io_timeout, socket.read(&mut self.buffer)).await;
             let latency = start.elapsed();
 
             match read_result {
-                Ok(0) => {
+                Ok(Ok(0)) => {
                     // Connection closed by remote
                     warn!("Kernel Flow2 connection closed by remote");
                     self.status = DeviceStatus::Error;
@@ -512,7 +536,7 @@ impl Device for KernelDevice {
                         "Connection closed by remote".to_string(),
                     ))
                 }
-                Ok(n) => {
+                Ok(Ok(n)) => {
                     self.buffer.truncate(n);
                     debug!("Kernel Flow2 received {} bytes", n);
 
@@ -531,15 +555,15 @@ impl Device for KernelDevice {
 
                     Ok(data)
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                Ok(Err(e)) if e.kind() == std::io::ErrorKind::TimedOut => {
                     // Timeout is acceptable, just return empty data
                     Ok(Vec::new())
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                Ok(Err(e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     // Non-blocking read, no data available
                     Ok(Vec::new())
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     error!("Kernel Flow2 read error: {}", e);
                     if self.is_io_error_connection_lost(&e) {
                         self.socket = None;
@@ -554,6 +578,10 @@ impl Device for KernelDevice {
                             e
                         )))
                     }
+                }
+                Err(_) => {
+                    // Timeout elapsed - this is acceptable for receive, return empty data
+                    Ok(Vec::new())
                 }
             }
         } else {
