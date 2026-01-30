@@ -4,10 +4,12 @@ use crate::devices::{
     ttl::TtlDevice,
 };
 use crate::devices::{Device, DeviceInfo, DeviceStatus};
+use crate::logging::{get_all_logs, LogEntry};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
+use std::io::{Read, Write};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tracing::{error, info};
@@ -584,39 +586,14 @@ pub async fn reset_performance_metrics(
 }
 
 // Logging commands
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct LogEntry {
-    pub timestamp: String,
-    pub level: String,
-    pub message: String,
-    pub device: Option<String>,
-    pub source: String,
-}
+// Note: LogEntry is imported from crate::logging
 
 #[tauri::command]
 pub async fn get_logs(
     _state: State<'_, Arc<AppState>>,
 ) -> Result<CommandResult<Vec<LogEntry>>, ()> {
-    // TODO: Implement log collection from the actual logging system
-    // For now, return mock data or collect from tracing subscriber
-    let logs = vec![
-        LogEntry {
-            timestamp: Utc::now().to_rfc3339(),
-            level: "info".to_string(),
-            message: "Bridge server started successfully".to_string(),
-            device: None,
-            source: "bridge".to_string(),
-        },
-        LogEntry {
-            timestamp: Utc::now().to_rfc3339(),
-            level: "info".to_string(),
-            message: "Listening for WebSocket connections on port 9000".to_string(),
-            device: None,
-            source: "bridge".to_string(),
-        },
-    ];
-
+    // Return actual logs from the circular buffer
+    let logs = get_all_logs();
     Ok(CommandResult::success(logs))
 }
 
@@ -689,4 +666,83 @@ pub async fn set_log_level(level: String) -> Result<CommandResult<String>, ()> {
         "Log level set to {}",
         level
     )))
+}
+
+/// Test a TTL device connection without keeping it open
+/// Sends TEST command and returns device response (e.g., firmware version)
+#[tauri::command]
+pub async fn test_ttl_device(port: String) -> Result<CommandResult<String>, ()> {
+    info!("Testing TTL device on port: {}", port);
+
+    // Open serial port temporarily
+    let port_result = serialport::new(&port, 115200)
+        .timeout(std::time::Duration::from_millis(500))
+        .open();
+
+    match port_result {
+        Ok(mut serial_port) => {
+            // Send TEST command
+            if let Err(e) = serial_port.write_all(b"TEST\n") {
+                return Ok(CommandResult::error(format!("Failed to send TEST command: {}", e)));
+            }
+
+            if let Err(e) = serial_port.flush() {
+                return Ok(CommandResult::error(format!("Failed to flush: {}", e)));
+            }
+
+            // Small delay for device to respond
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+            // Read response
+            let mut buffer = vec![0u8; 256];
+            match serial_port.read(&mut buffer) {
+                Ok(bytes_read) => {
+                    buffer.truncate(bytes_read);
+                    let response = String::from_utf8_lossy(&buffer).trim().to_string();
+                    info!("TTL device test response: {}", response);
+                    Ok(CommandResult::success(response))
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                    Ok(CommandResult::error("Device did not respond (timeout)".to_string()))
+                }
+                Err(e) => {
+                    Ok(CommandResult::error(format!("Failed to read response: {}", e)))
+                }
+            }
+            // Port is automatically closed when serial_port goes out of scope
+        }
+        Err(e) => {
+            Ok(CommandResult::error(format!("Failed to open port: {}", e)))
+        }
+    }
+}
+
+/// Reset a device - removes it from state and clears errors
+/// Allows fresh connection attempt after an error
+#[tauri::command]
+pub async fn reset_device(
+    device_id: String,
+    state: State<'_, Arc<AppState>>,
+    app_handle: AppHandle,
+) -> Result<CommandResult<String>, ()> {
+    info!("Resetting device: {}", device_id);
+
+    // Remove device from state if it exists
+    state.remove_device(&device_id).await;
+
+    // Clear last error
+    state.set_last_error(None).await;
+
+    // Emit status update
+    app_handle
+        .emit(
+            "device_status_changed",
+            json!({
+                "device": device_id,
+                "status": "Disconnected"
+            }),
+        )
+        .unwrap_or_else(|e| error!("Failed to emit event: {}", e));
+
+    Ok(CommandResult::success(format!("Device {} reset successfully", device_id)))
 }

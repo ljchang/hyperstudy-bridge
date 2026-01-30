@@ -115,6 +115,27 @@ export async function findTtlPortBySerial(serialNumber) {
     }
 }
 
+// Test TTL device connection without keeping it open
+// Returns device response (e.g., firmware version) or error
+export async function testTtlDevice(port) {
+    try {
+        return await invoke('test_ttl_device', { port });
+    } catch (error) {
+        console.error('Failed to test TTL device:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+// Reset a device - clears error state and allows fresh connection
+export async function resetDevice(deviceId) {
+    try {
+        return await invoke('reset_device', { deviceId });
+    } catch (error) {
+        console.error('Failed to reset device:', error);
+        return { success: false, error: error.message };
+    }
+}
+
 // Device discovery
 export async function discoverDevices() {
     try {
@@ -413,6 +434,8 @@ export const tauriService = {
     listSerialPorts,
     listTtlDevices,
     findTtlPortBySerial,
+    testTtlDevice,
+    resetDevice,
     discoverDevices,
     getDeviceMetrics,
     getSystemDiagnostics,

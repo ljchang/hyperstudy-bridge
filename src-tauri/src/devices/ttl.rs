@@ -3,6 +3,7 @@ use crate::performance::measure_latency;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serialport::{self, SerialPort};
+use std::io::{Read, Write};
 use std::sync::Mutex;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -283,13 +284,62 @@ impl Device for TtlDevice {
 
         self.status = DeviceStatus::Connecting;
 
-        let port = serialport::new(&self.port_name, self.config.baud_rate)
-            .timeout(Duration::from_millis(100))
+        let mut port = serialport::new(&self.port_name, self.config.baud_rate)
+            .timeout(Duration::from_millis(500))
             .open()
             .map_err(|e| {
                 self.status = DeviceStatus::Error;
                 DeviceError::ConnectionFailed(format!("Failed to open serial port: {}", e))
             })?;
+
+        // Validate connection by sending TEST command
+        info!("Validating TTL device connection...");
+        port.write_all(b"TEST\n").map_err(|e| {
+            self.status = DeviceStatus::Error;
+            DeviceError::ConnectionFailed(format!("Failed to send TEST command: {}", e))
+        })?;
+
+        port.flush().map_err(|e| {
+            self.status = DeviceStatus::Error;
+            DeviceError::ConnectionFailed(format!("Failed to flush: {}", e))
+        })?;
+
+        // Small delay for device to respond
+        sleep(Duration::from_millis(100)).await;
+
+        // Read response
+        let mut buffer = vec![0u8; 256];
+        match port.read(&mut buffer) {
+            Ok(bytes_read) => {
+                buffer.truncate(bytes_read);
+                let response = String::from_utf8_lossy(&buffer).trim().to_string();
+                if response.is_empty() {
+                    self.status = DeviceStatus::Error;
+                    return Err(DeviceError::ConnectionFailed(
+                        "Device did not respond to TEST command. Is this the correct device?".to_string()
+                    ));
+                }
+                info!("TTL device validated. Response: {}", response);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                self.status = DeviceStatus::Error;
+                return Err(DeviceError::ConnectionFailed(
+                    "Device timeout - no response to TEST command. Check device connection.".to_string()
+                ));
+            }
+            Err(e) => {
+                self.status = DeviceStatus::Error;
+                return Err(DeviceError::ConnectionFailed(format!(
+                    "Failed to read validation response: {}", e
+                )));
+            }
+        }
+
+        // Reset timeout to normal operation value
+        port.set_timeout(Duration::from_millis(100)).map_err(|e| {
+            warn!("Failed to reset port timeout: {}", e);
+            DeviceError::ConnectionFailed(format!("Failed to configure port: {}", e))
+        })?;
 
         self.port = Some(Mutex::new(port));
         self.status = DeviceStatus::Connected;

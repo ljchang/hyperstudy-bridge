@@ -1,12 +1,91 @@
 <script>
+  import { onMount } from 'svelte';
   import * as bridgeStore from '../stores/websocket.svelte.js';
-  import { sendTtlPulse } from '../services/tauri.js';
+  import { sendTtlPulse, listTtlDevices, testTtlDevice, resetDevice } from '../services/tauri.js';
   import DeviceConfigModal from './DeviceConfigModal.svelte';
 
   let { device } = $props();
 
   // Modal state
   let showConfigModal = $state(false);
+
+  // TTL device list for dropdown
+  let detectedTtlDevices = $state([]);
+  let isLoadingDevices = $state(false);
+  let isTestingConnection = $state(false);
+  let isResetting = $state(false);
+
+  // Load TTL devices on mount if this is a TTL device
+  onMount(() => {
+    if (device.id === 'ttl') {
+      refreshTtlDevices();
+    }
+  });
+
+  async function refreshTtlDevices() {
+    if (device.id !== 'ttl') return;
+
+    isLoadingDevices = true;
+    try {
+      const result = await listTtlDevices();
+      if (result.success && result.data) {
+        detectedTtlDevices = result.data.devices || [];
+        // Auto-select if only one device and no port configured
+        if (result.data.autoSelected && !device.config.port) {
+          device.config = { ...device.config, port: result.data.autoSelected };
+        }
+      }
+    } catch (error) {
+      console.error('Failed to refresh TTL devices:', error);
+    } finally {
+      isLoadingDevices = false;
+    }
+  }
+
+  function updateTtlPort(port) {
+    device.config = { ...device.config, port };
+  }
+
+  async function testTtlConnection() {
+    if (!device.config.port) {
+      alert('Please select a port first');
+      return;
+    }
+
+    isTestingConnection = true;
+    try {
+      const result = await testTtlDevice(device.config.port);
+      if (result.success) {
+        alert(`Device responded: ${result.data || 'OK'}`);
+      } else {
+        alert(`Test failed: ${result.error || 'No response'}`);
+      }
+    } catch (error) {
+      console.error('Error testing TTL device:', error);
+      alert(`Error: ${error.message || error}`);
+    } finally {
+      isTestingConnection = false;
+    }
+  }
+
+  async function resetDeviceState() {
+    isResetting = true;
+    try {
+      const result = await resetDevice(device.id);
+      if (result.success) {
+        // Update local device status
+        device.status = 'disconnected';
+        console.log(`Device ${device.id} reset successfully`);
+      } else {
+        alert(`Failed to reset: ${result.error}`);
+      }
+    } catch (error) {
+      console.error('Error resetting device:', error);
+      alert(`Error: ${error.message || error}`);
+    } finally {
+      isResetting = false;
+    }
+  }
 
   function getStatusColor(status) {
     switch(status) {
@@ -30,7 +109,6 @@
 
   async function toggleConnection() {
     console.log(`toggleConnection called! Status: ${device.status}`);
-    alert(`Button clicked! Current status: ${device.status}`);
 
     // Allow connection from disconnected, error, or unknown status
     if (device.status !== 'connected' && device.status !== 'connecting') {
@@ -131,9 +209,31 @@
   
   <div class="device-config">
     {#if device.id === 'ttl'}
-      <div class="config-row">
+      <div class="config-row port-selector">
         <span class="label">Port:</span>
-        <span class="value">{device.config.port || 'Not configured'}</span>
+        <div class="port-controls">
+          <select
+            class="port-select"
+            value={device.config.port || ''}
+            onchange={(e) => updateTtlPort(e.target.value)}
+            disabled={device.status === 'connected' || device.status === 'connecting'}
+          >
+            <option value="">Select device...</option>
+            {#each detectedTtlDevices as ttlDevice}
+              <option value={ttlDevice.port}>
+                {ttlDevice.port} {ttlDevice.serial_number !== 'Unknown' ? `(S/N: ${ttlDevice.serial_number})` : ''}
+              </option>
+            {/each}
+          </select>
+          <button
+            class="refresh-btn"
+            onclick={refreshTtlDevices}
+            title="Refresh devices"
+            disabled={isLoadingDevices || device.status === 'connected'}
+          >
+            {isLoadingDevices ? '...' : '↻'}
+          </button>
+        </div>
       </div>
     {:else if device.id === 'kernel' || device.id === 'biopac'}
       <div class="config-row">
@@ -153,13 +253,31 @@
   </div>
   
   <div class="device-actions">
+    {#if device.status === 'error'}
+      <button
+        class="action-btn reset-btn"
+        onclick={resetDeviceState}
+        disabled={isResetting}
+      >
+        {isResetting ? 'Resetting...' : 'Reset'}
+      </button>
+    {/if}
     <button
       class="action-btn connect-btn"
       onclick={toggleConnection}
-      disabled={device.status === 'connecting'}
+      disabled={device.status === 'connecting' || (device.id === 'ttl' && !device.config.port)}
     >
       {device.status === 'connected' ? 'Disconnect' : 'Connect'}
     </button>
+    {#if device.id === 'ttl' && device.status !== 'connected' && device.status !== 'connecting'}
+      <button
+        class="action-btn test-btn"
+        onclick={testTtlConnection}
+        disabled={!device.config.port || isTestingConnection}
+      >
+        {isTestingConnection ? 'Testing...' : 'Test'}
+      </button>
+    {/if}
     {#if device.id === 'ttl' && device.status === 'connected'}
       <button
         class="action-btn pulse-btn"
@@ -317,5 +435,81 @@
     background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
     transform: translateY(-1px);
     box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+  }
+
+  .test-btn {
+    background: var(--color-surface-elevated);
+    color: var(--color-text-primary);
+    border: 1px solid var(--color-primary);
+  }
+
+  .test-btn:hover:not(:disabled) {
+    background: var(--color-primary);
+    color: white;
+  }
+
+  .reset-btn {
+    background: var(--color-warning);
+    color: white;
+  }
+
+  .reset-btn:hover:not(:disabled) {
+    background: #e67e00;
+  }
+
+  .port-selector {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .port-controls {
+    display: flex;
+    gap: 0.5rem;
+    width: 100%;
+  }
+
+  .port-select {
+    flex: 1;
+    padding: 0.375rem 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    background: var(--color-background);
+    color: var(--color-text-primary);
+    font-family: 'SF Mono', Monaco, monospace;
+    font-size: 0.75rem;
+    cursor: pointer;
+  }
+
+  .port-select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .port-select:focus {
+    outline: none;
+    border-color: var(--color-primary);
+  }
+
+  .refresh-btn {
+    padding: 0.375rem 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    background: var(--color-surface-elevated);
+    color: var(--color-text-secondary);
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .refresh-btn:hover:not(:disabled) {
+    background: var(--color-primary);
+    color: white;
+    border-color: var(--color-primary);
+  }
+
+  .refresh-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 </style>

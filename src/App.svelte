@@ -39,6 +39,8 @@
     console.log('Bridge status:', bridgeStatus);
     console.log('Selected devices:', selectedDevices);
 
+    const errors = [];
+
     // Only connect devices that user has selected
     for (const device of selectedDevices) {
       console.log(`Connecting device: ${device.id}`);
@@ -48,7 +50,14 @@
         await new Promise(resolve => setTimeout(resolve, 500)); // Small delay between connections
       } catch (error) {
         console.error(`Failed to connect ${device.id}:`, error);
+        errors.push({ device: device.name, error: error.message || String(error) });
       }
+    }
+
+    // Show summary of any failures
+    if (errors.length > 0) {
+      const errorMessages = errors.map(e => `• ${e.device}: ${e.error}`).join('\n');
+      alert(`Failed to connect some devices:\n${errorMessages}`);
     }
   }
 
