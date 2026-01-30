@@ -9,7 +9,7 @@
   const logs = $derived(logsStore.getFilteredLogs());
   const logCounts = $derived(logsStore.getLogCounts());
   const deviceList = $derived(logsStore.getDeviceList());
-  const isPolling = $derived(logsStore.getIsPolling());
+  const isListening = $derived(logsStore.getIsListening());
   const autoScroll = $derived(logsStore.getAutoScroll());
 
   // Local state
@@ -34,13 +34,13 @@
   // Effect to handle modal open/close
   $effect(() => {
     if (isOpen) {
-      // Start polling when opening if not already running
-      if (!isPolling) {
+      // Start listening when opening if not already running
+      if (!isListening) {
         logsStore.init();
       }
     } else {
-      // Stop polling when closing to prevent memory leaks
-      logsStore.stopPolling();
+      // Stop listening when closing to prevent memory leaks
+      logsStore.stopListening();
     }
   });
 
@@ -82,12 +82,12 @@
     logsStore.setAutoScroll(!autoScroll);
   }
 
-  // Toggle polling
-  function togglePolling() {
-    if (isPolling) {
-      logsStore.stopPolling();
+  // Toggle listening for log events
+  function toggleListening() {
+    if (isListening) {
+      logsStore.stopListening();
     } else {
-      logsStore.startPolling();
+      logsStore.startListening();
     }
   }
 
@@ -129,8 +129,8 @@
   });
 
   onDestroy(() => {
-    // Always stop polling when component is destroyed
-    logsStore.stopPolling();
+    // Always stop listening when component is destroyed
+    logsStore.stopListening();
   });
 </script>
 
@@ -180,12 +180,12 @@
 
           <button
             class="control-btn"
-            class:active={isPolling}
-            onclick={togglePolling}
-            aria-label="{isPolling ? 'Pause' : 'Resume'} log polling"
-            title="{isPolling ? 'Pause' : 'Resume'} log polling"
+            class:active={isListening}
+            onclick={toggleListening}
+            aria-label="{isListening ? 'Pause' : 'Resume'} log updates"
+            title="{isListening ? 'Pause' : 'Resume'} log updates"
           >
-            {#if isPolling}
+            {#if isListening}
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="6" y="4" width="4" height="16"></rect>
                 <rect x="14" y="4" width="4" height="16"></rect>
@@ -297,8 +297,8 @@
           <div class="empty-logs">
             <p>No logs to display</p>
             <p class="hint">
-              {#if !isPolling}
-                Click the play button to start fetching logs
+              {#if !isListening}
+                Click the play button to start receiving logs
               {:else}
                 Logs will appear here as they are generated
               {/if}

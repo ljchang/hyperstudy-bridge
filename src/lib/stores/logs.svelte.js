@@ -2,6 +2,7 @@
 // This file uses .svelte.js extension to enable runes
 
 import { tauriService } from '../services/tauri.js';
+import { listen } from '@tauri-apps/api/event';
 
 // Log levels
 export const LOG_LEVELS = {
@@ -27,7 +28,7 @@ export class LogEntry {
 let logs = $state([]);
 let maxLogs = $state(1000);
 let autoScroll = $state(true);
-let isPolling = $state(false);
+let isListening = $state(false);
 let lastError = $state(null);
 
 // Filter state
@@ -35,9 +36,8 @@ let levelFilter = $state('all'); // 'all', 'debug', 'info', 'warn', 'error'
 let deviceFilter = $state('all'); // 'all' or specific device id
 let searchQuery = $state('');
 
-// Polling interval for fetching logs
-let pollInterval = null;
-const POLL_INTERVAL_MS = 1000; // Poll every second
+// Event listener unlisten function
+let unlistenLogEvent = null;
 
 // Add a log entry
 function addLog(level, message, device = null, source = 'bridge') {
@@ -49,6 +49,34 @@ function addLog(level, message, device = null, source = 'bridge') {
     // Maintain circular buffer
     if (logs.length > maxLogs) {
         logs = logs.slice(0, maxLogs);
+    }
+}
+
+// Add a log entry from backend event (already has timestamp)
+function addLogFromEvent(logData) {
+    const entry = new LogEntry(
+        logData.level,
+        logData.message,
+        new Date(logData.timestamp),
+        logData.device,
+        logData.source || 'backend'
+    );
+
+    // Check if we already have this log (avoid duplicates from historical fetch)
+    const exists = logs.some(existing =>
+        existing.timestamp.getTime() === entry.timestamp.getTime() &&
+        existing.message === entry.message &&
+        existing.level === entry.level
+    );
+
+    if (!exists) {
+        // Add to beginning of array (newest first)
+        logs = [entry, ...logs];
+
+        // Maintain circular buffer
+        if (logs.length > maxLogs) {
+            logs = logs.slice(0, maxLogs);
+        }
     }
 }
 
@@ -109,12 +137,12 @@ function getLogCounts() {
     return counts;
 }
 
-// Fetch logs from backend
-async function fetchLogs() {
+// Fetch historical logs from backend (for late-joining clients)
+async function fetchHistoricalLogs() {
     try {
         const result = await tauriService.getLogs();
         if (result.success && result.data) {
-            // Process backend logs and add them
+            // Process backend logs and add them (oldest first to maintain order)
             result.data.forEach(logData => {
                 const entry = new LogEntry(
                     logData.level,
@@ -136,7 +164,8 @@ async function fetchLogs() {
                 }
             });
 
-            // Maintain circular buffer
+            // Sort by timestamp (newest first) and maintain circular buffer
+            logs = logs.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
             if (logs.length > maxLogs) {
                 logs = logs.slice(0, maxLogs);
             }
@@ -144,28 +173,36 @@ async function fetchLogs() {
             lastError = null;
         }
     } catch (error) {
-        console.error('Failed to fetch logs:', error);
+        console.error('Failed to fetch historical logs:', error);
         lastError = error.message;
     }
 }
 
-// Start polling for logs
-function startPolling() {
-    if (isPolling) return;
+// Start listening for log events
+async function startListening() {
+    if (isListening) return;
 
-    isPolling = true;
-    fetchLogs(); // Initial fetch
+    isListening = true;
 
-    pollInterval = setInterval(fetchLogs, POLL_INTERVAL_MS);
+    // Set up event listener for real-time log events
+    try {
+        unlistenLogEvent = await listen('log_event', (event) => {
+            addLogFromEvent(event.payload);
+        });
+    } catch (error) {
+        console.error('Failed to set up log event listener:', error);
+        lastError = error.message;
+        isListening = false;
+    }
 }
 
-// Stop polling for logs
-function stopPolling() {
-    if (pollInterval) {
-        clearInterval(pollInterval);
-        pollInterval = null;
+// Stop listening for log events
+function stopListening() {
+    if (unlistenLogEvent) {
+        unlistenLogEvent();
+        unlistenLogEvent = null;
     }
-    isPolling = false;
+    isListening = false;
 }
 
 // Clear all logs
@@ -201,38 +238,41 @@ async function exportLogs() {
 // Add frontend log (for local logging)
 function log(level, message, device = null) {
     // Initialize if not already done
-    if (logs.length === 0 && !isPolling) {
+    if (logs.length === 0 && !isListening) {
         init();
     }
     addLog(level, message, device, 'frontend');
 }
 
 // Initialize logging
-function init() {
+async function init() {
     // Add welcome message
     addLog('info', 'HyperStudy Bridge log viewer initialized', null, 'frontend');
 
-    // Start polling for backend logs
-    startPolling();
+    // Fetch historical logs first (for late-joining clients)
+    await fetchHistoricalLogs();
+
+    // Start listening for real-time log events
+    await startListening();
 }
 
 // Cleanup
 function cleanup() {
-    stopPolling();
+    stopListening();
 }
-
-// Don't auto-initialize - let components control the lifecycle
-// init();
 
 // Export public API as functions
 export const getLogs = () => logs;
 export const getMaxLogs = () => maxLogs;
 export const getAutoScroll = () => autoScroll;
-export const getIsPolling = () => isPolling;
+export const getIsListening = () => isListening;
 export const getLastError = () => lastError;
 export const getLevelFilter = () => levelFilter;
 export const getDeviceFilter = () => deviceFilter;
 export const getSearchQuery = () => searchQuery;
+
+// Legacy alias for backwards compatibility
+export const getIsPolling = () => isListening;
 
 // Derived state exports
 export { getFilteredLogs, getDeviceList, getLogCounts };
@@ -242,12 +282,17 @@ export {
     log,
     clearLogs,
     exportLogs,
-    startPolling,
-    stopPolling,
-    fetchLogs,
+    startListening,
+    stopListening,
+    fetchHistoricalLogs,
     cleanup,
     init
 };
+
+// Legacy aliases for backwards compatibility
+export const startPolling = startListening;
+export const stopPolling = stopListening;
+export const fetchLogs = fetchHistoricalLogs;
 
 // Filter setter exports
 export const setLevelFilter = (level) => levelFilter = level;
