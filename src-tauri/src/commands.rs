@@ -352,9 +352,10 @@ pub async fn send_ttl_pulse(
 
 #[tauri::command]
 pub async fn list_serial_ports() -> Result<Vec<SerialPortInfo>, ()> {
-    match serialport::available_ports() {
-        Ok(ports) => {
-            let port_info: Vec<SerialPortInfo> = ports
+    // Run blocking serial port enumeration on the blocking thread pool
+    let result = tokio::task::spawn_blocking(|| {
+        serialport::available_ports().map(|ports| {
+            ports
                 .into_iter()
                 .map(|p| {
                     let (manufacturer, product) = match p.port_type {
@@ -370,12 +371,19 @@ pub async fn list_serial_ports() -> Result<Vec<SerialPortInfo>, ()> {
                         product,
                     }
                 })
-                .collect();
+                .collect()
+        })
+    })
+    .await;
 
-            Ok(port_info)
+    match result {
+        Ok(Ok(ports)) => Ok(ports),
+        Ok(Err(e)) => {
+            error!("Failed to list serial ports: {}", e);
+            Ok(vec![])
         }
         Err(e) => {
-            error!("Failed to list serial ports: {}", e);
+            error!("Task error listing serial ports: {}", e);
             Ok(vec![])
         }
     }
@@ -383,34 +391,46 @@ pub async fn list_serial_ports() -> Result<Vec<SerialPortInfo>, ()> {
 
 #[tauri::command]
 pub async fn discover_devices() -> Result<Vec<DeviceInfo>, ()> {
-    let mut discovered = Vec::new();
+    // Run blocking serial port enumeration on the blocking thread pool
+    let result = tokio::task::spawn_blocking(|| {
+        let mut discovered = Vec::new();
 
-    // Check for serial devices (TTL)
-    if let Ok(ports) = serialport::available_ports() {
-        for port in ports {
-            if let serialport::SerialPortType::UsbPort(info) = port.port_type {
-                if info.product.as_deref() == Some("RP2040")
-                    || info.manufacturer.as_deref() == Some("Adafruit")
-                {
-                    discovered.push(DeviceInfo {
-                        id: "ttl".to_string(),
-                        name: "TTL Pulse Generator".to_string(),
-                        device_type: crate::devices::DeviceType::TTL,
-                        status: DeviceStatus::Disconnected,
-                        metadata: json!({
-                            "port": port.port_name,
-                            "manufacturer": info.manufacturer,
-                            "product": info.product
-                        }),
-                    });
+        // Check for serial devices (TTL)
+        if let Ok(ports) = serialport::available_ports() {
+            for port in ports {
+                if let serialport::SerialPortType::UsbPort(info) = port.port_type {
+                    if info.product.as_deref() == Some("RP2040")
+                        || info.manufacturer.as_deref() == Some("Adafruit")
+                    {
+                        discovered.push(DeviceInfo {
+                            id: "ttl".to_string(),
+                            name: "TTL Pulse Generator".to_string(),
+                            device_type: crate::devices::DeviceType::TTL,
+                            status: DeviceStatus::Disconnected,
+                            metadata: json!({
+                                "port": port.port_name,
+                                "manufacturer": info.manufacturer,
+                                "product": info.product
+                            }),
+                        });
+                    }
                 }
             }
         }
-    }
+
+        discovered
+    })
+    .await;
 
     // TODO: Implement network discovery for Kernel, Pupil devices
 
-    Ok(discovered)
+    match result {
+        Ok(devices) => Ok(devices),
+        Err(e) => {
+            error!("Task error discovering devices: {}", e);
+            Ok(vec![])
+        }
+    }
 }
 
 #[tauri::command]
@@ -433,13 +453,13 @@ pub async fn get_system_diagnostics(
     state: State<'_, Arc<AppState>>,
 ) -> Result<serde_json::Value, ()> {
     let devices = state.devices.read().await;
-    let device_statuses: HashMap<String, String> = devices
-        .iter()
-        .map(|(id, device)| {
-            let device = device.blocking_read();
-            (id.clone(), format!("{:?}", device.get_status()))
-        })
-        .collect();
+    let mut device_statuses: HashMap<String, String> = HashMap::new();
+
+    // Use async read instead of blocking_read to avoid blocking the runtime
+    for (id, device) in devices.iter() {
+        let device = device.read().await;
+        device_statuses.insert(id.clone(), format!("{:?}", device.get_status()));
+    }
 
     Ok(json!({
         "devices": device_statuses,
@@ -516,23 +536,31 @@ pub async fn check_ttl_latency_compliance(
 
 #[tauri::command]
 pub async fn list_all_serial_ports_debug() -> Result<CommandResult<Vec<serde_json::Value>>, ()> {
-    match TtlDevice::list_all_ports_debug() {
-        Ok(ports) => Ok(CommandResult::success(ports)),
-        Err(e) => Ok(CommandResult::error(format!(
+    // Run blocking serial port enumeration on the blocking thread pool
+    let result = tokio::task::spawn_blocking(|| TtlDevice::list_all_ports_debug()).await;
+
+    match result {
+        Ok(Ok(ports)) => Ok(CommandResult::success(ports)),
+        Ok(Err(e)) => Ok(CommandResult::error(format!(
             "Failed to list serial ports: {}",
             e
         ))),
+        Err(e) => Ok(CommandResult::error(format!("Task error: {}", e))),
     }
 }
 
 #[tauri::command]
 pub async fn list_ttl_devices() -> Result<CommandResult<serde_json::Value>, ()> {
-    match TtlDevice::list_ttl_devices() {
-        Ok(devices) => Ok(CommandResult::success(devices)),
-        Err(e) => Ok(CommandResult::error(format!(
+    // Run blocking serial port enumeration on the blocking thread pool
+    let result = tokio::task::spawn_blocking(|| TtlDevice::list_ttl_devices()).await;
+
+    match result {
+        Ok(Ok(devices)) => Ok(CommandResult::success(devices)),
+        Ok(Err(e)) => Ok(CommandResult::error(format!(
             "Failed to list TTL devices: {}",
             e
         ))),
+        Err(e) => Ok(CommandResult::error(format!("Task error: {}", e))),
     }
 }
 
@@ -540,12 +568,17 @@ pub async fn list_ttl_devices() -> Result<CommandResult<serde_json::Value>, ()> 
 pub async fn find_ttl_port_by_serial(
     serial_number: String,
 ) -> Result<CommandResult<Option<String>>, ()> {
-    match TtlDevice::find_port_by_serial(&serial_number) {
-        Ok(port) => Ok(CommandResult::success(port)),
-        Err(e) => Ok(CommandResult::error(format!(
+    // Run blocking serial port search on the blocking thread pool
+    let result =
+        tokio::task::spawn_blocking(move || TtlDevice::find_port_by_serial(&serial_number)).await;
+
+    match result {
+        Ok(Ok(port)) => Ok(CommandResult::success(port)),
+        Ok(Err(e)) => Ok(CommandResult::error(format!(
             "Failed to search for TTL device: {}",
             e
         ))),
+        Err(e) => Ok(CommandResult::error(format!("Task error: {}", e))),
     }
 }
 
@@ -664,48 +697,48 @@ pub async fn set_log_level(level: String) -> Result<CommandResult<String>, ()> {
 pub async fn test_ttl_device(port: String) -> Result<CommandResult<String>, ()> {
     info!("Testing TTL device on port: {}", port);
 
-    // Open serial port temporarily
-    let port_result = serialport::new(&port, 115200)
-        .timeout(std::time::Duration::from_millis(500))
-        .open();
+    // Run all blocking serial I/O on the blocking thread pool
+    let result = tokio::task::spawn_blocking(move || {
+        let mut serial_port = serialport::new(&port, 115200)
+            .timeout(std::time::Duration::from_millis(500))
+            .open()
+            .map_err(|e| format!("Failed to open port: {}", e))?;
 
-    match port_result {
-        Ok(mut serial_port) => {
-            // Send TEST command
-            if let Err(e) = serial_port.write_all(b"TEST\n") {
-                return Ok(CommandResult::error(format!(
-                    "Failed to send TEST command: {}",
-                    e
-                )));
+        // Send TEST command
+        serial_port
+            .write_all(b"TEST\n")
+            .map_err(|e| format!("Failed to send TEST command: {}", e))?;
+
+        serial_port
+            .flush()
+            .map_err(|e| format!("Failed to flush: {}", e))?;
+
+        // Small delay for device to respond
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        // Read response
+        let mut buffer = vec![0u8; 256];
+        match serial_port.read(&mut buffer) {
+            Ok(bytes_read) => {
+                buffer.truncate(bytes_read);
+                let response = String::from_utf8_lossy(&buffer).trim().to_string();
+                Ok(response)
             }
-
-            if let Err(e) = serial_port.flush() {
-                return Ok(CommandResult::error(format!("Failed to flush: {}", e)));
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                Err("Device did not respond (timeout)".to_string())
             }
-
-            // Small delay for device to respond
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-            // Read response
-            let mut buffer = vec![0u8; 256];
-            match serial_port.read(&mut buffer) {
-                Ok(bytes_read) => {
-                    buffer.truncate(bytes_read);
-                    let response = String::from_utf8_lossy(&buffer).trim().to_string();
-                    info!("TTL device test response: {}", response);
-                    Ok(CommandResult::success(response))
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => Ok(CommandResult::error(
-                    "Device did not respond (timeout)".to_string(),
-                )),
-                Err(e) => Ok(CommandResult::error(format!(
-                    "Failed to read response: {}",
-                    e
-                ))),
-            }
-            // Port is automatically closed when serial_port goes out of scope
+            Err(e) => Err(format!("Failed to read response: {}", e)),
         }
-        Err(e) => Ok(CommandResult::error(format!("Failed to open port: {}", e))),
+    })
+    .await;
+
+    match result {
+        Ok(Ok(response)) => {
+            info!("TTL device test response: {}", response);
+            Ok(CommandResult::success(response))
+        }
+        Ok(Err(e)) => Ok(CommandResult::error(e)),
+        Err(e) => Ok(CommandResult::error(format!("Task error: {}", e))),
     }
 }
 
