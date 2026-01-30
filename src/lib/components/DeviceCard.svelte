@@ -389,6 +389,7 @@
     border-radius: 6px;
     margin: 1rem 0;
     border: 1px solid var(--color-border);
+    overflow: hidden;
   }
   
   .device-actions {
@@ -469,16 +470,22 @@
     flex-direction: column;
     align-items: flex-start;
     gap: 0.5rem;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .port-controls {
     display: flex;
     gap: 0.5rem;
     width: 100%;
+    min-width: 0;
+    overflow: hidden;
   }
 
   .port-select {
-    flex: 1;
+    flex: 1 1 0;
+    min-width: 0;
+    width: 0;
     padding: 0.375rem 0.5rem;
     border: 1px solid var(--color-border);
     border-radius: 4px;
@@ -487,6 +494,7 @@
     font-family: 'SF Mono', Monaco, monospace;
     font-size: 0.75rem;
     cursor: pointer;
+    box-sizing: border-box;
   }
 
   .port-select:disabled {
