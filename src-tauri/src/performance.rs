@@ -242,12 +242,11 @@ impl PerformanceMonitor {
                 .fetch_add(1, Ordering::Relaxed);
         } else {
             // Use fetch_update with saturating_sub to prevent underflow
-            let _ = self
-                .system_counters
-                .active_connections
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                    Some(current.saturating_sub(1))
-                });
+            let _ = self.system_counters.active_connections.fetch_update(
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+                |current| Some(current.saturating_sub(1)),
+            );
         }
     }
 

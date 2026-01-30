@@ -1,7 +1,5 @@
 use crate::bridge::{AppState, BridgeServer};
-use crate::devices::{
-    kernel::KernelDevice, mock::MockDevice, pupil::PupilDevice, ttl::TtlDevice,
-};
+use crate::devices::{kernel::KernelDevice, mock::MockDevice, pupil::PupilDevice, ttl::TtlDevice};
 use crate::devices::{Device, DeviceInfo, DeviceStatus};
 use crate::logging::{get_all_logs, LogEntry};
 use chrono::Utc;

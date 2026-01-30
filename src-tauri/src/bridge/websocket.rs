@@ -327,15 +327,11 @@ async fn handle_device_command(
                     }
                 }
                 Some(Err(e)) => {
-                    send_response(tx, BridgeResponse::device_error(device_id, e.to_string()))
-                        .await;
+                    send_response(tx, BridgeResponse::device_error(device_id, e.to_string())).await;
 
                     if let Some(req_id) = id {
-                        send_response(
-                            tx,
-                            BridgeResponse::ack(req_id, false, Some(e.to_string())),
-                        )
-                        .await;
+                        send_response(tx, BridgeResponse::ack(req_id, false, Some(e.to_string())))
+                            .await;
                     }
                 }
                 None => {
@@ -348,7 +344,11 @@ async fn handle_device_command(
                     if let Some(req_id) = id {
                         send_response(
                             tx,
-                            BridgeResponse::ack(req_id, false, Some("Device not found".to_string())),
+                            BridgeResponse::ack(
+                                req_id,
+                                false,
+                                Some("Device not found".to_string()),
+                            ),
                         )
                         .await;
                     }
@@ -390,15 +390,11 @@ async fn handle_device_command(
                     }
                 }
                 Some(Err(e)) => {
-                    send_response(tx, BridgeResponse::device_error(device_id, e.to_string()))
-                        .await;
+                    send_response(tx, BridgeResponse::device_error(device_id, e.to_string())).await;
 
                     if let Some(req_id) = id {
-                        send_response(
-                            tx,
-                            BridgeResponse::ack(req_id, false, Some(e.to_string())),
-                        )
-                        .await;
+                        send_response(tx, BridgeResponse::ack(req_id, false, Some(e.to_string())))
+                            .await;
                     }
                 }
                 None => {
@@ -411,7 +407,11 @@ async fn handle_device_command(
                     if let Some(req_id) = id {
                         send_response(
                             tx,
-                            BridgeResponse::ack(req_id, false, Some("Device not found".to_string())),
+                            BridgeResponse::ack(
+                                req_id,
+                                false,
+                                Some("Device not found".to_string()),
+                            ),
                         )
                         .await;
                     }
@@ -539,15 +539,11 @@ async fn handle_device_command(
                     }
                 }
                 Some(Err(e)) => {
-                    send_response(tx, BridgeResponse::device_error(device_id, e.to_string()))
-                        .await;
+                    send_response(tx, BridgeResponse::device_error(device_id, e.to_string())).await;
 
                     if let Some(req_id) = id {
-                        send_response(
-                            tx,
-                            BridgeResponse::ack(req_id, false, Some(e.to_string())),
-                        )
-                        .await;
+                        send_response(tx, BridgeResponse::ack(req_id, false, Some(e.to_string())))
+                            .await;
                     }
                 }
                 None => {
