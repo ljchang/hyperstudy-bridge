@@ -663,4 +663,5 @@ impl Device for KernelDevice {
 }
 
 #[cfg(test)]
+#[path = "kernel_tests.rs"]
 mod kernel_tests;

@@ -91,8 +91,36 @@ function connect() {
     }
 }
 
+// Valid message types for validation
+const VALID_MESSAGE_TYPES = ['status', 'data', 'error', 'ack', 'query_result', 'event', 'stream_list', 'inlet_connected', 'inlet_disconnected', 'outlet_created', 'outlet_removed', 'sync_status'];
+
+// Validate message structure
+function validateMessage(message) {
+    if (!message || typeof message !== 'object') {
+        console.warn('Invalid message: not an object', message);
+        return false;
+    }
+
+    if (!message.type || typeof message.type !== 'string') {
+        console.warn('Invalid message: missing or invalid type field', message);
+        return false;
+    }
+
+    if (!VALID_MESSAGE_TYPES.includes(message.type)) {
+        console.warn(`Unknown message type: "${message.type}"`, message);
+        // Still allow processing for forward compatibility, but log the warning
+    }
+
+    return true;
+}
+
 function handleMessage(message) {
     console.log('Received message:', message);
+
+    // Validate message structure
+    if (!validateMessage(message)) {
+        return;
+    }
 
     // Call all registered message handlers
     messageHandlers.forEach(handler => {
@@ -123,8 +151,18 @@ function handleMessage(message) {
         case 'event':
             handleEvent(message);
             break;
+        // LSL-specific message types are handled by component message handlers
+        case 'stream_list':
+        case 'inlet_connected':
+        case 'inlet_disconnected':
+        case 'outlet_created':
+        case 'outlet_removed':
+        case 'sync_status':
+            // These are handled by component-specific handlers registered via subscribe()
+            break;
         default:
-            console.warn('Unknown message type:', message.type);
+            // Unknown types are logged in validateMessage but still passed to handlers
+            break;
     }
 }
 
@@ -235,9 +273,12 @@ function query(target) {
 export async function connectDevice(deviceId, config = {}) {
     return new Promise((resolve, reject) => {
         const id = generateId();
+        let timeoutId = null;
         console.log(`connectDevice called for ${deviceId} with id ${id}`);
 
         requestCallbacks.set(id, (success, message) => {
+            // Clear timeout since we got a response
+            if (timeoutId) clearTimeout(timeoutId);
             console.log(`Callback for ${deviceId}: success=${success}, message=${message}`);
             if (success) {
                 resolve(message);
@@ -260,8 +301,8 @@ export async function connectDevice(deviceId, config = {}) {
             return;
         }
 
-        // Timeout after 2 seconds instead of 10
-        setTimeout(() => {
+        // Timeout after 2 seconds
+        timeoutId = setTimeout(() => {
             if (requestCallbacks.has(id)) {
                 console.log(`Timeout for ${deviceId} - no response received`);
                 requestCallbacks.delete(id);
@@ -274,8 +315,11 @@ export async function connectDevice(deviceId, config = {}) {
 export async function disconnectDevice(deviceId) {
     return new Promise((resolve, reject) => {
         const id = generateId();
+        let timeoutId = null;
 
         requestCallbacks.set(id, (success, message) => {
+            // Clear timeout since we got a response
+            if (timeoutId) clearTimeout(timeoutId);
             if (success) {
                 resolve(message);
             } else {
@@ -293,7 +337,17 @@ export async function disconnectDevice(deviceId) {
         if (!sent) {
             requestCallbacks.delete(id);
             reject(new Error('Failed to send command'));
+            return;
         }
+
+        // Timeout after 5 seconds to prevent callback accumulation
+        timeoutId = setTimeout(() => {
+            if (requestCallbacks.has(id)) {
+                console.log(`Timeout for disconnect ${deviceId} - no response received`);
+                requestCallbacks.delete(id);
+                reject(new Error(`Disconnect timeout for ${deviceId}`));
+            }
+        }, 5000);
     });
 }
 
@@ -307,8 +361,11 @@ export async function sendCommand(deviceId, command) {
 
     return new Promise((resolve, reject) => {
         const id = generateId();
+        let timeoutId = null;
 
         requestCallbacks.set(id, (success, message) => {
+            // Clear timeout since we got a response
+            if (timeoutId) clearTimeout(timeoutId);
             if (success) {
                 resolve(message);
             } else {
@@ -327,7 +384,17 @@ export async function sendCommand(deviceId, command) {
         if (!sent) {
             requestCallbacks.delete(id);
             reject(new Error('Failed to send command'));
+            return;
         }
+
+        // Timeout after 5 seconds to prevent callback accumulation
+        timeoutId = setTimeout(() => {
+            if (requestCallbacks.has(id)) {
+                console.log(`Timeout for sendCommand ${deviceId} - no response received`);
+                requestCallbacks.delete(id);
+                reject(new Error(`Command timeout for ${deviceId}`));
+            }
+        }, 5000);
     });
 }
 

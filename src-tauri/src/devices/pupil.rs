@@ -424,62 +424,67 @@ impl Device for PupilDevice {
         // Apply connection timeout from config
         let connect_timeout = tokio::time::Duration::from_millis(self.config.timeout_ms);
 
-        match tokio::time::timeout(connect_timeout, connect_async(&url)).await {
-            Ok(Ok((ws_stream, response))) => {
-                self.ws_client = Some(ws_stream);
-                self.status = DeviceStatus::Connected;
-                self.connection_retry_count = 0;
+        // Use loop-based retry instead of recursion to prevent stack overflow
+        loop {
+            match tokio::time::timeout(connect_timeout, connect_async(&url)).await {
+                Ok(Ok((ws_stream, response))) => {
+                    self.ws_client = Some(ws_stream);
+                    self.status = DeviceStatus::Connected;
+                    self.connection_retry_count = 0;
 
-                info!(
-                    "Successfully connected to Pupil Labs Neon. Status: {}",
-                    response.status()
-                );
-
-                // Request device information after successful connection
-                if let Err(e) = self.request_device_info().await {
-                    warn!("Failed to request device info: {}", e);
-                }
-
-                Ok(())
-            }
-            Ok(Err(e)) => {
-                self.status = DeviceStatus::Error;
-                self.connection_retry_count += 1;
-                error!("Failed to connect to Pupil Labs Neon: {}", e);
-
-                // Auto-retry if enabled and under retry limit
-                if self.config.auto_reconnect && self.connection_retry_count < self.max_retries {
-                    warn!(
-                        "Retrying connection ({}/{})",
-                        self.connection_retry_count, self.max_retries
+                    info!(
+                        "Successfully connected to Pupil Labs Neon. Status: {}",
+                        response.status()
                     );
-                    tokio::time::sleep(tokio::time::Duration::from_millis(
-                        self.config.reconnect_interval_ms,
-                    ))
-                    .await;
-                    return self.connect().await;
+
+                    // Request device information after successful connection
+                    if let Err(e) = self.request_device_info().await {
+                        warn!("Failed to request device info: {}", e);
+                    }
+
+                    return Ok(());
                 }
+                Ok(Err(e)) => {
+                    self.status = DeviceStatus::Error;
+                    self.connection_retry_count += 1;
+                    error!("Failed to connect to Pupil Labs Neon: {}", e);
 
-                Err(DeviceError::WebSocketError(e.to_string()))
-            }
-            Err(_) => {
-                self.status = DeviceStatus::Error;
-                self.connection_retry_count += 1;
-                error!("Connection timeout to Pupil Labs Neon");
+                    // Auto-retry if enabled and under retry limit
+                    if self.config.auto_reconnect && self.connection_retry_count < self.max_retries
+                    {
+                        warn!(
+                            "Retrying connection ({}/{})",
+                            self.connection_retry_count, self.max_retries
+                        );
+                        tokio::time::sleep(tokio::time::Duration::from_millis(
+                            self.config.reconnect_interval_ms,
+                        ))
+                        .await;
+                        continue; // Retry via loop instead of recursion
+                    }
 
-                if self.config.auto_reconnect && self.connection_retry_count < self.max_retries {
-                    warn!(
-                        "Retrying connection after timeout ({}/{})",
-                        self.connection_retry_count, self.max_retries
-                    );
-                    tokio::time::sleep(tokio::time::Duration::from_millis(
-                        self.config.reconnect_interval_ms,
-                    ))
-                    .await;
-                    return self.connect().await;
+                    return Err(DeviceError::WebSocketError(e.to_string()));
                 }
+                Err(_) => {
+                    self.status = DeviceStatus::Error;
+                    self.connection_retry_count += 1;
+                    error!("Connection timeout to Pupil Labs Neon");
 
-                Err(DeviceError::Timeout)
+                    if self.config.auto_reconnect && self.connection_retry_count < self.max_retries
+                    {
+                        warn!(
+                            "Retrying connection after timeout ({}/{})",
+                            self.connection_retry_count, self.max_retries
+                        );
+                        tokio::time::sleep(tokio::time::Duration::from_millis(
+                            self.config.reconnect_interval_ms,
+                        ))
+                        .await;
+                        continue; // Retry via loop instead of recursion
+                    }
+
+                    return Err(DeviceError::Timeout);
+                }
             }
         }
     }

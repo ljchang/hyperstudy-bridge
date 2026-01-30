@@ -112,7 +112,7 @@ impl AppState {
     pub fn add_connection(&self, id: String, client_id: String) {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         let info = ConnectionInfo {
@@ -140,7 +140,7 @@ impl AppState {
         if let Some(mut entry) = self.connections.get_mut(id) {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs();
 
             entry.last_activity = now;
@@ -163,7 +163,7 @@ impl AppState {
     pub async fn cleanup_stale_connections(&self, max_idle_seconds: u64) {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         let mut to_remove = Vec::new();

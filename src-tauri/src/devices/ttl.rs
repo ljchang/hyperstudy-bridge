@@ -238,7 +238,9 @@ impl TtlDevice {
         if let Some(ref port_mutex) = self.port {
             let device_id = self.get_info().id;
             let (result, latency) = measure_latency::<_, (), DeviceError>(async {
-                let mut port = port_mutex.lock().unwrap();
+                let mut port = port_mutex
+                    .lock()
+                    .map_err(|_| DeviceError::CommunicationError("Mutex poisoned".to_string()))?;
                 port.write_all(PULSE_COMMAND)
                     .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
 
@@ -352,7 +354,9 @@ impl Device for TtlDevice {
         info!("Disconnecting TTL device");
 
         if let Some(port_mutex) = self.port.take() {
-            let mut port = port_mutex.lock().unwrap();
+            let mut port = port_mutex
+                .lock()
+                .map_err(|_| DeviceError::CommunicationError("Mutex poisoned".to_string()))?;
             port.flush()
                 .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
         }
@@ -367,7 +371,9 @@ impl Device for TtlDevice {
         } else if let Some(ref port_mutex) = self.port {
             let device_id = self.get_info().id;
             let (result, latency) = measure_latency::<_, (), DeviceError>(async {
-                let mut port = port_mutex.lock().unwrap();
+                let mut port = port_mutex
+                    .lock()
+                    .map_err(|_| DeviceError::CommunicationError("Mutex poisoned".to_string()))?;
                 port.write_all(data)
                     .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
                 port.flush()
@@ -392,7 +398,9 @@ impl Device for TtlDevice {
             let device_id = self.get_info().id;
             let (result, latency) = measure_latency::<_, Vec<u8>, DeviceError>(async {
                 let mut buffer = vec![0u8; 256];
-                let mut port = port_mutex.lock().unwrap();
+                let mut port = port_mutex
+                    .lock()
+                    .map_err(|_| DeviceError::CommunicationError("Mutex poisoned".to_string()))?;
                 match port.read(&mut buffer) {
                     Ok(bytes_read) => {
                         buffer.truncate(bytes_read);
@@ -466,4 +474,5 @@ impl Device for TtlDevice {
 }
 
 #[cfg(test)]
-mod ttl_tests; // Import test module
+#[path = "ttl_tests.rs"]
+mod ttl_tests;

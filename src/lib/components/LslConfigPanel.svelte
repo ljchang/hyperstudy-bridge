@@ -190,7 +190,7 @@
   // Store cleanup functions
   let unsubscribe = null;
 
-  // Setup WebSocket message listener
+  // Setup WebSocket message listener (one-time setup only)
   onMount(() => {
     // Listen for LSL messages
     unsubscribe = bridgeStore.subscribe((message) => {
@@ -198,22 +198,7 @@
         handleLslMessage(message);
       }
     });
-
-    // Initial refresh and sync status
-    if (isOpen) {
-      refreshStreams();
-      getSyncStatus();
-    }
-
-    // Setup auto-refresh interval only if panel is open
-    if (isOpen) {
-      refreshInterval = setInterval(() => {
-        if (isOpen) {
-          refreshStreams();
-          getSyncStatus();
-        }
-      }, 5000); // Refresh every 5 seconds
-    }
+    // Note: Interval management is handled by $effect to react to isOpen changes
   });
 
   onDestroy(() => {

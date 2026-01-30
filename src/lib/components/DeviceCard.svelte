@@ -108,29 +108,35 @@
   }
 
   async function toggleConnection() {
-    console.log(`toggleConnection called! Status: ${device.status}`);
+    // Capture values at start to prevent stale closure issues
+    const deviceId = device.id;
+    const deviceName = device.name;
+    const deviceConfig = { ...device.config };
+    const currentStatus = device.status;
+
+    console.log(`toggleConnection called! Status: ${currentStatus}`);
 
     // Allow connection from disconnected, error, or unknown status
-    if (device.status !== 'connected' && device.status !== 'connecting') {
-      console.log(`Connecting ${device.name}...`);
-      console.log(`Device config:`, device.config);
-      console.log(`Device status:`, device.status);
+    if (currentStatus !== 'connected' && currentStatus !== 'connecting') {
+      console.log(`Connecting ${deviceName}...`);
+      console.log(`Device config:`, deviceConfig);
+      console.log(`Device status:`, currentStatus);
       try {
-        const result = await bridgeStore.connectDevice(device.id, device.config);
-        console.log(`Successfully connected ${device.name}`, result);
-        alert(`Connected to ${device.name}`);
+        const result = await bridgeStore.connectDevice(deviceId, deviceConfig);
+        console.log(`Successfully connected ${deviceName}`, result);
+        alert(`Connected to ${deviceName}`);
       } catch (error) {
-        console.error(`Failed to connect ${device.name}:`, error);
+        console.error(`Failed to connect ${deviceName}:`, error);
         alert(`Failed to connect: ${error.message || error}`);
       }
-    } else if (device.status === 'connected') {
-      console.log(`Disconnecting ${device.name}...`);
+    } else if (currentStatus === 'connected') {
+      console.log(`Disconnecting ${deviceName}...`);
       try {
-        await bridgeStore.disconnectDevice(device.id);
-        console.log(`Successfully disconnected ${device.name}`);
-        alert(`Disconnected from ${device.name}`);
+        await bridgeStore.disconnectDevice(deviceId);
+        console.log(`Successfully disconnected ${deviceName}`);
+        alert(`Disconnected from ${deviceName}`);
       } catch (error) {
-        console.error(`Failed to disconnect ${device.name}:`, error);
+        console.error(`Failed to disconnect ${deviceName}:`, error);
         alert(`Failed to disconnect: ${error.message || error}`);
       }
     }
@@ -159,24 +165,26 @@
   }
 
   async function handleConfigSave(deviceId, newConfig) {
+    // Capture device name at start to prevent stale closure
+    const deviceName = device.name;
+    const wasConnected = device.status === 'connected';
+
     console.log(`Saving configuration for ${deviceId}:`, newConfig);
 
     try {
       // Update the device config locally
       device.config = { ...device.config, ...newConfig };
 
-      // If the device is currently connected, we might want to reconnect with new config
-      // This depends on your backend implementation
-      if (device.status === 'connected') {
+      // If the device was connected, reconnect with new config
+      // disconnectDevice properly awaits completion, so no arbitrary delay needed
+      if (wasConnected) {
         await bridgeStore.disconnectDevice(deviceId);
-        // Small delay to ensure disconnection
-        await new Promise(resolve => setTimeout(resolve, 500));
         await bridgeStore.connectDevice(deviceId, newConfig);
       }
 
-      console.log(`Configuration saved successfully for ${device.name}`);
+      console.log(`Configuration saved successfully for ${deviceName}`);
     } catch (error) {
-      console.error(`Failed to save configuration for ${device.name}:`, error);
+      console.error(`Failed to save configuration for ${deviceName}:`, error);
       throw error; // Re-throw to let the modal handle the error display
     }
   }

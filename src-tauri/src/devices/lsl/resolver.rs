@@ -17,9 +17,9 @@ pub struct StreamResolver {
     timeout_duration: Duration,
     /// Active discovery flag
     is_discovering: RwLock<bool>,
-    /// Discovery result sender
+    /// Discovery result sender (bounded to prevent memory exhaustion)
     #[allow(dead_code)]
-    discovery_sender: Option<mpsc::UnboundedSender<DiscoveryEvent>>,
+    discovery_sender: Option<mpsc::Sender<DiscoveryEvent>>,
 }
 
 /// Information about a discovered LSL stream
@@ -100,8 +100,9 @@ impl StreamResolver {
     /// Start continuous stream discovery
     pub async fn start_discovery(
         &self,
-    ) -> Result<mpsc::UnboundedReceiver<DiscoveryEvent>, LslError> {
-        let (_sender, receiver) = mpsc::unbounded_channel();
+    ) -> Result<mpsc::Receiver<DiscoveryEvent>, LslError> {
+        // Use bounded channel to prevent memory exhaustion
+        let (_sender, receiver) = mpsc::channel(100);
 
         let mut is_discovering = self.is_discovering.write().await;
         if *is_discovering {

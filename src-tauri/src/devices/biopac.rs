@@ -14,6 +14,7 @@ const DEFAULT_PORT: u16 = 5000;
 const NDT_HEADER_SIZE: usize = 8;
 const MAX_CHANNELS: usize = 16;
 const BUFFER_SIZE: usize = 65536; // 64KB buffer for high-frequency data
+const MAX_EVENT_MARKERS: usize = 10000; // Maximum stored event markers
 #[allow(dead_code)]
 const RECONNECT_DELAY_MS: u64 = 1000;
 #[allow(dead_code)]
@@ -271,6 +272,16 @@ impl BiopacDevice {
             marker_id: marker_id.to_string(),
             metadata: metadata.unwrap_or_default(),
         };
+
+        // Maintain event buffer size limit (FIFO removal of oldest 10%)
+        if self.event_buffer.len() >= MAX_EVENT_MARKERS {
+            let drain_count = MAX_EVENT_MARKERS / 10;
+            self.event_buffer.drain(0..drain_count);
+            debug!(
+                "Event buffer full, removed {} oldest markers",
+                drain_count
+            );
+        }
         self.event_buffer.push(event_marker);
 
         debug!(

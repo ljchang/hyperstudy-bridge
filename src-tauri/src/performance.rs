@@ -187,7 +187,7 @@ impl PerformanceMonitor {
             counters.last_activity.store(
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_secs(),
                 Ordering::Relaxed,
             );
@@ -282,7 +282,7 @@ impl PerformanceMonitor {
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
         let uptime_seconds = self.start_time.elapsed().as_secs();
 
@@ -325,7 +325,7 @@ impl PerformanceMonitor {
         let counters = device_counters.get(device_id)?;
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
         Some(self.calculate_device_metrics(counters, timestamp).await)
     }

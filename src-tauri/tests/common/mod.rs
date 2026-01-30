@@ -444,7 +444,7 @@ impl MemoryTracker {
     pub fn get_memory_usage() -> u64 {
         // Simple memory usage estimation - in a real implementation,
         // you might use more sophisticated memory profiling
-        use sysinfo::{System, SystemExt};
+        use sysinfo::System;
         let mut system = System::new_all();
         system.refresh_memory();
         system.used_memory()

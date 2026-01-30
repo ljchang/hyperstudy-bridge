@@ -172,6 +172,13 @@
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.json';
+
+    // Cleanup function to remove event listeners and allow garbage collection
+    const cleanup = () => {
+      input.onchange = null;
+      input.oncancel = null;
+    };
+
     input.onchange = async (e) => {
       const file = e.target.files[0];
       if (file) {
@@ -187,7 +194,12 @@
           logsStore.log('error', `Failed to import configuration: ${error.message}`, null);
         }
       }
+      cleanup();
     };
+
+    // Handle cancel case (user closes file picker without selecting)
+    input.oncancel = cleanup;
+
     input.click();
   }
 

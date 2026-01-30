@@ -29,6 +29,7 @@ let logs = $state([]);
 let maxLogs = $state(1000);
 let autoScroll = $state(true);
 let isListening = $state(false);
+let isSettingUp = $state(false); // Guard to prevent concurrent setup
 let lastError = $state(null);
 
 // Filter state
@@ -180,19 +181,22 @@ async function fetchHistoricalLogs() {
 
 // Start listening for log events
 async function startListening() {
-    if (isListening) return;
+    // Prevent concurrent setup attempts (race condition guard)
+    if (isListening || isSettingUp) return;
 
-    isListening = true;
+    isSettingUp = true;
 
     // Set up event listener for real-time log events
     try {
         unlistenLogEvent = await listen('log_event', (event) => {
             addLogFromEvent(event.payload);
         });
+        isListening = true;
     } catch (error) {
         console.error('Failed to set up log event listener:', error);
         lastError = error.message;
-        isListening = false;
+    } finally {
+        isSettingUp = false;
     }
 }
 

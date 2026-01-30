@@ -44,10 +44,10 @@ pub struct LslDevice {
     outlet_manager: Arc<OutletManager>,
     /// Performance monitoring callback
     performance_callback: Option<PerformanceCallback>,
-    /// Command processing channel
+    /// Command processing channel (bounded to prevent memory exhaustion)
     #[allow(dead_code)]
-    command_sender: Option<mpsc::UnboundedSender<LslCommand>>,
-    command_receiver: Option<mpsc::UnboundedReceiver<LslCommand>>,
+    command_sender: Option<mpsc::Sender<LslCommand>>,
+    command_receiver: Option<mpsc::Receiver<LslCommand>>,
     /// Bridge device outlets (auto-created)
     bridge_outlets: Arc<RwLock<HashMap<String, String>>>, // device_type -> outlet_id
 }
@@ -130,7 +130,8 @@ impl LslDevice {
         let inlet_manager = Arc::new(InletManager::new(time_sync.clone()));
         let outlet_manager = Arc::new(OutletManager::new(time_sync.clone()));
 
-        let (command_sender, command_receiver) = mpsc::unbounded_channel();
+        // Use bounded channel to prevent memory exhaustion from command backlog
+        let (command_sender, command_receiver) = mpsc::channel(1000);
 
         Self {
             device_config: DeviceConfig::default(),
