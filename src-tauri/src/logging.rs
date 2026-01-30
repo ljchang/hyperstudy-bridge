@@ -113,10 +113,21 @@ pub fn get_log_buffer() -> Arc<RwLock<LogBuffer>> {
 }
 
 /// Get all logs from the global buffer.
+///
+/// Returns an empty vector if the buffer lock is poisoned (should never happen
+/// in normal operation, but prevents panic on mutex poisoning).
 pub fn get_all_logs() -> Vec<LogEntry> {
     let buffer = get_log_buffer();
-    let guard = buffer.read().unwrap();
-    guard.get_all()
+    let result = match buffer.read() {
+        Ok(guard) => guard.get_all(),
+        Err(poisoned) => {
+            // Log buffer was poisoned - this indicates a serious bug but we
+            // shouldn't panic. Return what we can from the poisoned lock.
+            eprintln!("WARNING: Log buffer lock was poisoned, recovering...");
+            poisoned.into_inner().get_all()
+        }
+    };
+    result
 }
 
 /// A visitor that extracts message and device fields from tracing events.
@@ -144,7 +155,8 @@ impl Visit for LogVisitor {
                 if !self.message.is_empty() {
                     self.message.push_str("; ");
                 }
-                self.message.push_str(&format!("{}={}", field.name(), value));
+                self.message
+                    .push_str(&format!("{}={}", field.name(), value));
             }
         }
     }
@@ -255,7 +267,12 @@ where
         };
 
         // Create the log entry
-        let entry = LogEntry::new(level, visitor.message.clone(), visitor.device.clone(), source.to_string());
+        let entry = LogEntry::new(
+            level,
+            visitor.message.clone(),
+            visitor.device.clone(),
+            source.to_string(),
+        );
 
         // Store in buffer
         if let Ok(mut buffer) = get_log_buffer().write() {
@@ -278,9 +295,24 @@ mod tests {
     fn test_log_buffer_push_and_get() {
         let mut buffer = LogBuffer::new(3);
 
-        buffer.push(LogEntry::new("info", "msg1".to_string(), None, "test".to_string()));
-        buffer.push(LogEntry::new("info", "msg2".to_string(), None, "test".to_string()));
-        buffer.push(LogEntry::new("info", "msg3".to_string(), None, "test".to_string()));
+        buffer.push(LogEntry::new(
+            "info",
+            "msg1".to_string(),
+            None,
+            "test".to_string(),
+        ));
+        buffer.push(LogEntry::new(
+            "info",
+            "msg2".to_string(),
+            None,
+            "test".to_string(),
+        ));
+        buffer.push(LogEntry::new(
+            "info",
+            "msg3".to_string(),
+            None,
+            "test".to_string(),
+        ));
 
         let logs = buffer.get_all();
         assert_eq!(logs.len(), 3);
@@ -292,9 +324,24 @@ mod tests {
     fn test_log_buffer_circular() {
         let mut buffer = LogBuffer::new(2);
 
-        buffer.push(LogEntry::new("info", "msg1".to_string(), None, "test".to_string()));
-        buffer.push(LogEntry::new("info", "msg2".to_string(), None, "test".to_string()));
-        buffer.push(LogEntry::new("info", "msg3".to_string(), None, "test".to_string()));
+        buffer.push(LogEntry::new(
+            "info",
+            "msg1".to_string(),
+            None,
+            "test".to_string(),
+        ));
+        buffer.push(LogEntry::new(
+            "info",
+            "msg2".to_string(),
+            None,
+            "test".to_string(),
+        ));
+        buffer.push(LogEntry::new(
+            "info",
+            "msg3".to_string(),
+            None,
+            "test".to_string(),
+        ));
 
         let logs = buffer.get_all();
         assert_eq!(logs.len(), 2);
@@ -304,7 +351,12 @@ mod tests {
 
     #[test]
     fn test_log_entry_new() {
-        let entry = LogEntry::new("error", "test message".to_string(), Some("ttl".to_string()), "bridge".to_string());
+        let entry = LogEntry::new(
+            "error",
+            "test message".to_string(),
+            Some("ttl".to_string()),
+            "bridge".to_string(),
+        );
 
         assert_eq!(entry.level, "error");
         assert_eq!(entry.message, "test message");

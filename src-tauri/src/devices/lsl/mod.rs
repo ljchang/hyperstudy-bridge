@@ -196,7 +196,7 @@ impl LslDevice {
 
         info!("Creating automatic outlets for bridge devices");
 
-        let device_types = ["ttl", "kernel", "pupil", "biopac"];
+        let device_types = ["ttl", "kernel", "pupil"];
         let mut outlets = self.bridge_outlets.write().await;
 
         for device_type in &device_types {
@@ -256,7 +256,7 @@ impl LslDevice {
                     String::from_utf8(data).map_err(|e| DeviceError::InvalidData(e.to_string()))?;
                 SampleData::ttl_marker(marker)
             }
-            "kernel" | "pupil" | "biopac" => {
+            "kernel" | "pupil" => {
                 // Convert bytes to float32 array
                 if data.len() % 4 != 0 {
                     return Err(DeviceError::InvalidData(
@@ -549,7 +549,6 @@ impl Device for LslDevice {
             0 => "ttl",
             1 => "kernel",
             2 => "pupil",
-            3 => "biopac",
             _ => return Err(DeviceError::InvalidData("Unknown device type".to_string())),
         };
 

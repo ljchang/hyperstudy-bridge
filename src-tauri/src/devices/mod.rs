@@ -1,4 +1,3 @@
-pub mod biopac;
 pub mod kernel;
 pub mod lsl;
 pub mod mock;
@@ -57,7 +56,6 @@ pub enum DeviceType {
     TTL,
     Kernel,
     Pupil,
-    Biopac,
     LSL,
     Mock,
 }

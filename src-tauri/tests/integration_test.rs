@@ -254,7 +254,6 @@ mod performance_tests {
                         DeviceType::TTL,
                         DeviceType::Kernel,
                         DeviceType::Pupil,
-                        DeviceType::Biopac,
                         DeviceType::Mock,
                     ];
                     let device_type = device_types[worker_id % device_types.len()];

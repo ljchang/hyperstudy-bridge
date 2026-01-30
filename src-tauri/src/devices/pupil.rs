@@ -3,8 +3,9 @@ use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpStream;
+use tokio::time::timeout;
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -503,8 +504,12 @@ impl Device for PupilDevice {
         }
 
         if let Some(mut ws) = self.ws_client.take() {
-            if let Err(e) = ws.close(None).await {
-                warn!("Error closing WebSocket connection: {}", e);
+            // Close WebSocket with timeout to prevent hanging
+            let close_timeout = Duration::from_secs(2);
+            match timeout(close_timeout, ws.close(None)).await {
+                Ok(Ok(_)) => debug!("WebSocket closed gracefully"),
+                Ok(Err(e)) => warn!("Error closing WebSocket connection: {}", e),
+                Err(_) => warn!("WebSocket close timed out after {:?}", close_timeout),
             }
         }
 

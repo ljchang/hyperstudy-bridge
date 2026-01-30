@@ -331,7 +331,6 @@ impl TestDataGenerator {
             "ttl" => Some(json!({"port": "/dev/ttyUSB0"})),
             "kernel" => Some(json!({"ip": "127.0.0.1"})),
             "pupil" => Some(json!({"url": "localhost:8081"})),
-            "biopac" => Some(json!({"address": "localhost"})),
             "mock" => Some(json!({})),
             _ => None,
         };
@@ -643,10 +642,6 @@ pub mod test_utils {
         devices.insert(
             DeviceType::Pupil,
             fixture.add_mock_device(DeviceType::Pupil).await,
-        );
-        devices.insert(
-            DeviceType::Biopac,
-            fixture.add_mock_device(DeviceType::Biopac).await,
         );
         devices.insert(
             DeviceType::Mock,

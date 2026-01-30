@@ -183,7 +183,6 @@ impl MessageHandler {
             "ttl" => Some(DeviceType::TTL),
             "kernel" => Some(DeviceType::Kernel),
             "pupil" => Some(DeviceType::Pupil),
-            "biopac" => Some(DeviceType::Biopac),
             "lsl" => Some(DeviceType::LSL),
             "mock" => Some(DeviceType::Mock),
             _ => None,

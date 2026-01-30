@@ -129,21 +129,6 @@ impl StreamInfo {
         info
     }
 
-    /// Create stream info for Biopac biosignals
-    pub fn biopac_biosignals(device_id: &str, channel_count: u32, sampling_rate: f64) -> Self {
-        let mut info = Self::new(
-            format!("{}_Biosignals", device_id),
-            StreamType::Biosignals,
-            channel_count,
-            sampling_rate,
-            ChannelFormat::Float32,
-            device_id.to_string(),
-        );
-        info.metadata
-            .insert("unit".to_string(), "microvolts".to_string());
-        info
-    }
-
     /// Add metadata to the stream info
     pub fn with_metadata(mut self, key: String, value: String) -> Self {
         self.metadata.insert(key, value);

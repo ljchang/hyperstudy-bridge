@@ -1,7 +1,6 @@
 use crate::bridge::{AppState, BridgeServer};
 use crate::devices::{
-    biopac::BiopacDevice, kernel::KernelDevice, mock::MockDevice, pupil::PupilDevice,
-    ttl::TtlDevice,
+    kernel::KernelDevice, mock::MockDevice, pupil::PupilDevice, ttl::TtlDevice,
 };
 use crate::devices::{Device, DeviceInfo, DeviceStatus};
 use crate::logging::{get_all_logs, LogEntry};
@@ -166,13 +165,6 @@ pub async fn connect_device(
                 .and_then(|v| v.as_str())
                 .unwrap_or("localhost:8081");
             Box::new(PupilDevice::new(url.to_string()))
-        }
-        "biopac" => {
-            let address = config
-                .get("address")
-                .and_then(|v| v.as_str())
-                .unwrap_or("localhost");
-            Box::new(BiopacDevice::new(address.to_string()))
         }
         "mock" => Box::new(MockDevice::new(
             format!("mock_{}", uuid::Uuid::new_v4()),
@@ -418,7 +410,7 @@ pub async fn discover_devices() -> Result<Vec<DeviceInfo>, ()> {
         }
     }
 
-    // TODO: Implement network discovery for Kernel, Pupil, Biopac devices
+    // TODO: Implement network discovery for Kernel, Pupil devices
 
     Ok(discovered)
 }
@@ -683,7 +675,10 @@ pub async fn test_ttl_device(port: String) -> Result<CommandResult<String>, ()> 
         Ok(mut serial_port) => {
             // Send TEST command
             if let Err(e) = serial_port.write_all(b"TEST\n") {
-                return Ok(CommandResult::error(format!("Failed to send TEST command: {}", e)));
+                return Ok(CommandResult::error(format!(
+                    "Failed to send TEST command: {}",
+                    e
+                )));
             }
 
             if let Err(e) = serial_port.flush() {
@@ -702,18 +697,17 @@ pub async fn test_ttl_device(port: String) -> Result<CommandResult<String>, ()> 
                     info!("TTL device test response: {}", response);
                     Ok(CommandResult::success(response))
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                    Ok(CommandResult::error("Device did not respond (timeout)".to_string()))
-                }
-                Err(e) => {
-                    Ok(CommandResult::error(format!("Failed to read response: {}", e)))
-                }
+                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => Ok(CommandResult::error(
+                    "Device did not respond (timeout)".to_string(),
+                )),
+                Err(e) => Ok(CommandResult::error(format!(
+                    "Failed to read response: {}",
+                    e
+                ))),
             }
             // Port is automatically closed when serial_port goes out of scope
         }
-        Err(e) => {
-            Ok(CommandResult::error(format!("Failed to open port: {}", e)))
-        }
+        Err(e) => Ok(CommandResult::error(format!("Failed to open port: {}", e))),
     }
 }
 
@@ -744,5 +738,8 @@ pub async fn reset_device(
         )
         .unwrap_or_else(|e| error!("Failed to emit event: {}", e));
 
-    Ok(CommandResult::success(format!("Device {} reset successfully", device_id)))
+    Ok(CommandResult::success(format!(
+        "Device {} reset successfully",
+        device_id
+    )))
 }

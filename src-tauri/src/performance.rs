@@ -228,7 +228,10 @@ impl PerformanceMonitor {
         }
     }
 
-    /// Record a WebSocket connection event
+    /// Record a WebSocket connection event.
+    ///
+    /// Uses saturating subtraction on disconnect to prevent counter underflow
+    /// if disconnect is called more times than connect.
     pub fn record_websocket_connection(&self, connected: bool) {
         if connected {
             self.system_counters
@@ -238,9 +241,13 @@ impl PerformanceMonitor {
                 .active_connections
                 .fetch_add(1, Ordering::Relaxed);
         } else {
-            self.system_counters
+            // Use fetch_update with saturating_sub to prevent underflow
+            let _ = self
+                .system_counters
                 .active_connections
-                .fetch_sub(1, Ordering::Relaxed);
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                    Some(current.saturating_sub(1))
+                });
         }
     }
 

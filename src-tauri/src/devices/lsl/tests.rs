@@ -127,12 +127,6 @@ mod tests {
         assert_eq!(pupil_info.stream_type, StreamType::Gaze);
         assert_eq!(pupil_info.channel_count, 3);
         assert_eq!(pupil_info.channel_format, ChannelFormat::Float32);
-
-        // Test Biopac biosignals stream info
-        let biopac_info = StreamInfo::biopac_biosignals("biopac_device", 8, 1000.0);
-        assert_eq!(biopac_info.stream_type, StreamType::Biosignals);
-        assert_eq!(biopac_info.channel_count, 8);
-        assert_eq!(biopac_info.nominal_srate, 1000.0);
     }
 
     #[tokio::test]

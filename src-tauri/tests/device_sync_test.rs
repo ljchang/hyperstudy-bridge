@@ -1364,13 +1364,11 @@ mod event_correlation_tests {
         let ttl_device_id = fixture.add_mock_device(DeviceType::TTL).await;
         let kernel_device_id = fixture.add_mock_device(DeviceType::Kernel).await;
         let pupil_device_id = fixture.add_mock_device(DeviceType::Pupil).await;
-        let biopac_device_id = fixture.add_mock_device(DeviceType::Biopac).await;
 
         let all_devices = vec![
             ("TTL", ttl_device_id),
             ("Kernel", kernel_device_id),
             ("Pupil", pupil_device_id),
-            ("Biopac", biopac_device_id),
         ];
 
         // Connect all devices
@@ -1383,14 +1381,14 @@ mod event_correlation_tests {
 
         // Define complex workflow: Experiment session simulation
         let workflow_steps = vec![
-            ("session_start", vec![0]),         // TTL triggers session start
-            ("recording_begin", vec![1, 2, 3]), // Start recording on all data devices
-            ("trial_start", vec![0]),           // TTL marks trial start
-            ("stimulus_present", vec![1]),      // Kernel presents stimulus
-            ("response_capture", vec![2, 3]),   // Pupil and Biopac capture response
-            ("trial_end", vec![0]),             // TTL marks trial end
-            ("recording_end", vec![1, 2, 3]),   // Stop recording
-            ("session_end", vec![0]),           // TTL ends session
+            ("session_start", vec![0]),      // TTL triggers session start
+            ("recording_begin", vec![1, 2]), // Start recording on all data devices
+            ("trial_start", vec![0]),        // TTL marks trial start
+            ("stimulus_present", vec![1]),   // Kernel presents stimulus
+            ("response_capture", vec![2]),   // Pupil captures response
+            ("trial_end", vec![0]),          // TTL marks trial end
+            ("recording_end", vec![1, 2]),   // Stop recording
+            ("session_end", vec![0]),        // TTL ends session
         ];
 
         let workflow_start = Instant::now();

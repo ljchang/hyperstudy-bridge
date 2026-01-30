@@ -1,11 +1,10 @@
 use super::{Device, DeviceConfig, DeviceError, DeviceInfo, DeviceStatus, DeviceType};
-use crate::performance::measure_latency;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serialport::{self, SerialPort};
 use std::io::{Read, Write};
-use std::sync::Mutex;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
 
@@ -33,7 +32,10 @@ impl Default for TtlConfig {
 type PerformanceCallback = Box<dyn Fn(&str, Duration, u64, u64) + Send + Sync>;
 
 pub struct TtlDevice {
-    port: Option<Mutex<Box<dyn SerialPort>>>,
+    /// Serial port wrapped in Arc<Mutex> to allow cloning into spawn_blocking tasks.
+    /// Using std::sync::Mutex is correct here because serial I/O is inherently blocking
+    /// and we use spawn_blocking to avoid blocking the async runtime.
+    port: Option<Arc<Mutex<Box<dyn SerialPort>>>>,
     port_name: String,
     status: DeviceStatus,
     config: TtlConfig,
@@ -234,22 +236,32 @@ impl TtlDevice {
         Ok(None)
     }
 
+    /// Send a TTL pulse using spawn_blocking to avoid blocking the async runtime.
+    ///
+    /// Serial I/O is inherently blocking, so we offload it to Tokio's blocking thread pool.
     async fn send_pulse(&mut self) -> Result<(), DeviceError> {
-        if let Some(ref port_mutex) = self.port {
+        if let Some(ref port_arc) = self.port {
             let device_id = self.get_info().id;
-            let (result, latency) = measure_latency::<_, (), DeviceError>(async {
-                let mut port = port_mutex
+            let port_clone = Arc::clone(port_arc);
+
+            // Measure latency around the blocking operation
+            let start = Instant::now();
+
+            // Run blocking serial I/O on the blocking thread pool
+            let result = tokio::task::spawn_blocking(move || {
+                let mut port = port_clone
                     .lock()
                     .map_err(|_| DeviceError::CommunicationError("Mutex poisoned".to_string()))?;
                 port.write_all(PULSE_COMMAND)
                     .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
-
                 port.flush()
                     .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
-
-                Ok(())
+                Ok::<(), DeviceError>(())
             })
-            .await;
+            .await
+            .map_err(|e| DeviceError::CommunicationError(format!("Task join error: {}", e)))?;
+
+            let latency = start.elapsed();
 
             // Record performance metrics
             if let Some(ref callback) = self.performance_callback {
@@ -318,7 +330,8 @@ impl Device for TtlDevice {
                 if response.is_empty() {
                     self.status = DeviceStatus::Error;
                     return Err(DeviceError::ConnectionFailed(
-                        "Device did not respond to TEST command. Is this the correct device?".to_string()
+                        "Device did not respond to TEST command. Is this the correct device?"
+                            .to_string(),
                     ));
                 }
                 info!("TTL device validated. Response: {}", response);
@@ -326,13 +339,15 @@ impl Device for TtlDevice {
             Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
                 self.status = DeviceStatus::Error;
                 return Err(DeviceError::ConnectionFailed(
-                    "Device timeout - no response to TEST command. Check device connection.".to_string()
+                    "Device timeout - no response to TEST command. Check device connection."
+                        .to_string(),
                 ));
             }
             Err(e) => {
                 self.status = DeviceStatus::Error;
                 return Err(DeviceError::ConnectionFailed(format!(
-                    "Failed to read validation response: {}", e
+                    "Failed to read validation response: {}",
+                    e
                 )));
             }
         }
@@ -343,7 +358,7 @@ impl Device for TtlDevice {
             DeviceError::ConnectionFailed(format!("Failed to configure port: {}", e))
         })?;
 
-        self.port = Some(Mutex::new(port));
+        self.port = Some(Arc::new(Mutex::new(port)));
         self.status = DeviceStatus::Connected;
 
         info!("Successfully connected to TTL device");
@@ -353,12 +368,15 @@ impl Device for TtlDevice {
     async fn disconnect(&mut self) -> Result<(), DeviceError> {
         info!("Disconnecting TTL device");
 
-        if let Some(port_mutex) = self.port.take() {
-            let mut port = port_mutex
-                .lock()
-                .map_err(|_| DeviceError::CommunicationError("Mutex poisoned".to_string()))?;
-            port.flush()
-                .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
+        if let Some(port_arc) = self.port.take() {
+            // Run blocking flush on blocking thread pool
+            tokio::task::spawn_blocking(move || {
+                if let Ok(mut port) = port_arc.lock() {
+                    let _ = port.flush(); // Best effort flush on disconnect
+                }
+            })
+            .await
+            .map_err(|e| DeviceError::CommunicationError(format!("Task join error: {}", e)))?;
         }
 
         self.status = DeviceStatus::Disconnected;
@@ -368,23 +386,33 @@ impl Device for TtlDevice {
     async fn send(&mut self, data: &[u8]) -> Result<(), DeviceError> {
         if data == PULSE_COMMAND || data == b"PULSE" {
             self.send_pulse().await
-        } else if let Some(ref port_mutex) = self.port {
+        } else if let Some(ref port_arc) = self.port {
             let device_id = self.get_info().id;
-            let (result, latency) = measure_latency::<_, (), DeviceError>(async {
-                let mut port = port_mutex
+            let port_clone = Arc::clone(port_arc);
+            let data_owned = data.to_vec();
+            let data_len = data.len();
+
+            let start = Instant::now();
+
+            // Run blocking serial I/O on the blocking thread pool
+            let result = tokio::task::spawn_blocking(move || {
+                let mut port = port_clone
                     .lock()
                     .map_err(|_| DeviceError::CommunicationError("Mutex poisoned".to_string()))?;
-                port.write_all(data)
+                port.write_all(&data_owned)
                     .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
                 port.flush()
                     .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
-                Ok(())
+                Ok::<(), DeviceError>(())
             })
-            .await;
+            .await
+            .map_err(|e| DeviceError::CommunicationError(format!("Task join error: {}", e)))?;
+
+            let latency = start.elapsed();
 
             // Record performance metrics
             if let Some(ref callback) = self.performance_callback {
-                callback(&device_id, latency, data.len() as u64, 0);
+                callback(&device_id, latency, data_len as u64, 0);
             }
 
             result
@@ -394,11 +422,16 @@ impl Device for TtlDevice {
     }
 
     async fn receive(&mut self) -> Result<Vec<u8>, DeviceError> {
-        if let Some(ref port_mutex) = self.port {
+        if let Some(ref port_arc) = self.port {
             let device_id = self.get_info().id;
-            let (result, latency) = measure_latency::<_, Vec<u8>, DeviceError>(async {
+            let port_clone = Arc::clone(port_arc);
+
+            let start = Instant::now();
+
+            // Run blocking serial I/O on the blocking thread pool
+            let result = tokio::task::spawn_blocking(move || {
                 let mut buffer = vec![0u8; 256];
-                let mut port = port_mutex
+                let mut port = port_clone
                     .lock()
                     .map_err(|_| DeviceError::CommunicationError("Mutex poisoned".to_string()))?;
                 match port.read(&mut buffer) {
@@ -410,7 +443,10 @@ impl Device for TtlDevice {
                     Err(e) => Err(DeviceError::CommunicationError(e.to_string())),
                 }
             })
-            .await;
+            .await
+            .map_err(|e| DeviceError::CommunicationError(format!("Task join error: {}", e)))?;
+
+            let latency = start.elapsed();
 
             // Record performance metrics
             if let Ok(ref data) = result {

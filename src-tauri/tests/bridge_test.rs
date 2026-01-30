@@ -848,7 +848,6 @@ mod bridge_query_tests {
         assert!(device_types.contains(&DeviceType::TTL));
         assert!(device_types.contains(&DeviceType::Kernel));
         assert!(device_types.contains(&DeviceType::Pupil));
-        assert!(device_types.contains(&DeviceType::Biopac));
         assert!(device_types.contains(&DeviceType::Mock));
 
         fixture.cleanup().await;
@@ -984,11 +983,10 @@ mod scalability_tests {
         let mut device_ids = Vec::new();
 
         for i in 0..device_count {
-            let device_type = match i % 5 {
+            let device_type = match i % 4 {
                 0 => DeviceType::TTL,
                 1 => DeviceType::Kernel,
                 2 => DeviceType::Pupil,
-                3 => DeviceType::Biopac,
                 _ => DeviceType::Mock,
             };
             let device_id = fixture.add_mock_device(device_type).await;

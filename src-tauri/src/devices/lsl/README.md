@@ -20,7 +20,6 @@ The LSL module follows a modular design with the following components:
 - **TTL Pulse Generator**: Publishes pulse markers as string streams
 - **Kernel fNIRS**: Streams optical density data as float32 multi-channel streams
 - **Pupil Labs Neon**: Publishes gaze data (x, y, confidence) as float32 streams
-- **Biopac Systems**: Streams physiological data as high-rate float32 streams
 
 ### 2. Time Synchronization
 - Sub-millisecond precision time alignment across devices
@@ -92,14 +91,6 @@ pub struct LslConfig {
 - **Rate**: 30-120 Hz
 - **Data**: Normalized gaze coordinates and confidence
 - **Units**: Normalized coordinates [0.0-1.0]
-
-### Biopac → LSL Biosignals Stream
-- **Type**: Biosignals
-- **Format**: Float32
-- **Channels**: 1-16 (configurable)
-- **Rate**: 100-2000 Hz
-- **Data**: Physiological measurements
-- **Units**: Microvolts (μV)
 
 ## Usage Examples
 

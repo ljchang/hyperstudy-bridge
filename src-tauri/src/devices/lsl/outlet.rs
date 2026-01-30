@@ -411,7 +411,6 @@ impl OutletManager {
             "ttl" => StreamInfo::ttl_markers(device_id),
             "kernel" => StreamInfo::kernel_fnirs(device_id, 16), // Default 16 channels
             "pupil" => StreamInfo::pupil_gaze(device_id),
-            "biopac" => StreamInfo::biopac_biosignals(device_id, 8, 1000.0), // Default config
             _ => {
                 return Err(LslError::LslLibraryError(format!(
                     "Unknown device type: {}",

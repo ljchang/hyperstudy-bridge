@@ -98,9 +98,7 @@ impl StreamResolver {
     }
 
     /// Start continuous stream discovery
-    pub async fn start_discovery(
-        &self,
-    ) -> Result<mpsc::Receiver<DiscoveryEvent>, LslError> {
+    pub async fn start_discovery(&self) -> Result<mpsc::Receiver<DiscoveryEvent>, LslError> {
         // Use bounded channel to prevent memory exhaustion
         let (_sender, receiver) = mpsc::channel(100);
 
