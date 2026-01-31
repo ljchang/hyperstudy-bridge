@@ -227,7 +227,6 @@ function getDeviceName(deviceId) {
         'ttl': 'TTL Pulse Generator',
         'kernel': 'Kernel Flow2',
         'pupil': 'Pupil Labs Neon',
-        'biopac': 'Biopac',
         'lsl': 'Lab Streaming Layer',
         'mock': 'Mock Device'
     };

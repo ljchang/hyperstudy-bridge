@@ -29,13 +29,6 @@
       config: { url: 'localhost:8081' }
     },
     {
-      id: 'biopac',
-      name: 'Biopac MP150/160',
-      type: 'Physiological',
-      connection: 'TCP (NDT)',
-      config: { ip: 'localhost', port: 5000 }
-    },
-    {
       id: 'mock',
       name: 'Mock Device',
       type: 'Testing',

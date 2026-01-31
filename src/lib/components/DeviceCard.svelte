@@ -243,7 +243,7 @@
           </button>
         </div>
       </div>
-    {:else if device.id === 'kernel' || device.id === 'biopac'}
+    {:else if device.id === 'kernel'}
       <div class="config-row">
         <span class="label">IP:</span>
         <span class="value">{device.config.ip || 'Not configured'}</span>

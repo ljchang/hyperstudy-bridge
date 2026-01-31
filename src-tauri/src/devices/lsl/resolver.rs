@@ -6,6 +6,12 @@ use tokio::sync::{mpsc, RwLock};
 use tokio::time::{sleep, timeout};
 use tracing::{debug, error, info, warn};
 
+/// Maximum number of discovered streams to cache (prevents unbounded HashMap growth)
+const MAX_DISCOVERED_STREAMS: usize = 100;
+
+/// Channel capacity for discovery events (prevents unbounded memory growth)
+const DISCOVERY_CHANNEL_CAPACITY: usize = 100;
+
 /// Stream discovery and resolution service
 #[derive(Debug)]
 pub struct StreamResolver {
@@ -32,7 +38,11 @@ pub struct DiscoveredStream {
     pub uid: String,
     pub session_id: String,
     pub data_loss: f64,
-    pub time_stamps: Vec<f64>,
+    /// Timestamps are not stored to prevent unbounded memory growth.
+    /// In production, timestamps should be processed immediately rather than accumulated.
+    /// This field uses a unit type `()` instead of `Vec<f64>` to eliminate the memory leak vector.
+    #[serde(skip)]
+    pub time_stamps: (),
 }
 
 /// Stream discovery filter criteria
@@ -155,10 +165,31 @@ impl StreamResolver {
             discovered.len()
         );
 
-        // Update cache
+        // Update cache with size limit enforcement
         let mut cache = self.discovered_streams.write().await;
         for stream in &discovered {
             cache.insert(stream.uid.clone(), stream.clone());
+        }
+
+        // Enforce maximum cache size to prevent unbounded memory growth
+        if cache.len() > MAX_DISCOVERED_STREAMS {
+            // Remove oldest entries by discovered_at timestamp
+            let mut entries: Vec<_> = cache
+                .iter()
+                .map(|(uid, stream)| (uid.clone(), stream.discovered_at))
+                .collect();
+            entries.sort_by(|a, b| a.1.cmp(&b.1));
+
+            let to_remove = cache.len() - MAX_DISCOVERED_STREAMS;
+            for (uid, _) in entries.into_iter().take(to_remove) {
+                cache.remove(&uid);
+                debug!("Evicted old stream from cache: {}", uid);
+            }
+
+            warn!(
+                "Stream cache exceeded limit, evicted {} oldest entries",
+                to_remove
+            );
         }
 
         Ok(discovered)
@@ -252,24 +283,34 @@ impl StreamResolver {
     }
 
     /// Internal discovery loop for continuous discovery
+    /// Uses bounded channel to prevent memory exhaustion from event backlog
     #[allow(dead_code)]
-    async fn discovery_loop(&self, sender: mpsc::UnboundedSender<DiscoveryEvent>) {
+    async fn discovery_loop(&self, sender: mpsc::Sender<DiscoveryEvent>) {
         while *self.is_discovering.read().await {
             match self.discover_streams().await {
                 Ok(streams) => {
                     for stream in streams {
-                        if sender.send(DiscoveryEvent::StreamFound(stream)).is_err() {
-                            error!("Failed to send discovery event");
-                            break;
+                        // Use try_send to avoid blocking and detect backpressure
+                        match sender.try_send(DiscoveryEvent::StreamFound(stream)) {
+                            Ok(()) => {}
+                            Err(mpsc::error::TrySendError::Full(_)) => {
+                                warn!("Discovery event channel full, dropping event (receiver too slow)");
+                                // Continue - don't block on slow receivers
+                            }
+                            Err(mpsc::error::TrySendError::Closed(_)) => {
+                                error!("Discovery event receiver dropped, stopping discovery");
+                                return;
+                            }
                         }
                     }
                 }
                 Err(e) => {
                     warn!("Discovery error: {}", e);
                     if sender
-                        .send(DiscoveryEvent::DiscoveryError(e.to_string()))
+                        .try_send(DiscoveryEvent::DiscoveryError(e.to_string()))
                         .is_err()
                     {
+                        // Channel closed or full, stop discovery
                         break;
                     }
                 }
@@ -282,7 +323,7 @@ impl StreamResolver {
             sleep(Duration::from_secs(5)).await;
         }
 
-        let _ = sender.send(DiscoveryEvent::DiscoveryCompleted);
+        let _ = sender.try_send(DiscoveryEvent::DiscoveryCompleted);
     }
 
     /// Simulate stream discovery (placeholder implementation)
@@ -306,7 +347,7 @@ impl StreamResolver {
                 uid: "mock_ttl_stream_001".to_string(),
                 session_id: "session_001".to_string(),
                 data_loss: 0.0,
-                time_stamps: Vec::new(),
+                time_stamps: (),
             });
         }
 
@@ -320,7 +361,7 @@ impl StreamResolver {
                 uid: "mock_fnirs_stream_001".to_string(),
                 session_id: "session_002".to_string(),
                 data_loss: 0.1,
-                time_stamps: Vec::new(),
+                time_stamps: (),
             });
         }
 
@@ -334,7 +375,7 @@ impl StreamResolver {
                 uid: "mock_gaze_stream_001".to_string(),
                 session_id: "session_003".to_string(),
                 data_loss: 0.05,
-                time_stamps: Vec::new(),
+                time_stamps: (),
             });
         }
 

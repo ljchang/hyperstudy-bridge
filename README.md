@@ -39,7 +39,6 @@ HyperStudy Bridge provides a reliable, low-latency communication layer between t
 | Adafruit RP2040 | TTL Pulse Generator | USB Serial | ✅ Supported |
 | Kernel Flow2 | fNIRS | TCP Socket | ✅ Supported |
 | Pupil Labs Neon | Eye Tracker | WebSocket | ✅ Supported |
-| Biopac MP150/160 | Physiological | TCP (NDT) | ✅ Supported |
 | Lab Streaming Layer | Various | LSL Protocol | 🚧 Planned |
 
 ## Quick Start
@@ -275,7 +274,6 @@ MIT License - see [LICENSE](LICENSE) file for details.
 - [x] TTL pulse generator support
 - [x] Kernel Flow2 integration
 - [x] Pupil Labs Neon support
-- [x] Biopac integration
 - [ ] Lab Streaming Layer support
 - [ ] Auto-update system
 - [ ] Device profiles and presets

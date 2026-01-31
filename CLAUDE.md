@@ -43,13 +43,7 @@ HyperStudy Bridge is a unified, high-performance desktop application that serves
 - **Features**: Gaze data streaming, recording control
 - **Implementation**: Using `tokio-tungstenite` crate
 
-### 4. Biopac (MP150/MP160)
-- **Connection**: Network Data Transfer (NDT) protocol
-- **Protocol**: TCP connection to AcqKnowledge software
-- **Features**: Physiological data streaming, event markers
-- **Implementation**: TCP socket with NDT protocol
-
-### 5. Lab Streaming Layer (Future)
+### 4. Lab Streaming Layer (Future)
 - **Connection**: LSL network protocol
 - **Protocol**: Time-synced data streams
 - **Implementation**: Using `lsl` crate
@@ -64,7 +58,7 @@ The bridge exposes a WebSocket server on `ws://localhost:9000` for HyperStudy co
 // Client → Bridge
 interface BridgeCommand {
   type: "command";
-  device: "ttl" | "kernel" | "pupil" | "biopac" | "lsl";
+  device: "ttl" | "kernel" | "pupil" | "lsl";
   action: "connect" | "disconnect" | "send" | "configure" | "status";
   payload?: any;
   id?: string;  // For request-response correlation
@@ -73,7 +67,7 @@ interface BridgeCommand {
 // Bridge → Client
 interface BridgeResponse {
   type: "status" | "data" | "error" | "ack";
-  device: "ttl" | "kernel" | "pupil" | "biopac" | "lsl";
+  device: "ttl" | "kernel" | "pupil" | "lsl";
   payload: any;
   id?: string;  // Matches request ID if applicable
   timestamp: number;
@@ -153,8 +147,6 @@ Each device has a dedicated agent:
 - **TTL Agent**: Serial communication, pulse timing
 - **Kernel Agent**: TCP socket, data streaming
 - **Pupil Agent**: WebSocket client, gaze tracking
-- **Biopac Agent**: NDT protocol, physiological data
-
 ### Coordination Protocol
 
 1. **Task Assignment**: Agents claim tasks in DEVELOPMENT_PLAN.md
@@ -268,7 +260,7 @@ src-tauri/src/
 │   │   └── tests.rs    # TTL tests
 │   ├── kernel/
 │   ├── pupil/
-│   └── biopac/
+│   └── lsl/
 ├── bridge/
 │   ├── mod.rs          # Bridge core
 │   ├── websocket.rs    # WS server

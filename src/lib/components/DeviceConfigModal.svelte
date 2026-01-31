@@ -97,40 +97,6 @@
         required: true
       }
     },
-    biopac: {
-      ip: {
-        label: 'Server Address',
-        type: 'text',
-        placeholder: 'localhost or 192.168.1.100',
-        required: true,
-        pattern: '^[\\w.-]+$',
-        errorMessage: 'Invalid server address format'
-      },
-      port: {
-        label: 'Port',
-        type: 'number',
-        min: 1,
-        max: 65535,
-        default: 5000,
-        required: true,
-        errorMessage: 'Port must be between 1-65535'
-      },
-      channels: {
-        label: 'Active Channels',
-        type: 'text',
-        placeholder: '1,2,3,4 or 1-8',
-        required: true,
-        pattern: '^(\\d+(-\\d+)?)(,\\d+(-\\d+)?)*$',
-        errorMessage: 'Format: 1,2,3 or 1-4,6-8'
-      },
-      samplingRate: {
-        label: 'Sampling Rate (Hz)',
-        type: 'select',
-        options: [100, 200, 500, 1000, 2000],
-        default: 1000,
-        required: true
-      }
-    },
     lsl: {
       enableOutlet: {
         label: 'Enable LSL Outlet',

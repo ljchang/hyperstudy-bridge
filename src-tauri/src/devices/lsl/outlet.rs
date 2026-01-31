@@ -8,6 +8,10 @@ use tokio::sync::{mpsc, RwLock};
 use tokio::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
+/// Channel capacity for outgoing samples (prevents unbounded memory growth)
+#[allow(dead_code)]
+const SAMPLE_CHANNEL_CAPACITY: usize = 10000;
+
 /// LSL stream outlet for publishing data
 #[derive(Debug)]
 pub struct StreamOutlet {
@@ -25,9 +29,9 @@ pub struct StreamOutlet {
     active: Arc<AtomicBool>,
     /// Sample counter
     sample_count: Arc<AtomicU64>,
-    /// Data sender for async processing
+    /// Data sender for async processing (bounded to prevent memory exhaustion)
     #[allow(dead_code)]
-    data_sender: Option<mpsc::UnboundedSender<Sample>>,
+    data_sender: Option<mpsc::Sender<Sample>>,
     /// Performance metrics
     bytes_sent: Arc<AtomicU64>,
     last_send_time: Arc<RwLock<Option<Instant>>>,

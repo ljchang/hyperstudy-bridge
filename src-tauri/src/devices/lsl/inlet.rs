@@ -9,6 +9,10 @@ use tokio::sync::{mpsc, RwLock};
 use tokio::time::{interval, Duration, Instant};
 use tracing::{debug, info, warn};
 
+/// Channel capacity for sample collection (prevents unbounded memory growth)
+/// At 100Hz polling, 10000 samples = ~100 seconds of buffer
+const SAMPLE_CHANNEL_CAPACITY: usize = 10000;
+
 /// LSL stream inlet for consuming data
 #[derive(Debug)]
 pub struct StreamInlet {
@@ -26,9 +30,9 @@ pub struct StreamInlet {
     active: Arc<AtomicBool>,
     /// Sample counter
     sample_count: Arc<AtomicU64>,
-    /// Data receiver for async processing
+    /// Data receiver for async processing (bounded to prevent memory exhaustion)
     #[allow(dead_code)]
-    data_receiver: Option<mpsc::UnboundedReceiver<Sample>>,
+    data_receiver: Option<mpsc::Receiver<Sample>>,
     /// Performance metrics
     bytes_received: Arc<AtomicU64>,
     last_receive_time: Arc<RwLock<Option<Instant>>>,
@@ -345,18 +349,37 @@ impl StreamInlet {
     }
 
     /// Continuous collection loop
+    /// Uses bounded channel to prevent memory exhaustion from sample backlog
     #[allow(dead_code)]
-    async fn collection_loop(&self, sender: mpsc::UnboundedSender<Sample>) {
+    async fn collection_loop(&self, sender: mpsc::Sender<Sample>) {
         let mut interval = interval(Duration::from_millis(10)); // 100Hz polling
+        let mut dropped_samples: u64 = 0;
 
         while self.active.load(Ordering::Relaxed) {
             interval.tick().await;
 
             match self.pull_sample(Duration::from_millis(1)).await {
                 Ok(Some(sample)) => {
-                    if sender.send(sample).is_err() {
-                        debug!("Collection receiver dropped, stopping collection");
-                        break;
+                    // Use try_send to avoid blocking and detect backpressure
+                    match sender.try_send(sample) {
+                        Ok(()) => {}
+                        Err(mpsc::error::TrySendError::Full(_)) => {
+                            // Channel is full - receiver is too slow
+                            dropped_samples += 1;
+                            if dropped_samples % 100 == 1 {
+                                warn!(
+                                    "Sample channel full, dropped {} samples (receiver too slow)",
+                                    dropped_samples
+                                );
+                            }
+                            // Update data loss metric
+                            let mut status = self.status.write().await;
+                            status.data_loss = (status.data_loss + 0.01).min(100.0);
+                        }
+                        Err(mpsc::error::TrySendError::Closed(_)) => {
+                            debug!("Collection receiver dropped, stopping collection");
+                            break;
+                        }
                     }
                 }
                 Ok(None) => {
@@ -367,6 +390,13 @@ impl StreamInlet {
                     // Continue collecting despite errors
                 }
             }
+        }
+
+        if dropped_samples > 0 {
+            warn!(
+                "Collection loop ended, total dropped samples: {}",
+                dropped_samples
+            );
         }
     }
 
@@ -568,7 +598,7 @@ mod tests {
             uid: "test_stream_001".to_string(),
             session_id: "session_001".to_string(),
             data_loss: 0.0,
-            time_stamps: Vec::new(),
+            time_stamps: (),
         }
     }
 
