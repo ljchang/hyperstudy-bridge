@@ -14,9 +14,17 @@ let reconnectTimeout = null;
 const maxReconnectAttempts = 5;
 const reconnectDelay = 1000;
 
+// Timeout constants (in milliseconds)
+const CONNECT_TIMEOUT_MS = 5000;
+const DISCONNECT_TIMEOUT_MS = 5000;
+const COMMAND_TIMEOUT_MS = 5000;
+
 // Message handlers and callbacks
 const messageHandlers = new Map();
 const requestCallbacks = new Map();
+
+// Monotonic counter for truly unique IDs (avoids collisions from rapid calls)
+let requestIdCounter = 0;
 
 // WebSocket connection management
 function connect() {
@@ -66,6 +74,16 @@ function connect() {
                 device.status = 'disconnected';
             });
             devices = new Map(devices);
+
+            // Reject all pending callbacks to prevent memory leaks
+            requestCallbacks.forEach((callback, _id) => {
+                try {
+                    callback(false, 'Connection closed');
+                } catch (e) {
+                    console.error('Error rejecting callback on close:', e);
+                }
+            });
+            requestCallbacks.clear();
 
             // Clear any existing reconnection timeout
             if (reconnectTimeout) {
@@ -234,7 +252,9 @@ function getDeviceName(deviceId) {
 }
 
 function generateId() {
-    return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    // Use monotonic counter + timestamp to guarantee uniqueness even with rapid calls
+    requestIdCounter++;
+    return `${Date.now()}-${requestIdCounter}-${Math.random().toString(36).substr(2, 5)}`;
 }
 
 function send(message) {
@@ -300,14 +320,14 @@ export async function connectDevice(deviceId, config = {}) {
             return;
         }
 
-        // Timeout after 2 seconds
+        // Timeout to prevent callback accumulation
         timeoutId = setTimeout(() => {
             if (requestCallbacks.has(id)) {
                 console.log(`Timeout for ${deviceId} - no response received`);
                 requestCallbacks.delete(id);
                 reject(new Error(`Request timeout for ${deviceId}`));
             }
-        }, 2000);
+        }, CONNECT_TIMEOUT_MS);
     });
 }
 
@@ -339,14 +359,14 @@ export async function disconnectDevice(deviceId) {
             return;
         }
 
-        // Timeout after 5 seconds to prevent callback accumulation
+        // Timeout to prevent callback accumulation
         timeoutId = setTimeout(() => {
             if (requestCallbacks.has(id)) {
                 console.log(`Timeout for disconnect ${deviceId} - no response received`);
                 requestCallbacks.delete(id);
                 reject(new Error(`Disconnect timeout for ${deviceId}`));
             }
-        }, 5000);
+        }, DISCONNECT_TIMEOUT_MS);
     });
 }
 
@@ -386,14 +406,14 @@ export async function sendCommand(deviceId, command) {
             return;
         }
 
-        // Timeout after 5 seconds to prevent callback accumulation
+        // Timeout to prevent callback accumulation
         timeoutId = setTimeout(() => {
             if (requestCallbacks.has(id)) {
                 console.log(`Timeout for sendCommand ${deviceId} - no response received`);
                 requestCallbacks.delete(id);
                 reject(new Error(`Command timeout for ${deviceId}`));
             }
-        }, 5000);
+        }, COMMAND_TIMEOUT_MS);
     });
 }
 

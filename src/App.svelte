@@ -1,19 +1,25 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
+  import { getVersion } from '@tauri-apps/api/app';
   import DeviceCard from './lib/components/DeviceCard.svelte';
   import StatusIndicator from './lib/components/StatusIndicator.svelte';
   import AddDeviceModal from './lib/components/AddDeviceModal.svelte';
   import LogViewer from './lib/components/LogViewer.svelte';
   import SettingsPanel from './lib/components/SettingsPanel.svelte';
   import LslConfigPanel from './lib/components/LslConfigPanel.svelte';
+  import PerformancePanel from './lib/components/PerformancePanel.svelte';
   import * as bridgeStore from './lib/stores/websocket.svelte.js';
   import logo from './assets/hyperstudy-logo.svg';
+
+  // App version
+  let appVersion = $state('...');
 
   // Modal state
   let showAddDeviceModal = $state(false);
   let showLogViewer = $state(false);
   let showSettingsPanel = $state(false);
   let showLslPanel = $state(false);
+  let showPerformancePanel = $state(false);
 
   // Selected devices - user has explicitly added these
   let selectedDevices = $state([]);
@@ -41,16 +47,22 @@
 
     const errors = [];
 
-    // Only connect devices that user has selected
-    for (const device of selectedDevices) {
+    // Snapshot the array to prevent issues if selectedDevices changes during iteration
+    const devicesToConnect = [...selectedDevices];
+
+    // Connect devices sequentially with error isolation
+    for (const device of devicesToConnect) {
       console.log(`Connecting device: ${device.id}`);
       try {
         await bridgeStore.connectDevice(device.id, device.config);
         console.log(`Successfully sent connect command for ${device.id}`);
-        await new Promise(resolve => setTimeout(resolve, 500)); // Small delay between connections
+        // Small delay between connections to avoid overwhelming the backend
+        await new Promise(resolve => setTimeout(resolve, 500));
       } catch (error) {
+        // Log but continue with remaining devices
         console.error(`Failed to connect ${device.id}:`, error);
         errors.push({ device: device.name, error: error.message || String(error) });
+        // Continue to next device instead of breaking
       }
     }
 
@@ -92,9 +104,17 @@
   }
 
 
-  onMount(() => {
+  onMount(async () => {
     // Bridge store auto-connects in constructor
     console.log('HyperStudy Bridge initialized');
+
+    // Fetch app version from Tauri
+    try {
+      appVersion = await getVersion();
+    } catch (error) {
+      console.error('Failed to fetch app version:', error);
+      appVersion = 'unknown';
+    }
   });
 
   onDestroy(() => {
@@ -110,6 +130,22 @@
     </div>
 
     <div class="header-actions">
+      <button
+        class="header-btn"
+        onclick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          showPerformancePanel = true;
+        }}
+        title="Performance Monitor"
+        type="button"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
+        </svg>
+        Perf
+      </button>
+
       <button
         class="header-btn"
         onclick={(e) => {
@@ -224,9 +260,13 @@
     bind:isOpen={showSettingsPanel}
   />
 
+  <PerformancePanel
+    bind:isOpen={showPerformancePanel}
+  />
+
   <footer>
     <p>WebSocket: ws://localhost:9000</p>
-    <p>Version: 0.1.0</p>
+    <p>Version: {appVersion}</p>
   </footer>
 </div>
 

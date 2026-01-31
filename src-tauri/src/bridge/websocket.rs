@@ -88,6 +88,7 @@ async fn handle_connection(
             match msg {
                 Ok(Message::Text(text)) => {
                     state_clone.update_connection_activity(&connection_id_clone);
+                    state_clone.increment_message_count();
                     info!("Received WebSocket message: {}", text);
 
                     match MessageHandler::parse_command(&text) {
@@ -224,24 +225,78 @@ async fn handle_device_command(
 
             let mut device: Box<dyn crate::devices::Device> = match device_id.as_str() {
                 "ttl" => {
-                    let port = config
-                        .get("port")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("/dev/cu.usbmodem101");
+                    // Require explicit port configuration - no unsafe defaults
+                    let port = match config.get("port").and_then(|v| v.as_str()) {
+                        Some(p) if !p.is_empty() => p,
+                        _ => {
+                            send_response(
+                                tx,
+                                BridgeResponse::device_error(
+                                    device_id.clone(),
+                                    "TTL device requires 'port' in config (e.g., /dev/cu.usbmodem101)".to_string(),
+                                ),
+                            )
+                            .await;
+                            if let Some(req_id) = id {
+                                send_response(
+                                    tx,
+                                    BridgeResponse::ack(req_id, false, Some("Missing port configuration".to_string())),
+                                )
+                                .await;
+                            }
+                            return;
+                        }
+                    };
                     Box::new(TtlDevice::new(port.to_string()))
                 }
                 "kernel" => {
-                    let ip = config
-                        .get("ip")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("127.0.0.1");
+                    // Require explicit IP configuration - no unsafe defaults
+                    let ip = match config.get("ip").and_then(|v| v.as_str()) {
+                        Some(i) if !i.is_empty() => i,
+                        _ => {
+                            send_response(
+                                tx,
+                                BridgeResponse::device_error(
+                                    device_id.clone(),
+                                    "Kernel device requires 'ip' in config (e.g., 192.168.1.100)".to_string(),
+                                ),
+                            )
+                            .await;
+                            if let Some(req_id) = id {
+                                send_response(
+                                    tx,
+                                    BridgeResponse::ack(req_id, false, Some("Missing IP configuration".to_string())),
+                                )
+                                .await;
+                            }
+                            return;
+                        }
+                    };
                     Box::new(KernelDevice::new(ip.to_string()))
                 }
                 "pupil" => {
-                    let url = config
-                        .get("url")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("localhost:8081");
+                    // Require explicit URL configuration - no unsafe defaults
+                    let url = match config.get("url").and_then(|v| v.as_str()) {
+                        Some(u) if !u.is_empty() => u,
+                        _ => {
+                            send_response(
+                                tx,
+                                BridgeResponse::device_error(
+                                    device_id.clone(),
+                                    "Pupil device requires 'url' in config (e.g., localhost:8081)".to_string(),
+                                ),
+                            )
+                            .await;
+                            if let Some(req_id) = id {
+                                send_response(
+                                    tx,
+                                    BridgeResponse::ack(req_id, false, Some("Missing URL configuration".to_string())),
+                                )
+                                .await;
+                            }
+                            return;
+                        }
+                    };
                     Box::new(PupilDevice::new(url.to_string()))
                 }
                 "mock" => Box::new(MockDevice::new(
@@ -263,6 +318,9 @@ async fn handle_device_command(
 
             match device.connect().await {
                 Ok(_) => {
+                    // Record successful connection attempt
+                    state.record_connection_attempt(&device_id, true).await;
+
                     let status = device.get_status();
                     state.add_device(device_id.clone(), device).await;
 
@@ -277,6 +335,10 @@ async fn handle_device_command(
                     }
                 }
                 Err(e) => {
+                    // Record failed connection attempt
+                    state.record_connection_attempt(&device_id, false).await;
+                    state.record_device_error(&device_id, &e.to_string()).await;
+
                     send_response(
                         tx,
                         BridgeResponse::device_error(device_id.clone(), e.to_string()),
@@ -422,29 +484,66 @@ async fn handle_device_command(
             info!("Testing connection for device: {}", device_id);
 
             // Create a temporary device instance for testing
+            // Require explicit configuration - no unsafe defaults
             let mut test_device: Box<dyn crate::devices::Device> = match device_id.as_str() {
                 "ttl" => {
-                    let port = payload
+                    let port = match payload
                         .as_ref()
                         .and_then(|p| p.get("port"))
                         .and_then(|v| v.as_str())
-                        .unwrap_or("/dev/cu.usbmodem101");
+                    {
+                        Some(p) if !p.is_empty() => p,
+                        _ => {
+                            if let Some(req_id) = id {
+                                send_response(
+                                    tx,
+                                    BridgeResponse::ack(req_id, false, Some("TTL test requires 'port' in config".to_string())),
+                                )
+                                .await;
+                            }
+                            return;
+                        }
+                    };
                     Box::new(TtlDevice::new(port.to_string()))
                 }
                 "kernel" => {
-                    let ip = payload
+                    let ip = match payload
                         .as_ref()
                         .and_then(|p| p.get("ip"))
                         .and_then(|v| v.as_str())
-                        .unwrap_or("127.0.0.1");
+                    {
+                        Some(i) if !i.is_empty() => i,
+                        _ => {
+                            if let Some(req_id) = id {
+                                send_response(
+                                    tx,
+                                    BridgeResponse::ack(req_id, false, Some("Kernel test requires 'ip' in config".to_string())),
+                                )
+                                .await;
+                            }
+                            return;
+                        }
+                    };
                     Box::new(KernelDevice::new(ip.to_string()))
                 }
                 "pupil" => {
-                    let url = payload
+                    let url = match payload
                         .as_ref()
                         .and_then(|p| p.get("url"))
                         .and_then(|v| v.as_str())
-                        .unwrap_or("localhost:8081");
+                    {
+                        Some(u) if !u.is_empty() => u,
+                        _ => {
+                            if let Some(req_id) = id {
+                                send_response(
+                                    tx,
+                                    BridgeResponse::ack(req_id, false, Some("Pupil test requires 'url' in config".to_string())),
+                                )
+                                .await;
+                            }
+                            return;
+                        }
+                    };
                     Box::new(PupilDevice::new(url.to_string()))
                 }
                 "mock" => Box::new(MockDevice::new(

@@ -3,7 +3,7 @@
   import * as bridgeStore from '../stores/websocket.svelte.js';
 
   // Props
-  let { isOpen = false } = $props();
+  let { isOpen = $bindable(false) } = $props();
 
   // Local state using Svelte 5 runes
   let availableStreams = $state([]);
@@ -190,6 +190,17 @@
   // Store cleanup functions
   let unsubscribe = null;
 
+  // Refresh interval constant
+  const REFRESH_INTERVAL_MS = 5000;
+
+  // Helper to clear interval safely
+  function clearRefreshInterval() {
+    if (refreshInterval) {
+      clearInterval(refreshInterval);
+      refreshInterval = null;
+    }
+  }
+
   // Setup WebSocket message listener (one-time setup only)
   onMount(() => {
     // Listen for LSL messages
@@ -198,7 +209,6 @@
         handleLslMessage(message);
       }
     });
-    // Note: Interval management is handled by $effect to react to isOpen changes
   });
 
   onDestroy(() => {
@@ -208,11 +218,9 @@
       unsubscribe = null;
     }
 
-    // Clean up interval
-    if (refreshInterval) {
-      clearInterval(refreshInterval);
-      refreshInterval = null;
-    }
+    // CRITICAL: Always clean up interval on destroy, regardless of isOpen state
+    // This prevents the interval from running after component unmount
+    clearRefreshInterval();
   });
 
   // Effect to handle modal open/close
@@ -225,18 +233,16 @@
       // Setup interval if not already running
       if (!refreshInterval) {
         refreshInterval = setInterval(() => {
+          // Double-check isOpen in case it changed
           if (isOpen) {
             refreshStreams();
             getSyncStatus();
           }
-        }, 5000);
+        }, REFRESH_INTERVAL_MS);
       }
     } else {
       // Clean up when closing
-      if (refreshInterval) {
-        clearInterval(refreshInterval);
-        refreshInterval = null;
-      }
+      clearRefreshInterval();
     }
   });
 </script>

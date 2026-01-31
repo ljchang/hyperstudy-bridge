@@ -301,8 +301,6 @@ export const getLevelFilter = () => state.levelFilter;
 export const getDeviceFilter = () => state.deviceFilter;
 export const getSearchQuery = () => state.searchQuery;
 
-// Legacy alias for backwards compatibility
-export const getIsPolling = () => state.isListening;
 
 // Derived state exports
 export { getFilteredLogs, getDeviceList, getLogCounts };
@@ -319,10 +317,6 @@ export {
     init
 };
 
-// Legacy aliases for backwards compatibility
-export const startPolling = startListening;
-export const stopPolling = stopListening;
-export const fetchLogs = fetchHistoricalLogs;
 
 // Filter setter exports - mutate the state object properties
 export const setLevelFilter = (level) => { state.levelFilter = level; };

@@ -1,10 +1,11 @@
 <script>
   import { onMount } from 'svelte';
+  import { getVersion } from '@tauri-apps/api/app';
   import { tauriService } from '../services/tauri.js';
   import * as logsStore from '../stores/logs.svelte.js';
 
   // Props
-  let { isOpen = false } = $props();
+  let { isOpen = $bindable(false) } = $props();
 
   // Simplified settings state
   let settings = $state({
@@ -20,16 +21,11 @@
   // State management
   let isSaving = $state(false);
   let hasUnsavedChanges = $state(false);
-  let lastSaved = $state(null);
   let errors = $state({});
   let activeTab = $state('general');
 
   // Version info
-  let versionInfo = $state({
-    app: '0.7.7',
-    tauri: '2.x',
-    build: 'Release'
-  });
+  let appVersion = $state('...');
 
   // Load configuration
   async function loadSettings() {
@@ -38,10 +34,9 @@
       if (config) {
         settings = { ...settings, ...config };
       }
-      errors = {};
     } catch (error) {
       console.error('Failed to load settings:', error);
-      errors.load = 'Failed to load configuration';
+      // Don't set a blocking error - just use defaults
     }
   }
 
@@ -58,7 +53,6 @@
 
       await tauriService.saveConfiguration(settings);
       hasUnsavedChanges = false;
-      lastSaved = new Date();
       errors = {};
 
       // Apply logging settings immediately
@@ -110,6 +104,14 @@
 
   onMount(async () => {
     await loadSettings();
+
+    // Fetch app version from Tauri
+    try {
+      appVersion = await getVersion();
+    } catch (error) {
+      console.error('Failed to fetch app version:', error);
+      appVersion = 'unknown';
+    }
   });
 </script>
 
@@ -216,41 +218,17 @@
 
           {:else if activeTab === 'about'}
             <div class="settings-section">
-              <h3>Application Information</h3>
-              <div class="info-grid">
-                <div class="info-item">
-                  <span class="info-label">Application Version:</span>
-                  <span>{versionInfo.app}</span>
-                </div>
-                <div class="info-item">
-                  <span class="info-label">Tauri Version:</span>
-                  <span>{versionInfo.tauri}</span>
-                </div>
-                <div class="info-item">
-                  <span class="info-label">Build:</span>
-                  <span>{versionInfo.build}</span>
-                </div>
-              </div>
+              <h3>HyperStudy Bridge</h3>
+              <p class="version-display">Version {appVersion}</p>
+              <p class="about-description">
+                A desktop application for bridging HyperStudy with research hardware devices.
+              </p>
             </div>
 
             <div class="settings-section">
-              <h3>System Information</h3>
-              <div class="info-grid">
-                <div class="info-item">
-                  <span class="info-label">Platform:</span>
-                  <span>{navigator.platform}</span>
-                </div>
-                <div class="info-item">
-                  <span class="info-label">User Agent:</span>
-                  <span class="user-agent">{navigator.userAgent}</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="settings-section">
-              <h3>License & Credits</h3>
-              <p>HyperStudy Bridge is released under the MIT License.</p>
-              <p>Built with Tauri, Rust, Svelte, and TypeScript.</p>
+              <h3>Credits</h3>
+              <p>Built with Tauri, Rust, and Svelte.</p>
+              <p>Released under the MIT License.</p>
             </div>
           {/if}
         </div>
@@ -343,11 +321,6 @@
     color: var(--color-warning);
     font-size: 0.875rem;
     font-weight: 500;
-  }
-
-  .last-saved {
-    color: var(--color-text-secondary);
-    font-size: 0.75rem;
   }
 
   .close-btn {
@@ -512,33 +485,16 @@
     color: white;
   }
 
-  .info-grid {
-    display: grid;
-    gap: 0.75rem;
+  .version-display {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--color-primary);
+    margin: 0.5rem 0 1rem 0;
   }
 
-  .info-item {
-    display: grid;
-    grid-template-columns: 140px 1fr;
-    gap: 1rem;
-    align-items: center;
-  }
-
-  .info-label {
+  .about-description {
     color: var(--color-text-secondary);
-    font-size: 0.875rem;
-    font-weight: 500;
-  }
-
-  .info-item span {
-    color: var(--color-text-primary);
-    font-size: 0.875rem;
-  }
-
-  .user-agent {
-    font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', monospace;
-    font-size: 0.75rem !important;
-    word-break: break-all;
+    line-height: 1.5;
   }
 
   .settings-footer {

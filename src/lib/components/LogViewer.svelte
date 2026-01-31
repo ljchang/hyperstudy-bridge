@@ -3,7 +3,7 @@
   import * as logsStore from '../stores/logs.svelte.js';
 
   // Props
-  let { isOpen = false } = $props();
+  let { isOpen = $bindable(false) } = $props();
 
   // Reactive state from store - use $derived.by for computed values
   const logs = $derived.by(() => logsStore.getFilteredLogs());
