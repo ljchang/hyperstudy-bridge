@@ -207,7 +207,7 @@ dependencies = [
  "bitflags 2.9.4",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -622,7 +622,7 @@ dependencies = [
  "ciborium",
  "clap",
  "criterion-plot",
- "itertools 0.13.0",
+ "itertools",
  "num-traits",
  "oorandom",
  "plotters",
@@ -641,7 +641,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b1bcc0dc7dfae599d84ad0b1a55f80cde8af3725da8313b528da95ef783e338"
 dependencies = [
  "cast",
- "itertools 0.13.0",
+ "itertools",
 ]
 
 [[package]]
@@ -1647,7 +1647,7 @@ dependencies = [
 
 [[package]]
 name = "hyperstudy-bridge"
-version = "0.7.6"
+version = "0.7.7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1656,6 +1656,7 @@ dependencies = [
  "dashmap",
  "futures-util",
  "histogram",
+ "lsl",
  "metrics",
  "metrics-exporter-prometheus",
  "parking_lot",
@@ -1894,15 +1895,6 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.10.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
@@ -2133,6 +2125,22 @@ name = "log"
 version = "0.4.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
+
+[[package]]
+name = "lsl"
+version = "0.1.1"
+source = "git+https://github.com/labstreaminglayer/liblsl-rust.git?branch=main#afa1d251674591c11ebc06070de60914b6dafccf"
+dependencies = [
+ "lsl-sys",
+]
+
+[[package]]
+name = "lsl-sys"
+version = "0.1.1"
+source = "git+https://github.com/labstreaminglayer/liblsl-rust.git?branch=main#afa1d251674591c11ebc06070de60914b6dafccf"
+dependencies = [
+ "cmake",
+]
 
 [[package]]
 name = "mac"

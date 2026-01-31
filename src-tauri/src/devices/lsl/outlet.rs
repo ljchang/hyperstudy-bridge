@@ -1,19 +1,41 @@
 use super::sync::TimeSync;
-use super::types::{LslError, Sample, StreamInfo, StreamStatus};
+use super::types::{ChannelFormat, LslError, Sample, SampleData, StreamInfo, StreamStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
+use std::thread;
+use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
-/// Channel capacity for outgoing samples (prevents unbounded memory growth)
-#[allow(dead_code)]
-const SAMPLE_CHANNEL_CAPACITY: usize = 10000;
+// Import real LSL library
+use lsl;
+
+// Use std::sync channels for dedicated thread communication (avoids per-command runtime creation)
+use std::sync::mpsc as std_mpsc;
+
+/// Response channel type - uses std::sync::mpsc for thread-safe, non-async responses
+type ResponseSender<T> = std_mpsc::Sender<T>;
+
+/// Commands sent to the dedicated LSL outlet thread
+enum OutletCommand {
+    /// Push a sample with data and timestamp
+    PushSample {
+        data: SampleData,
+        timestamp: f64,
+        response: ResponseSender<Result<(), LslError>>,
+    },
+    /// Check if outlet has consumers
+    HaveConsumers {
+        response: ResponseSender<bool>,
+    },
+    /// Shutdown the outlet thread
+    Shutdown,
+}
 
 /// LSL stream outlet for publishing data
-#[derive(Debug)]
+/// Uses a dedicated thread pattern because lsl::StreamOutlet is not Send+Sync
 pub struct StreamOutlet {
     /// Stream information
     info: StreamInfo,
@@ -21,7 +43,7 @@ pub struct StreamOutlet {
     status: Arc<RwLock<StreamStatus>>,
     /// Time synchronization utility
     time_sync: Arc<TimeSync>,
-    /// Data buffer for outgoing samples
+    /// Data buffer for outgoing samples (local cache)
     buffer: Arc<RwLock<VecDeque<Sample>>>,
     /// Buffer size limit
     buffer_limit: usize,
@@ -29,12 +51,26 @@ pub struct StreamOutlet {
     active: Arc<AtomicBool>,
     /// Sample counter
     sample_count: Arc<AtomicU64>,
-    /// Data sender for async processing (bounded to prevent memory exhaustion)
-    #[allow(dead_code)]
-    data_sender: Option<mpsc::Sender<Sample>>,
+    /// Command sender to the dedicated LSL thread (std::sync for blocking recv in thread)
+    command_tx: std_mpsc::Sender<OutletCommand>,
+    /// Shutdown flag - thread polls this to know when to exit
+    shutdown_flag: Arc<AtomicBool>,
     /// Performance metrics
     bytes_sent: Arc<AtomicU64>,
     last_send_time: Arc<RwLock<Option<Instant>>>,
+    /// Thread join handle (wrapped in Option for Drop)
+    _thread_handle: Option<thread::JoinHandle<()>>,
+}
+
+// Manual Debug implementation since thread::JoinHandle doesn't implement Debug
+impl std::fmt::Debug for StreamOutlet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StreamOutlet")
+            .field("info", &self.info)
+            .field("active", &self.active.load(Ordering::Relaxed))
+            .field("sample_count", &self.sample_count.load(Ordering::Relaxed))
+            .finish()
+    }
 }
 
 /// Outlet configuration
@@ -50,6 +86,10 @@ pub struct OutletConfig {
     pub compression: u32,
     /// Enable data integrity checks
     pub enable_crc: bool,
+    /// Chunk size for LSL transmission (0 = one chunk per push)
+    pub chunk_size: i32,
+    /// Max buffered seconds in LSL outlet
+    pub max_buffered: i32,
 }
 
 impl Default for OutletConfig {
@@ -60,6 +100,8 @@ impl Default for OutletConfig {
             auto_timestamp: true,
             compression: 0,
             enable_crc: false,
+            chunk_size: 0,
+            max_buffered: 360, // 6 minutes default
         }
     }
 }
@@ -76,7 +118,7 @@ pub struct OutletManager {
 }
 
 impl StreamOutlet {
-    /// Create a new stream outlet
+    /// Create a new stream outlet with a dedicated thread for LSL operations
     pub async fn new(
         info: StreamInfo,
         config: OutletConfig,
@@ -87,8 +129,107 @@ impl StreamOutlet {
             info.name, info.stream_type, info.channel_count
         );
 
-        // In a real implementation, this would create an LSL outlet
-        // using lsl::StreamOutlet::new()
+        // Create std::sync channel for commands (allows blocking recv in thread)
+        let (command_tx, command_rx) = std_mpsc::channel::<OutletCommand>();
+
+        // Shutdown flag for clean thread termination
+        let shutdown_flag = Arc::new(AtomicBool::new(false));
+        let thread_shutdown_flag = shutdown_flag.clone();
+
+        // Clone info for the thread
+        let thread_info = info.clone();
+        let chunk_size = config.chunk_size;
+        let max_buffered = config.max_buffered;
+
+        // Spawn dedicated thread for LSL operations
+        // LSL objects use Rc internally and are not Send, so all LSL operations
+        // must happen on the same thread
+        let thread_handle = thread::spawn(move || {
+            // Convert our StreamInfo to LSL format string for stream type
+            let stream_type_str = match thread_info.stream_type {
+                super::types::StreamType::Markers => "Markers",
+                super::types::StreamType::FNIRS => "FNIRS",
+                super::types::StreamType::Gaze => "Gaze",
+                super::types::StreamType::Biosignals => "Biosignals",
+                super::types::StreamType::Generic => "Generic",
+            };
+
+            // Convert our ChannelFormat to LSL ChannelFormat
+            let lsl_format = match thread_info.channel_format {
+                ChannelFormat::Float32 => lsl::ChannelFormat::Float32,
+                ChannelFormat::Float64 => lsl::ChannelFormat::Double64,
+                ChannelFormat::String => lsl::ChannelFormat::String,
+                ChannelFormat::Int32 => lsl::ChannelFormat::Int32,
+                ChannelFormat::Int16 => lsl::ChannelFormat::Int16,
+                ChannelFormat::Int8 => lsl::ChannelFormat::Int8,
+                ChannelFormat::Int64 => lsl::ChannelFormat::Int64,
+            };
+
+            // Create LSL StreamInfo
+            let lsl_info = match lsl::StreamInfo::new(
+                &thread_info.name,
+                stream_type_str,
+                thread_info.channel_count,
+                thread_info.nominal_srate,
+                lsl_format,
+                &thread_info.source_id,
+            ) {
+                Ok(info) => info,
+                Err(e) => {
+                    error!("Failed to create LSL StreamInfo: {:?}", e);
+                    return;
+                }
+            };
+
+            // Create LSL StreamOutlet
+            let lsl_outlet = match lsl::StreamOutlet::new(&lsl_info, chunk_size, max_buffered) {
+                Ok(outlet) => outlet,
+                Err(e) => {
+                    error!("Failed to create LSL StreamOutlet: {:?}", e);
+                    return;
+                }
+            };
+
+            info!("LSL outlet thread started for: {}", thread_info.name);
+
+            // Process commands in a blocking loop using std::sync::mpsc
+            // No Tokio runtime needed - this is pure blocking I/O
+            loop {
+                // Check shutdown flag first
+                if thread_shutdown_flag.load(Ordering::Relaxed) {
+                    info!("LSL outlet thread shutdown flag set: {}", thread_info.name);
+                    break;
+                }
+
+                // Use recv_timeout to allow periodic shutdown flag checks
+                match command_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                    Ok(OutletCommand::PushSample {
+                        data,
+                        timestamp,
+                        response,
+                    }) => {
+                        let result = Self::push_sample_to_lsl(&lsl_outlet, &data, timestamp);
+                        let _ = response.send(result);
+                    }
+                    Ok(OutletCommand::HaveConsumers { response }) => {
+                        let has = lsl_outlet.have_consumers();
+                        let _ = response.send(has);
+                    }
+                    Ok(OutletCommand::Shutdown) => {
+                        info!("LSL outlet thread shutting down: {}", thread_info.name);
+                        break;
+                    }
+                    Err(std_mpsc::RecvTimeoutError::Timeout) => {
+                        // Normal timeout, continue loop to check shutdown flag
+                        continue;
+                    }
+                    Err(std_mpsc::RecvTimeoutError::Disconnected) => {
+                        info!("LSL outlet command channel closed: {}", thread_info.name);
+                        break;
+                    }
+                }
+            }
+        });
 
         let outlet = Self {
             info,
@@ -98,13 +239,113 @@ impl StreamOutlet {
             buffer_limit: config.buffer_size,
             active: Arc::new(AtomicBool::new(false)),
             sample_count: Arc::new(AtomicU64::new(0)),
-            data_sender: None,
+            command_tx,
+            shutdown_flag,
             bytes_sent: Arc::new(AtomicU64::new(0)),
             last_send_time: Arc::new(RwLock::new(None)),
+            _thread_handle: Some(thread_handle),
         };
 
         debug!("LSL outlet created successfully");
         Ok(outlet)
+    }
+
+    /// Push sample to the real LSL outlet (called from dedicated thread)
+    /// Uses push_sample_ex() when timestamp > 0 to preserve user-provided timestamps
+    fn push_sample_to_lsl(
+        outlet: &lsl::StreamOutlet,
+        data: &SampleData,
+        timestamp: f64,
+    ) -> Result<(), LslError> {
+        use lsl::ExPushable;
+        use lsl::Pushable;
+
+        // Use push_sample_ex() for explicit timestamps, push_sample() for auto-timestamp
+        // timestamp == 0.0 means "use current LSL time"
+        // pushthrough = true means the sample should be sent immediately
+        let use_explicit_timestamp = timestamp > 0.0;
+
+        match data {
+            SampleData::Float32(values) => {
+                if use_explicit_timestamp {
+                    outlet
+                        .push_sample_ex(values, timestamp, true)
+                        .map_err(|e| LslError::LslLibraryError(format!("Push failed: {:?}", e)))?;
+                } else {
+                    outlet
+                        .push_sample(values)
+                        .map_err(|e| LslError::LslLibraryError(format!("Push failed: {:?}", e)))?;
+                }
+            }
+            SampleData::Float64(values) => {
+                if use_explicit_timestamp {
+                    outlet
+                        .push_sample_ex(values, timestamp, true)
+                        .map_err(|e| LslError::LslLibraryError(format!("Push failed: {:?}", e)))?;
+                } else {
+                    outlet
+                        .push_sample(values)
+                        .map_err(|e| LslError::LslLibraryError(format!("Push failed: {:?}", e)))?;
+                }
+            }
+            SampleData::String(values) => {
+                if use_explicit_timestamp {
+                    outlet
+                        .push_sample_ex(values, timestamp, true)
+                        .map_err(|e| LslError::LslLibraryError(format!("Push failed: {:?}", e)))?;
+                } else {
+                    outlet
+                        .push_sample(values)
+                        .map_err(|e| LslError::LslLibraryError(format!("Push failed: {:?}", e)))?;
+                }
+            }
+            SampleData::Int32(values) => {
+                if use_explicit_timestamp {
+                    outlet
+                        .push_sample_ex(values, timestamp, true)
+                        .map_err(|e| LslError::LslLibraryError(format!("Push failed: {:?}", e)))?;
+                } else {
+                    outlet
+                        .push_sample(values)
+                        .map_err(|e| LslError::LslLibraryError(format!("Push failed: {:?}", e)))?;
+                }
+            }
+            SampleData::Int16(values) => {
+                if use_explicit_timestamp {
+                    outlet
+                        .push_sample_ex(values, timestamp, true)
+                        .map_err(|e| LslError::LslLibraryError(format!("Push failed: {:?}", e)))?;
+                } else {
+                    outlet
+                        .push_sample(values)
+                        .map_err(|e| LslError::LslLibraryError(format!("Push failed: {:?}", e)))?;
+                }
+            }
+            SampleData::Int8(values) => {
+                if use_explicit_timestamp {
+                    outlet
+                        .push_sample_ex(values, timestamp, true)
+                        .map_err(|e| LslError::LslLibraryError(format!("Push failed: {:?}", e)))?;
+                } else {
+                    outlet
+                        .push_sample(values)
+                        .map_err(|e| LslError::LslLibraryError(format!("Push failed: {:?}", e)))?;
+                }
+            }
+            SampleData::Int64(values) => {
+                if use_explicit_timestamp {
+                    outlet
+                        .push_sample_ex(values, timestamp, true)
+                        .map_err(|e| LslError::LslLibraryError(format!("Push failed: {:?}", e)))?;
+                } else {
+                    outlet
+                        .push_sample(values)
+                        .map_err(|e| LslError::LslLibraryError(format!("Push failed: {:?}", e)))?;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Start the outlet and begin publishing
@@ -138,6 +379,10 @@ impl StreamOutlet {
         let mut status = self.status.write().await;
         status.active = false;
 
+        // Set shutdown flag and send shutdown command to thread
+        self.shutdown_flag.store(true, Ordering::Relaxed);
+        let _ = self.command_tx.send(OutletCommand::Shutdown);
+
         info!("LSL outlet stopped");
         Ok(())
     }
@@ -161,7 +406,7 @@ impl StreamOutlet {
             });
         }
 
-        // Add to buffer
+        // Add to local buffer for tracking
         {
             let mut buffer = self.buffer.write().await;
 
@@ -198,8 +443,45 @@ impl StreamOutlet {
         let timestamp = sample.timestamp;
         let channel_count = sample.data.channel_count();
 
-        // In a real implementation, this would call outlet.push_sample()
-        self.simulate_send(sample).await?;
+        // Create response channel (std::sync - blocking recv is wrapped in spawn_blocking)
+        let (response_tx, response_rx) = std_mpsc::channel();
+
+        // Send command to dedicated LSL thread (std_mpsc::send is fast, OK to call from async)
+        self.command_tx
+            .send(OutletCommand::PushSample {
+                data: sample.data,
+                timestamp: sample.timestamp,
+                response: response_tx,
+            })
+            .map_err(|_| LslError::LslLibraryError("Outlet thread not responding".to_string()))?;
+
+        // Wait for response with timeout using spawn_blocking for the blocking recv
+        let result = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::task::spawn_blocking(move || {
+                response_rx.recv_timeout(std::time::Duration::from_secs(5))
+            })
+            .await
+        })
+        .await;
+
+        match result {
+            Ok(Ok(Ok(inner_result))) => inner_result?,
+            Ok(Ok(Err(_recv_err))) => {
+                return Err(LslError::LslLibraryError(
+                    "Outlet thread response timeout".to_string(),
+                ))
+            }
+            Ok(Err(_join_err)) => {
+                return Err(LslError::LslLibraryError(
+                    "Outlet thread task failed".to_string(),
+                ))
+            }
+            Err(_timeout) => {
+                return Err(LslError::LslLibraryError(
+                    "Outlet thread timeout".to_string(),
+                ))
+            }
+        }
 
         debug!(
             "Sample sent: timestamp={:.3}, channels={}",
@@ -215,6 +497,34 @@ impl StreamOutlet {
             self.send_sample(sample).await?;
         }
         Ok(())
+    }
+
+    /// Check if there are consumers listening to this outlet
+    pub async fn have_consumers(&self) -> bool {
+        let (response_tx, response_rx) = std_mpsc::channel();
+        if self
+            .command_tx
+            .send(OutletCommand::HaveConsumers {
+                response: response_tx,
+            })
+            .is_err()
+        {
+            return false;
+        }
+
+        // Use spawn_blocking for the blocking recv
+        let result = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::task::spawn_blocking(move || {
+                response_rx.recv_timeout(std::time::Duration::from_secs(1))
+            })
+            .await
+        })
+        .await;
+
+        match result {
+            Ok(Ok(Ok(has))) => has,
+            _ => false,
+        }
     }
 
     /// Get stream information
@@ -275,23 +585,14 @@ impl StreamOutlet {
             "seconds_since_last_send": seconds_since_last_send
         })
     }
+}
 
-    /// Simulate sending data (placeholder implementation)
-    async fn simulate_send(&self, sample: Sample) -> Result<(), LslError> {
-        // In a real implementation, this would call:
-        // self.lsl_outlet.push_sample(&sample_data, sample.timestamp)?;
-
-        // Simulate network delay
-        tokio::time::sleep(Duration::from_micros(10)).await;
-
-        // Simulate occasional errors
-        if sample.timestamp < 0.0 {
-            return Err(LslError::InvalidSampleData(
-                "Negative timestamp".to_string(),
-            ));
-        }
-
-        Ok(())
+impl Drop for StreamOutlet {
+    fn drop(&mut self) {
+        // Signal shutdown via flag (thread will see this within 100ms)
+        self.shutdown_flag.store(true, Ordering::Relaxed);
+        // Also send shutdown command for immediate response
+        let _ = self.command_tx.send(OutletCommand::Shutdown);
     }
 }
 
@@ -516,5 +817,169 @@ mod tests {
         let outlets = manager.list_outlets().await;
         assert_eq!(outlets.len(), 1);
         assert!(outlets.contains(&outlet_id));
+    }
+
+    #[tokio::test]
+    async fn test_sample_with_explicit_timestamp() {
+        // Test that explicit timestamps are preserved (push_sample_ex fix)
+        let time_sync = Arc::new(TimeSync::new(false));
+        let info = StreamInfo::ttl_markers("test_explicit_ts");
+        let config = OutletConfig::default();
+
+        let outlet = StreamOutlet::new(info, config, time_sync).await.unwrap();
+        outlet.start().await.unwrap();
+
+        // Send sample with explicit timestamp
+        let explicit_timestamp = 12345.6789;
+        let sample = Sample {
+            data: SampleData::ttl_marker("EXPLICIT_TS".to_string()),
+            timestamp: explicit_timestamp,
+        };
+
+        assert!(outlet.send_sample(sample).await.is_ok());
+        assert_eq!(outlet.get_sample_count(), 1);
+
+        // Verify the status records the explicit timestamp
+        let status = outlet.get_status().await;
+        assert!((status.last_timestamp - explicit_timestamp).abs() < 0.001);
+    }
+
+    #[tokio::test]
+    async fn test_sample_with_auto_timestamp() {
+        // Test that timestamp == 0.0 triggers auto-timestamping
+        let time_sync = Arc::new(TimeSync::new(false));
+        let info = StreamInfo::ttl_markers("test_auto_ts");
+        let config = OutletConfig::default();
+
+        let outlet = StreamOutlet::new(info, config, time_sync).await.unwrap();
+        outlet.start().await.unwrap();
+
+        // Send sample without timestamp (0.0 = auto-timestamp)
+        let sample = Sample {
+            data: SampleData::ttl_marker("AUTO_TS".to_string()),
+            timestamp: 0.0,
+        };
+
+        assert!(outlet.send_sample(sample).await.is_ok());
+
+        // Verify a timestamp was assigned
+        let status = outlet.get_status().await;
+        assert!(status.last_timestamp > 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_float32_sample_sending() {
+        // Test Float32 data type (common for fNIRS, EEG)
+        use crate::devices::lsl::types::{ChannelFormat, StreamType};
+
+        let time_sync = Arc::new(TimeSync::new(false));
+        let info = StreamInfo::new(
+            "float32_test".to_string(),
+            StreamType::Biosignals,
+            4, // 4 channels
+            100.0,
+            ChannelFormat::Float32,
+            "test_source".to_string(),
+        );
+        let config = OutletConfig::default();
+
+        let outlet = StreamOutlet::new(info, config, time_sync).await.unwrap();
+        outlet.start().await.unwrap();
+
+        // Send Float32 sample
+        let sample = Sample {
+            data: SampleData::Float32(vec![1.0, 2.0, 3.0, 4.0]),
+            timestamp: 5000.0,
+        };
+
+        assert!(outlet.send_sample(sample).await.is_ok());
+        assert_eq!(outlet.get_sample_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_float64_sample_sending() {
+        // Test Float64 data type (high precision)
+        use crate::devices::lsl::types::{ChannelFormat, StreamType};
+
+        let time_sync = Arc::new(TimeSync::new(false));
+        let info = StreamInfo::new(
+            "float64_test".to_string(),
+            StreamType::Generic,
+            2, // 2 channels
+            50.0,
+            ChannelFormat::Float64,
+            "test_source".to_string(),
+        );
+        let config = OutletConfig::default();
+
+        let outlet = StreamOutlet::new(info, config, time_sync).await.unwrap();
+        outlet.start().await.unwrap();
+
+        // Send Float64 sample
+        let sample = Sample {
+            data: SampleData::Float64(vec![1.23456789012345, 9.87654321098765]),
+            timestamp: 6000.0,
+        };
+
+        assert!(outlet.send_sample(sample).await.is_ok());
+        assert_eq!(outlet.get_sample_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_int32_sample_sending() {
+        // Test Int32 data type (integer signals)
+        use crate::devices::lsl::types::{ChannelFormat, StreamType};
+
+        let time_sync = Arc::new(TimeSync::new(false));
+        let info = StreamInfo::new(
+            "int32_test".to_string(),
+            StreamType::Generic,
+            3,
+            25.0,
+            ChannelFormat::Int32,
+            "test_source".to_string(),
+        );
+        let config = OutletConfig::default();
+
+        let outlet = StreamOutlet::new(info, config, time_sync).await.unwrap();
+        outlet.start().await.unwrap();
+
+        // Send Int32 sample with edge cases
+        let sample = Sample {
+            data: SampleData::Int32(vec![-1000000, 0, 1000000]),
+            timestamp: 7000.0,
+        };
+
+        assert!(outlet.send_sample(sample).await.is_ok());
+        assert_eq!(outlet.get_sample_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_channel_count_validation() {
+        // Test that channel count mismatch is caught
+        let time_sync = Arc::new(TimeSync::new(false));
+        let info = StreamInfo::ttl_markers("test_channel_validation"); // 1 channel
+        let config = OutletConfig::default();
+
+        let outlet = StreamOutlet::new(info, config, time_sync).await.unwrap();
+        outlet.start().await.unwrap();
+
+        // Try to send sample with wrong channel count
+        let sample = Sample {
+            data: SampleData::String(vec!["A".to_string(), "B".to_string()]), // 2 channels
+            timestamp: 1000.0,
+        };
+
+        let result = outlet.send_sample(sample).await;
+        assert!(result.is_err());
+
+        // Verify it's a DataFormatMismatch error
+        match result {
+            Err(LslError::DataFormatMismatch { expected, actual }) => {
+                assert!(expected.contains("1"));
+                assert!(actual.contains("2"));
+            }
+            _ => panic!("Expected DataFormatMismatch error"),
+        }
     }
 }

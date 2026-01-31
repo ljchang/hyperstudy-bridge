@@ -11,6 +11,7 @@ pub enum ChannelFormat {
     Int32,
     Int16,
     Int8,
+    Int64,
 }
 
 impl fmt::Display for ChannelFormat {
@@ -22,6 +23,7 @@ impl fmt::Display for ChannelFormat {
             ChannelFormat::Int32 => write!(f, "int32"),
             ChannelFormat::Int16 => write!(f, "int16"),
             ChannelFormat::Int8 => write!(f, "int8"),
+            ChannelFormat::Int64 => write!(f, "int64"),
         }
     }
 }
@@ -158,6 +160,7 @@ pub enum SampleData {
     Int32(Vec<i32>),
     Int16(Vec<i16>),
     Int8(Vec<i8>),
+    Int64(Vec<i64>),
 }
 
 impl SampleData {
@@ -170,6 +173,7 @@ impl SampleData {
             SampleData::Int32(data) => data.len(),
             SampleData::Int16(data) => data.len(),
             SampleData::Int8(data) => data.len(),
+            SampleData::Int64(data) => data.len(),
         }
     }
 
@@ -216,6 +220,13 @@ impl SampleData {
                 bytes
             }
             SampleData::Int8(data) => data.iter().map(|&x| x as u8).collect(),
+            SampleData::Int64(data) => {
+                let mut bytes = Vec::with_capacity(data.len() * 8);
+                for &value in data {
+                    bytes.extend_from_slice(&value.to_le_bytes());
+                }
+                bytes
+            }
         }
     }
 }

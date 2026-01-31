@@ -164,16 +164,24 @@
     }
   }
 
-  async function handleConfigSave(deviceId, newConfig) {
+  async function handleConfigSave(deviceId, newConfig, newLslConfig = null) {
     // Capture device name at start to prevent stale closure
     const deviceName = device.name;
     const wasConnected = device.status === 'connected';
 
     console.log(`Saving configuration for ${deviceId}:`, newConfig);
+    if (newLslConfig) {
+      console.log(`Saving LSL configuration:`, newLslConfig);
+    }
 
     try {
       // Update the device config locally
       device.config = { ...device.config, ...newConfig };
+
+      // Update LSL config if provided
+      if (newLslConfig) {
+        device.lslConfig = { ...device.lslConfig, ...newLslConfig };
+      }
 
       // If the device was connected, reconnect with new config
       // disconnectDevice properly awaits completion, so no arbitrary delay needed

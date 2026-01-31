@@ -1,5 +1,6 @@
 // Svelte 5 runes-based logs store
 // This file uses .svelte.js extension to enable runes
+// Uses object wrapper pattern for cross-module reactivity (Svelte 5 best practice)
 
 import { tauriService } from '../services/tauri.js';
 import { listen } from '@tauri-apps/api/event';
@@ -24,37 +25,55 @@ export class LogEntry {
     }
 }
 
-// State using Svelte 5 runes
-let logs = $state([]);
-let maxLogs = $state(1000);
-let autoScroll = $state(true);
-let isListening = $state(false);
-let isSettingUp = $state(false); // Guard to prevent concurrent setup
-let lastError = $state(null);
+// State using Svelte 5 runes with object wrapper for cross-module reactivity
+// This is the recommended pattern in Svelte 5 for shared state
+const state = $state({
+    logs: [],
+    maxLogs: 1000,
+    autoScroll: true,
+    isListening: false,
+    isSettingUp: false,
+    lastError: null,
+    levelFilter: 'all',
+    deviceFilter: 'all',
+    searchQuery: ''
+});
 
-// Filter state
-let levelFilter = $state('all'); // 'all', 'debug', 'info', 'warn', 'error'
-let deviceFilter = $state('all'); // 'all' or specific device id
-let searchQuery = $state('');
+// Cache for deduplication - stores hashes of recent logs to avoid O(n) lookups
+const recentLogHashes = new Set();
+const MAX_HASH_CACHE = 2000;
 
 // Event listener unlisten function
 let unlistenLogEvent = null;
+
+// Create a hash for log deduplication (O(1) lookup instead of O(n))
+function getLogHash(timestamp, level, message) {
+    return `${timestamp}-${level}-${message.substring(0, 50)}`;
+}
 
 // Add a log entry
 function addLog(level, message, device = null, source = 'bridge') {
     const entry = new LogEntry(level, message, new Date(), device, source);
 
-    // Add to beginning of array (newest first)
-    logs = [entry, ...logs];
+    // Add to beginning of array (newest first) using unshift for mutation
+    state.logs.unshift(entry);
 
     // Maintain circular buffer
-    if (logs.length > maxLogs) {
-        logs = logs.slice(0, maxLogs);
+    if (state.logs.length > state.maxLogs) {
+        state.logs.length = state.maxLogs; // Truncate array
     }
 }
 
 // Add a log entry from backend event (already has timestamp)
 function addLogFromEvent(logData) {
+    // Create hash for O(1) duplicate check
+    const hash = getLogHash(logData.timestamp, logData.level, logData.message);
+
+    // Skip if we've seen this log recently
+    if (recentLogHashes.has(hash)) {
+        return;
+    }
+
     const entry = new LogEntry(
         logData.level,
         logData.message,
@@ -63,41 +82,44 @@ function addLogFromEvent(logData) {
         logData.source || 'backend'
     );
 
-    // Check if we already have this log (avoid duplicates from historical fetch)
-    const exists = logs.some(existing =>
-        existing.timestamp.getTime() === entry.timestamp.getTime() &&
-        existing.message === entry.message &&
-        existing.level === entry.level
-    );
+    // Add hash to cache
+    recentLogHashes.add(hash);
 
-    if (!exists) {
-        // Add to beginning of array (newest first)
-        logs = [entry, ...logs];
-
-        // Maintain circular buffer
-        if (logs.length > maxLogs) {
-            logs = logs.slice(0, maxLogs);
+    // Maintain hash cache size
+    if (recentLogHashes.size > MAX_HASH_CACHE) {
+        // Remove oldest entries (first added)
+        const iterator = recentLogHashes.values();
+        for (let i = 0; i < 500; i++) {
+            recentLogHashes.delete(iterator.next().value);
         }
+    }
+
+    // Add to beginning of array (newest first)
+    state.logs.unshift(entry);
+
+    // Maintain circular buffer
+    if (state.logs.length > state.maxLogs) {
+        state.logs.length = state.maxLogs;
     }
 }
 
 // Filter logs based on current filters
 function getFilteredLogs() {
-    let filtered = logs;
+    let filtered = state.logs;
 
     // Level filter
-    if (levelFilter !== 'all') {
-        filtered = filtered.filter(log => log.level === levelFilter);
+    if (state.levelFilter !== 'all') {
+        filtered = filtered.filter(log => log.level === state.levelFilter);
     }
 
     // Device filter
-    if (deviceFilter !== 'all') {
-        filtered = filtered.filter(log => log.device === deviceFilter);
+    if (state.deviceFilter !== 'all') {
+        filtered = filtered.filter(log => log.device === state.deviceFilter);
     }
 
     // Search filter
-    if (searchQuery.trim()) {
-        const query = searchQuery.toLowerCase().trim();
+    if (state.searchQuery.trim()) {
+        const query = state.searchQuery.toLowerCase().trim();
         filtered = filtered.filter(log =>
             log.message.toLowerCase().includes(query) ||
             (log.device && log.device.toLowerCase().includes(query)) ||
@@ -111,7 +133,7 @@ function getFilteredLogs() {
 // Get unique device list from logs
 function getDeviceList() {
     const devices = new Set();
-    logs.forEach(log => {
+    state.logs.forEach(log => {
         if (log.device) {
             devices.add(log.device);
         }
@@ -122,14 +144,14 @@ function getDeviceList() {
 // Get log count by level
 function getLogCounts() {
     const counts = {
-        total: logs.length,
+        total: state.logs.length,
         debug: 0,
         info: 0,
         warn: 0,
         error: 0
     };
 
-    logs.forEach(log => {
+    state.logs.forEach(log => {
         if (Object.prototype.hasOwnProperty.call(counts, log.level)) {
             counts[log.level]++;
         }
@@ -143,60 +165,63 @@ async function fetchHistoricalLogs() {
     try {
         const result = await tauriService.getLogs();
         if (result.success && result.data) {
-            // Process backend logs and add them (oldest first to maintain order)
+            const newLogs = [];
+
+            // Process backend logs
             result.data.forEach(logData => {
-                const entry = new LogEntry(
-                    logData.level,
-                    logData.message,
-                    new Date(logData.timestamp),
-                    logData.device,
-                    logData.source || 'backend'
-                );
+                // Use hash for O(1) duplicate check
+                const hash = getLogHash(logData.timestamp, logData.level, logData.message);
 
-                // Check if we already have this log (avoid duplicates)
-                const exists = logs.some(existing =>
-                    existing.timestamp.getTime() === entry.timestamp.getTime() &&
-                    existing.message === entry.message &&
-                    existing.level === entry.level
-                );
-
-                if (!exists) {
-                    logs = [entry, ...logs];
+                if (!recentLogHashes.has(hash)) {
+                    const entry = new LogEntry(
+                        logData.level,
+                        logData.message,
+                        new Date(logData.timestamp),
+                        logData.device,
+                        logData.source || 'backend'
+                    );
+                    newLogs.push(entry);
+                    recentLogHashes.add(hash);
                 }
             });
 
-            // Sort by timestamp (newest first) and maintain circular buffer
-            logs = logs.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-            if (logs.length > maxLogs) {
-                logs = logs.slice(0, maxLogs);
+            if (newLogs.length > 0) {
+                // Combine and sort by timestamp (newest first)
+                const combined = [...newLogs, ...state.logs].sort((a, b) =>
+                    b.timestamp.getTime() - a.timestamp.getTime()
+                );
+
+                // Update state with sorted, truncated logs
+                state.logs.length = 0; // Clear array
+                state.logs.push(...combined.slice(0, state.maxLogs)); // Add truncated logs
             }
 
-            lastError = null;
+            state.lastError = null;
         }
     } catch (error) {
         console.error('Failed to fetch historical logs:', error);
-        lastError = error.message;
+        state.lastError = error.message;
     }
 }
 
 // Start listening for log events
 async function startListening() {
     // Prevent concurrent setup attempts (race condition guard)
-    if (isListening || isSettingUp) return;
+    if (state.isListening || state.isSettingUp) return;
 
-    isSettingUp = true;
+    state.isSettingUp = true;
 
     // Set up event listener for real-time log events
     try {
         unlistenLogEvent = await listen('log_event', (event) => {
             addLogFromEvent(event.payload);
         });
-        isListening = true;
+        state.isListening = true;
     } catch (error) {
         console.error('Failed to set up log event listener:', error);
-        lastError = error.message;
+        state.lastError = error.message;
     } finally {
-        isSettingUp = false;
+        state.isSettingUp = false;
     }
 }
 
@@ -206,12 +231,13 @@ function stopListening() {
         unlistenLogEvent();
         unlistenLogEvent = null;
     }
-    isListening = false;
+    state.isListening = false;
 }
 
 // Clear all logs
 function clearLogs() {
-    logs = [];
+    state.logs.length = 0; // Clear array by setting length
+    recentLogHashes.clear();
 }
 
 // Export logs to file
@@ -242,7 +268,7 @@ async function exportLogs() {
 // Add frontend log (for local logging)
 function log(level, message, device = null) {
     // Initialize if not already done
-    if (logs.length === 0 && !isListening) {
+    if (state.logs.length === 0 && !state.isListening) {
         init();
     }
     addLog(level, message, device, 'frontend');
@@ -265,18 +291,18 @@ function cleanup() {
     stopListening();
 }
 
-// Export public API as functions
-export const getLogs = () => logs;
-export const getMaxLogs = () => maxLogs;
-export const getAutoScroll = () => autoScroll;
-export const getIsListening = () => isListening;
-export const getLastError = () => lastError;
-export const getLevelFilter = () => levelFilter;
-export const getDeviceFilter = () => deviceFilter;
-export const getSearchQuery = () => searchQuery;
+// Export public API as getters that access the reactive state object
+export const getLogs = () => state.logs;
+export const getMaxLogs = () => state.maxLogs;
+export const getAutoScroll = () => state.autoScroll;
+export const getIsListening = () => state.isListening;
+export const getLastError = () => state.lastError;
+export const getLevelFilter = () => state.levelFilter;
+export const getDeviceFilter = () => state.deviceFilter;
+export const getSearchQuery = () => state.searchQuery;
 
 // Legacy alias for backwards compatibility
-export const getIsPolling = () => isListening;
+export const getIsPolling = () => state.isListening;
 
 // Derived state exports
 export { getFilteredLogs, getDeviceList, getLogCounts };
@@ -298,9 +324,9 @@ export const startPolling = startListening;
 export const stopPolling = stopListening;
 export const fetchLogs = fetchHistoricalLogs;
 
-// Filter setter exports
-export const setLevelFilter = (level) => levelFilter = level;
-export const setDeviceFilter = (device) => deviceFilter = device;
-export const setSearchQuery = (query) => searchQuery = query;
-export const setAutoScroll = (enabled) => autoScroll = enabled;
-export const setMaxLogs = (max) => maxLogs = max;
+// Filter setter exports - mutate the state object properties
+export const setLevelFilter = (level) => { state.levelFilter = level; };
+export const setDeviceFilter = (device) => { state.deviceFilter = device; };
+export const setSearchQuery = (query) => { state.searchQuery = query; };
+export const setAutoScroll = (enabled) => { state.autoScroll = enabled; };
+export const setMaxLogs = (max) => { state.maxLogs = max; };

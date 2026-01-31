@@ -1,6 +1,6 @@
 [package]
 name = "hyperstudy-bridge"
-version = "0.7.7"
+version = "0.7.8"
 description = "HyperStudy Bridge - Hardware Device Integration"
 authors = ["HyperStudy Team"]
 edition = "2021"
@@ -27,6 +27,9 @@ tokio = { version = "1", features = ["full"] }
 serialport = "4.5"
 tokio-tungstenite = "0.27"
 tungstenite = "0.27"
+# LSL - using main branch for Apple Clang 17+ compatibility fix (liblsl 1.16.2)
+# See: https://github.com/labstreaminglayer/liblsl-rust/issues/5
+lsl = { git = "https://github.com/labstreaminglayer/liblsl-rust.git", branch = "main" }
 
 # Utilities
 anyhow = "1"

@@ -3,14 +3,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
-use tokio::time::{sleep, timeout};
+use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
+
+// Import real LSL library
+use lsl;
 
 /// Maximum number of discovered streams to cache (prevents unbounded HashMap growth)
 const MAX_DISCOVERED_STREAMS: usize = 100;
-
-/// Channel capacity for discovery events (prevents unbounded memory growth)
-const DISCOVERY_CHANNEL_CAPACITY: usize = 100;
 
 /// Stream discovery and resolution service
 #[derive(Debug)]
@@ -72,6 +72,21 @@ pub enum DiscoveryEvent {
     StreamUpdated(DiscoveredStream),
     DiscoveryCompleted,
     DiscoveryError(String),
+}
+
+/// Internal struct to hold data extracted from lsl::StreamInfo inside spawn_blocking.
+/// This struct contains only Send types (String, primitives) so it can cross thread boundaries.
+#[derive(Debug)]
+struct ExtractedStreamData {
+    name: String,
+    stream_type: String,
+    channel_count: i32,
+    nominal_srate: f64,
+    channel_format: lsl::ChannelFormat,
+    source_id: String,
+    hostname: String,
+    uid: String,
+    session_id: String,
 }
 
 impl StreamResolver {
@@ -143,7 +158,7 @@ impl StreamResolver {
         info!("Stopping LSL stream discovery");
     }
 
-    /// Perform one-time stream discovery
+    /// Perform one-time stream discovery using real LSL library
     pub async fn discover_streams(&self) -> Result<Vec<DiscoveredStream>, LslError> {
         info!(
             "Performing one-time stream discovery (timeout: {:?})",
@@ -151,12 +166,95 @@ impl StreamResolver {
         );
 
         let discovery_start = Instant::now();
+        let timeout_secs = self.timeout_duration.as_secs_f64();
 
-        // Simulate stream discovery
-        // In a real implementation, this would call lsl::resolve_streams()
-        let discovered = timeout(self.timeout_duration, self.simulate_discovery())
-            .await
-            .map_err(|_| LslError::DiscoveryTimeout)?;
+        // Use spawn_blocking because lsl::resolve_streams is a blocking FFI call.
+        // CRITICAL: Extract ALL data from lsl::StreamInfo INSIDE the closure because
+        // lsl::StreamInfo contains Rc internally (not Send) and cannot cross thread boundaries.
+        let extracted_streams = tokio::task::spawn_blocking(move || {
+            let lsl_streams = lsl::resolve_streams(timeout_secs)?;
+
+            // Extract all data inside this closure - return only Send types
+            let extracted: Vec<ExtractedStreamData> = lsl_streams
+                .into_iter()
+                .map(|info| ExtractedStreamData {
+                    name: info.stream_name(),
+                    stream_type: info.stream_type(),
+                    channel_count: info.channel_count(),
+                    nominal_srate: info.nominal_srate(),
+                    channel_format: info.channel_format(),
+                    source_id: info.source_id(),
+                    hostname: info.hostname(),
+                    uid: info.uid(),
+                    session_id: info.session_id(),
+                })
+                .collect();
+
+            Ok::<_, lsl::Error>(extracted)
+        })
+        .await
+        .map_err(|e| LslError::LslLibraryError(format!("Task join error: {}", e)))?
+        .map_err(|e| LslError::LslLibraryError(format!("LSL resolve error: {:?}", e)))?;
+
+        let now = std::time::SystemTime::now();
+        let mut discovered = Vec::new();
+
+        for extracted in extracted_streams {
+            // Map LSL channel format to our ChannelFormat
+            let channel_format = match extracted.channel_format {
+                lsl::ChannelFormat::Float32 => ChannelFormat::Float32,
+                lsl::ChannelFormat::Double64 => ChannelFormat::Float64,
+                lsl::ChannelFormat::String => ChannelFormat::String,
+                lsl::ChannelFormat::Int8 => ChannelFormat::Int8,
+                lsl::ChannelFormat::Int16 => ChannelFormat::Int16,
+                lsl::ChannelFormat::Int32 => ChannelFormat::Int32,
+                lsl::ChannelFormat::Int64 => ChannelFormat::Int64,
+                _ => ChannelFormat::Float32, // Default fallback
+            };
+
+            // Map stream type string to our StreamType enum
+            let stream_type = match extracted.stream_type.to_lowercase().as_str() {
+                "markers" | "marker" => StreamType::Markers,
+                "fnirs" | "nirs" => StreamType::FNIRS,
+                "gaze" | "eyetracking" => StreamType::Gaze,
+                // EEG, EMG, ECG, and other biosignals map to Biosignals
+                "eeg" | "emg" | "ecg" | "biosignals" | "physio" | "physiological" => {
+                    StreamType::Biosignals
+                }
+                // Video, Audio, and others map to Generic
+                _ => StreamType::Generic,
+            };
+
+            // Apply filters if any
+            let stream_info = StreamInfo {
+                name: extracted.name,
+                stream_type,
+                channel_count: extracted.channel_count as u32,
+                channel_format,
+                nominal_srate: extracted.nominal_srate,
+                source_id: extracted.source_id,
+                hostname: extracted.hostname,
+                metadata: std::collections::HashMap::new(),
+            };
+
+            if !self.filters.is_empty() {
+                let matches = self.filters.iter().any(|f| self.matches_filter(&stream_info, f));
+                if !matches {
+                    continue;
+                }
+            }
+
+            discovered.push(DiscoveredStream {
+                info: stream_info,
+                discovered_at: now,
+                last_seen: now,
+                available: true,
+                uid: extracted.uid,
+                session_id: extracted.session_id,
+                data_loss: 0.0,
+                time_stamps: (),
+            });
+        }
 
         let discovery_time = discovery_start.elapsed();
         info!(
@@ -326,81 +424,6 @@ impl StreamResolver {
         let _ = sender.try_send(DiscoveryEvent::DiscoveryCompleted);
     }
 
-    /// Simulate stream discovery (placeholder implementation)
-    async fn simulate_discovery(&self) -> Vec<DiscoveredStream> {
-        // Simulate discovery delay
-        sleep(Duration::from_millis(500)).await;
-
-        let now = std::time::SystemTime::now();
-        let mut discovered = Vec::new();
-
-        // Create some mock streams for testing
-        // In a real implementation, this would call lsl::resolve_streams()
-
-        // Mock TTL stream
-        if self.should_include_mock_stream("ttl") {
-            discovered.push(DiscoveredStream {
-                info: StreamInfo::ttl_markers("mock_ttl_device"),
-                discovered_at: now,
-                last_seen: now,
-                available: true,
-                uid: "mock_ttl_stream_001".to_string(),
-                session_id: "session_001".to_string(),
-                data_loss: 0.0,
-                time_stamps: (),
-            });
-        }
-
-        // Mock fNIRS stream
-        if self.should_include_mock_stream("fnirs") {
-            discovered.push(DiscoveredStream {
-                info: StreamInfo::kernel_fnirs("mock_kernel_device", 16),
-                discovered_at: now,
-                last_seen: now,
-                available: true,
-                uid: "mock_fnirs_stream_001".to_string(),
-                session_id: "session_002".to_string(),
-                data_loss: 0.1,
-                time_stamps: (),
-            });
-        }
-
-        // Mock gaze stream
-        if self.should_include_mock_stream("gaze") {
-            discovered.push(DiscoveredStream {
-                info: StreamInfo::pupil_gaze("mock_pupil_device"),
-                discovered_at: now,
-                last_seen: now,
-                available: true,
-                uid: "mock_gaze_stream_001".to_string(),
-                session_id: "session_003".to_string(),
-                data_loss: 0.05,
-                time_stamps: (),
-            });
-        }
-
-        debug!("Discovered {} mock streams", discovered.len());
-        discovered
-    }
-
-    /// Check if mock stream should be included based on filters
-    fn should_include_mock_stream(&self, stream_type: &str) -> bool {
-        if self.filters.is_empty() {
-            return true;
-        }
-
-        let mock_type = match stream_type {
-            "ttl" => StreamType::Markers,
-            "fnirs" => StreamType::FNIRS,
-            "gaze" => StreamType::Gaze,
-            _ => StreamType::Generic,
-        };
-
-        self.filters
-            .iter()
-            .any(|filter| filter.stream_type.is_none() || filter.stream_type == Some(mock_type))
-    }
-
     /// Check if stream matches filter criteria
     fn matches_filter(&self, stream_info: &StreamInfo, filter: &StreamFilter) -> bool {
         // Check name pattern
@@ -489,26 +512,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_stream_discovery() {
-        let resolver = StreamResolver::new(5.0);
+        // Use a short timeout since we're testing the API, not waiting for streams
+        let resolver = StreamResolver::new(0.5);
         let streams = resolver.discover_streams().await.unwrap();
 
-        // Should find mock streams
-        assert!(!streams.is_empty());
-
-        // Check cache is populated
+        // Real LSL discovery may or may not find streams depending on environment
+        // Just verify discovery completes without error and caching works
         let cached_streams = resolver.get_discovered_streams().await;
         assert_eq!(streams.len(), cached_streams.len());
     }
 
     #[tokio::test]
     async fn test_stream_filtering() {
-        let resolver = StreamResolver::new(5.0);
+        let resolver = StreamResolver::new(0.5);
         let _ = resolver.discover_streams().await.unwrap();
 
-        let markers = resolver.find_by_type(StreamType::Markers).await;
-        assert!(!markers.is_empty());
-
-        let fnirs = resolver.find_by_type(StreamType::FNIRS).await;
-        // May or may not be empty depending on mock implementation
+        // Real LSL won't have mock streams - just verify filtering works without panic
+        let _markers = resolver.find_by_type(StreamType::Markers).await;
+        let _fnirs = resolver.find_by_type(StreamType::FNIRS).await;
     }
 }

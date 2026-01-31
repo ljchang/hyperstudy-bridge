@@ -5,12 +5,12 @@
   // Props
   let { isOpen = false } = $props();
 
-  // Reactive state from store
-  const logs = $derived(logsStore.getFilteredLogs());
-  const logCounts = $derived(logsStore.getLogCounts());
-  const deviceList = $derived(logsStore.getDeviceList());
-  const isListening = $derived(logsStore.getIsListening());
-  const autoScroll = $derived(logsStore.getAutoScroll());
+  // Reactive state from store - use $derived.by for computed values
+  const logs = $derived.by(() => logsStore.getFilteredLogs());
+  const logCounts = $derived.by(() => logsStore.getLogCounts());
+  const deviceList = $derived.by(() => logsStore.getDeviceList());
+  const isListening = $derived.by(() => logsStore.getIsListening());
+  const autoScroll = $derived.by(() => logsStore.getAutoScroll());
 
   // Local state
   let logContainer = $state(null);
@@ -21,13 +21,19 @@
   let deviceFilter = $state(logsStore.getDeviceFilter());
 
   // Auto-scroll to bottom when new logs arrive and auto-scroll is enabled
+  // Use a debounced approach to avoid excessive scrolling
+  let scrollTimeoutId = null;
   $effect(() => {
-    if (autoScroll && logContainer && logs.length > 0) {
-      requestAnimationFrame(() => {
+    const logCount = logs.length; // Track dependency
+    if (autoScroll && logContainer && logCount > 0) {
+      // Clear any pending scroll
+      if (scrollTimeoutId) clearTimeout(scrollTimeoutId);
+      // Debounce scrolling to batch rapid updates
+      scrollTimeoutId = setTimeout(() => {
         if (logContainer) {
           logContainer.scrollTop = logContainer.scrollHeight;
         }
-      });
+      }, 50);
     }
   });
 
@@ -129,6 +135,8 @@
   });
 
   onDestroy(() => {
+    // Clean up scroll timeout
+    if (scrollTimeoutId) clearTimeout(scrollTimeoutId);
     // Always stop listening when component is destroyed
     logsStore.stopListening();
   });

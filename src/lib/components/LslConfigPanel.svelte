@@ -32,8 +32,8 @@
     })
   );
 
-  // Get sync quality indicator
-  const syncQuality = $derived(() => {
+  // Get sync quality indicator - NOTE: $derived should return a value, not a function
+  const syncQuality = $derived.by(() => {
     if (syncStatus.quality >= 0.9) return { label: 'Excellent', color: 'var(--color-success)' };
     if (syncStatus.quality >= 0.7) return { label: 'Good', color: 'var(--color-primary)' };
     if (syncStatus.quality >= 0.5) return { label: 'Fair', color: 'var(--color-warning)' };

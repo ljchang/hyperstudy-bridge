@@ -26,22 +26,6 @@
         required: true,
         pattern: '^(/dev/(tty\\.|cu\\.|ttyUSB)|COM\\d+)',
         errorMessage: 'Invalid port format. Expected /dev/cu.*, /dev/tty.*, /dev/ttyUSB*, or COM*'
-      },
-      baudRate: {
-        label: 'Baud Rate',
-        type: 'select',
-        options: [9600, 19200, 38400, 57600, 115200],
-        default: 115200,
-        required: true
-      },
-      pulseDuration: {
-        label: 'Pulse Duration (ms)',
-        type: 'number',
-        min: 1,
-        max: 1000,
-        default: 10,
-        required: true,
-        errorMessage: 'Duration must be between 1-1000ms'
       }
     },
     kernel: {
