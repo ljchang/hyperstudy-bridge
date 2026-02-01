@@ -29,9 +29,13 @@
   $effect(() => {
     if (isOpen) {
       // Start listening when opening if not already running
+      // Use requestAnimationFrame to defer init until after the modal renders
+      // This prevents UI freeze when opening the log viewer
       if (!isListening) {
-        logsStore.init().catch(err => {
-          console.error('Failed to initialize log viewer:', err);
+        requestAnimationFrame(() => {
+          logsStore.init().catch(err => {
+            console.error('Failed to initialize log viewer:', err);
+          });
         });
       }
     } else {

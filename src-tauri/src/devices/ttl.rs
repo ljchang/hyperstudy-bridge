@@ -3,10 +3,11 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serialport::{self, SerialPort};
 use std::io::{Read, Write};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 const PULSE_COMMAND: &[u8] = b"PULSE\n";
 const PULSE_DURATION_MS: u64 = 10;
@@ -247,16 +248,37 @@ impl TtlDevice {
             // Measure latency around the blocking operation
             let start = Instant::now();
 
-            // Run blocking serial I/O on the blocking thread pool
+            // Run blocking serial I/O on the blocking thread pool with panic recovery
             let result = tokio::task::spawn_blocking(move || {
-                let mut port = port_clone
-                    .lock()
-                    .map_err(|_| DeviceError::CommunicationError("Mutex poisoned".to_string()))?;
-                port.write_all(PULSE_COMMAND)
-                    .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
-                port.flush()
-                    .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
-                Ok::<(), DeviceError>(())
+                // Wrap in catch_unwind to prevent mutex poisoning on panic
+                let panic_result = catch_unwind(AssertUnwindSafe(|| {
+                    let mut port = port_clone
+                        .lock()
+                        .map_err(|e| {
+                            error!("Mutex poisoned in send_pulse: {}", e);
+                            DeviceError::CommunicationError("Mutex poisoned - device needs reset".to_string())
+                        })?;
+                    port.write_all(PULSE_COMMAND)
+                        .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
+                    port.flush()
+                        .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
+                    Ok::<(), DeviceError>(())
+                }));
+
+                match panic_result {
+                    Ok(result) => result,
+                    Err(panic_info) => {
+                        let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                            s.to_string()
+                        } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                            s.clone()
+                        } else {
+                            "Unknown panic in serial operation".to_string()
+                        };
+                        error!("Panic caught in send_pulse: {}", msg);
+                        Err(DeviceError::CommunicationError(format!("Serial operation panicked: {}", msg)))
+                    }
+                }
             })
             .await
             .map_err(|e| DeviceError::CommunicationError(format!("Task join error: {}", e)))?;
@@ -301,60 +323,78 @@ impl Device for TtlDevice {
         let port_name = self.port_name.clone();
         let baud_rate = self.config.baud_rate;
 
-        // Run all blocking serial I/O on the blocking thread pool
+        // Run all blocking serial I/O on the blocking thread pool with panic recovery
         let connect_result = tokio::task::spawn_blocking(move || {
-            let mut port = serialport::new(&port_name, baud_rate)
-                .timeout(Duration::from_millis(500))
-                .open()
-                .map_err(|e| {
-                    DeviceError::ConnectionFailed(format!("Failed to open serial port: {}", e))
+            // Wrap in catch_unwind to prevent panic propagation
+            let panic_result = catch_unwind(AssertUnwindSafe(|| {
+                let mut port = serialport::new(&port_name, baud_rate)
+                    .timeout(Duration::from_millis(500))
+                    .open()
+                    .map_err(|e| {
+                        DeviceError::ConnectionFailed(format!("Failed to open serial port: {}", e))
+                    })?;
+
+                // Validate connection by sending TEST command
+                port.write_all(b"TEST\n").map_err(|e| {
+                    DeviceError::ConnectionFailed(format!("Failed to send TEST command: {}", e))
                 })?;
 
-            // Validate connection by sending TEST command
-            port.write_all(b"TEST\n").map_err(|e| {
-                DeviceError::ConnectionFailed(format!("Failed to send TEST command: {}", e))
-            })?;
+                port.flush()
+                    .map_err(|e| DeviceError::ConnectionFailed(format!("Failed to flush: {}", e)))?;
 
-            port.flush()
-                .map_err(|e| DeviceError::ConnectionFailed(format!("Failed to flush: {}", e)))?;
+                // Small delay for device to respond (blocking sleep is fine in spawn_blocking)
+                std::thread::sleep(Duration::from_millis(100));
 
-            // Small delay for device to respond (blocking sleep is fine in spawn_blocking)
-            std::thread::sleep(Duration::from_millis(100));
-
-            // Read response
-            let mut buffer = vec![0u8; 256];
-            match port.read(&mut buffer) {
-                Ok(bytes_read) => {
-                    buffer.truncate(bytes_read);
-                    let response = String::from_utf8_lossy(&buffer).trim().to_string();
-                    if response.is_empty() {
+                // Read response
+                let mut buffer = vec![0u8; 256];
+                match port.read(&mut buffer) {
+                    Ok(bytes_read) => {
+                        buffer.truncate(bytes_read);
+                        let response = String::from_utf8_lossy(&buffer).trim().to_string();
+                        if response.is_empty() {
+                            return Err(DeviceError::ConnectionFailed(
+                                "Device did not respond to TEST command. Is this the correct device?"
+                                    .to_string(),
+                            ));
+                        }
+                        info!("TTL device validated. Response: {}", response);
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
                         return Err(DeviceError::ConnectionFailed(
-                            "Device did not respond to TEST command. Is this the correct device?"
+                            "Device timeout - no response to TEST command. Check device connection."
                                 .to_string(),
                         ));
                     }
-                    info!("TTL device validated. Response: {}", response);
+                    Err(e) => {
+                        return Err(DeviceError::ConnectionFailed(format!(
+                            "Failed to read validation response: {}",
+                            e
+                        )));
+                    }
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                    return Err(DeviceError::ConnectionFailed(
-                        "Device timeout - no response to TEST command. Check device connection."
-                            .to_string(),
-                    ));
-                }
-                Err(e) => {
-                    return Err(DeviceError::ConnectionFailed(format!(
-                        "Failed to read validation response: {}",
-                        e
-                    )));
+
+                // Reset timeout to normal operation value
+                port.set_timeout(Duration::from_millis(100)).map_err(|e| {
+                    DeviceError::ConnectionFailed(format!("Failed to configure port: {}", e))
+                })?;
+
+                Ok(port)
+            }));
+
+            match panic_result {
+                Ok(result) => result,
+                Err(panic_info) => {
+                    let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                        s.to_string()
+                    } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        "Unknown panic during connection".to_string()
+                    };
+                    error!("Panic caught in connect: {}", msg);
+                    Err(DeviceError::ConnectionFailed(format!("Connection panicked: {}", msg)))
                 }
             }
-
-            // Reset timeout to normal operation value
-            port.set_timeout(Duration::from_millis(100)).map_err(|e| {
-                DeviceError::ConnectionFailed(format!("Failed to configure port: {}", e))
-            })?;
-
-            Ok(port)
         })
         .await
         .map_err(|e| DeviceError::ConnectionFailed(format!("Task join error: {}", e)))?;
@@ -402,16 +442,36 @@ impl Device for TtlDevice {
 
             let start = Instant::now();
 
-            // Run blocking serial I/O on the blocking thread pool
+            // Run blocking serial I/O on the blocking thread pool with panic recovery
             let result = tokio::task::spawn_blocking(move || {
-                let mut port = port_clone
-                    .lock()
-                    .map_err(|_| DeviceError::CommunicationError("Mutex poisoned".to_string()))?;
-                port.write_all(&data_owned)
-                    .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
-                port.flush()
-                    .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
-                Ok::<(), DeviceError>(())
+                let panic_result = catch_unwind(AssertUnwindSafe(|| {
+                    let mut port = port_clone
+                        .lock()
+                        .map_err(|e| {
+                            error!("Mutex poisoned in send: {}", e);
+                            DeviceError::CommunicationError("Mutex poisoned - device needs reset".to_string())
+                        })?;
+                    port.write_all(&data_owned)
+                        .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
+                    port.flush()
+                        .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
+                    Ok::<(), DeviceError>(())
+                }));
+
+                match panic_result {
+                    Ok(result) => result,
+                    Err(panic_info) => {
+                        let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                            s.to_string()
+                        } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                            s.clone()
+                        } else {
+                            "Unknown panic in send operation".to_string()
+                        };
+                        error!("Panic caught in send: {}", msg);
+                        Err(DeviceError::CommunicationError(format!("Send operation panicked: {}", msg)))
+                    }
+                }
             })
             .await
             .map_err(|e| DeviceError::CommunicationError(format!("Task join error: {}", e)))?;
@@ -436,19 +496,39 @@ impl Device for TtlDevice {
 
             let start = Instant::now();
 
-            // Run blocking serial I/O on the blocking thread pool
+            // Run blocking serial I/O on the blocking thread pool with panic recovery
             let result = tokio::task::spawn_blocking(move || {
-                let mut buffer = vec![0u8; 256];
-                let mut port = port_clone
-                    .lock()
-                    .map_err(|_| DeviceError::CommunicationError("Mutex poisoned".to_string()))?;
-                match port.read(&mut buffer) {
-                    Ok(bytes_read) => {
-                        buffer.truncate(bytes_read);
-                        Ok(buffer)
+                let panic_result = catch_unwind(AssertUnwindSafe(|| {
+                    let mut buffer = vec![0u8; 256];
+                    let mut port = port_clone
+                        .lock()
+                        .map_err(|e| {
+                            error!("Mutex poisoned in receive: {}", e);
+                            DeviceError::CommunicationError("Mutex poisoned - device needs reset".to_string())
+                        })?;
+                    match port.read(&mut buffer) {
+                        Ok(bytes_read) => {
+                            buffer.truncate(bytes_read);
+                            Ok(buffer)
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => Ok(Vec::new()),
+                        Err(e) => Err(DeviceError::CommunicationError(e.to_string())),
                     }
-                    Err(e) if e.kind() == std::io::ErrorKind::TimedOut => Ok(Vec::new()),
-                    Err(e) => Err(DeviceError::CommunicationError(e.to_string())),
+                }));
+
+                match panic_result {
+                    Ok(result) => result,
+                    Err(panic_info) => {
+                        let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                            s.to_string()
+                        } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                            s.clone()
+                        } else {
+                            "Unknown panic in receive operation".to_string()
+                        };
+                        error!("Panic caught in receive: {}", msg);
+                        Err(DeviceError::CommunicationError(format!("Receive operation panicked: {}", msg)))
+                    }
                 }
             })
             .await
@@ -514,6 +594,14 @@ impl Device for TtlDevice {
         } else {
             Err(DeviceError::NotConnected)
         }
+    }
+
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
     }
 }
 

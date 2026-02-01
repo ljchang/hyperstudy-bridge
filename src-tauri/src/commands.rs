@@ -128,34 +128,19 @@ pub async fn connect_device(
         device_type, config
     );
 
+    // Track if this is a TTL device so we can set up callbacks after connection
+    let is_ttl_device = device_type == "ttl";
+
     let mut device: Box<dyn Device> = match device_type.as_str() {
         "ttl" => {
             let port = config
                 .get("port")
                 .and_then(|v| v.as_str())
                 .unwrap_or("/dev/cu.usbmodem101");
-            let mut ttl_device = TtlDevice::new(port.to_string());
-
-            // Set up performance monitoring callback
-            let state_clone = state.inner().clone();
-            ttl_device.set_performance_callback(
-                move |device_id, latency, bytes_sent, bytes_received| {
-                    let state_clone = state_clone.clone();
-                    let device_id = device_id.to_string();
-                    tokio::spawn(async move {
-                        state_clone
-                            .record_device_operation(
-                                &device_id,
-                                latency,
-                                bytes_sent,
-                                bytes_received,
-                            )
-                            .await;
-                    });
-                },
-            );
-
-            Box::new(ttl_device)
+            // Note: Performance callback is set up AFTER successful connection
+            // to avoid race conditions where the callback fires before the device
+            // is registered in state
+            Box::new(TtlDevice::new(port.to_string()))
         }
         "kernel" => {
             let ip = config
@@ -193,6 +178,38 @@ pub async fn connect_device(
             state.record_connection_attempt(&device_id, true).await;
 
             state.add_device(device_id.clone(), device).await;
+
+            // Set up performance callback for TTL devices AFTER registration
+            // This prevents race conditions where the callback fires before
+            // the device is in state
+            if is_ttl_device {
+                if let Some(device_lock) = state.get_device(&device_id).await {
+                    let mut device = device_lock.write().await;
+                    // Downcast to TtlDevice to set callback
+                    if let Some(any_ref) = device.as_any_mut() {
+                        if let Some(ttl_device) = any_ref.downcast_mut::<TtlDevice>() {
+                            let state_clone = state.inner().clone();
+                            let device_id_clone = device_id.clone();
+                            ttl_device.set_performance_callback(
+                                move |_device_id, latency, bytes_sent, bytes_received| {
+                                    let state_clone = state_clone.clone();
+                                    let device_id = device_id_clone.clone();
+                                    tokio::spawn(async move {
+                                        state_clone
+                                            .record_device_operation(
+                                                &device_id,
+                                                latency,
+                                                bytes_sent,
+                                                bytes_received,
+                                            )
+                                            .await;
+                                    });
+                                },
+                            );
+                        }
+                    }
+                }
+            }
 
             // Emit status update
             app_handle
@@ -624,9 +641,18 @@ pub async fn reset_performance_metrics(
 pub async fn get_logs(
     _state: State<'_, Arc<AppState>>,
 ) -> Result<CommandResult<Vec<LogEntry>>, ()> {
-    // Return actual logs from the circular buffer
-    let logs = get_all_logs();
-    Ok(CommandResult::success(logs))
+    // Use spawn_blocking to avoid blocking the Tokio runtime.
+    // The log buffer uses std::sync::RwLock which can contend with
+    // the tracing layer that writes logs on every event.
+    let result = tokio::task::spawn_blocking(|| get_all_logs()).await;
+
+    match result {
+        Ok(logs) => Ok(CommandResult::success(logs)),
+        Err(e) => {
+            error!("Failed to get logs: {}", e);
+            Ok(CommandResult::success(vec![]))
+        }
+    }
 }
 
 /// Query logs from the database with filtering and pagination.

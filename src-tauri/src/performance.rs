@@ -455,8 +455,10 @@ impl DeviceCounters {
             errors: Arc::new(AtomicU64::new(0)),
             connection_attempts: Arc::new(AtomicU64::new(0)),
             successful_connections: Arc::new(AtomicU64::new(0)),
+            // Histogram with max value of 2^30 (~1 second in nanoseconds)
+            // This covers all realistic latency values for device operations
             latency_histogram: Arc::new(RwLock::new(
-                Histogram::new(3, 16).expect("Failed to create histogram"),
+                Histogram::new(3, 30).expect("Failed to create histogram"),
             )),
             last_latency_ns: Arc::new(AtomicU64::new(0)),
             bytes_sent: Arc::new(AtomicU64::new(0)),

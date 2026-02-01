@@ -381,14 +381,11 @@ async function fetchHistoricalLogs() {
             });
 
             if (newLogs.length > 0) {
-                const combined = [...newLogs, ...streamBuffer.logs].sort((a, b) => {
-                    const timeA = a.timestamp?.getTime?.() || 0;
-                    const timeB = b.timestamp?.getTime?.() || 0;
-                    return timeB - timeA;
-                });
-
+                // Backend returns logs already sorted by timestamp (newest first)
+                // Simply prepend new logs and truncate to maxSize - no sorting needed
+                // This avoids an expensive O(n log n) sort on the main thread
                 streamBuffer.logs.length = 0;
-                streamBuffer.logs.push(...combined.slice(0, streamBuffer.maxSize));
+                streamBuffer.logs.push(...newLogs.slice(0, streamBuffer.maxSize));
             }
 
             viewState.lastError = null;

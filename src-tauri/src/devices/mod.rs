@@ -131,6 +131,12 @@ pub trait Device: Send + Sync + Debug {
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         None
     }
+
+    /// Returns a mutable reference to the device as `Any` for downcasting.
+    /// Used for setting device-specific callbacks after connection.
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        None
+    }
 }
 
 pub type BoxedDevice = Box<dyn Device + Send + Sync + 'static>;

@@ -14,6 +14,7 @@ use std::sync::Arc;
 use tauri::Manager;
 use tracing::{error, info, warn};
 use tracing_subscriber::prelude::*;
+use tracing_subscriber::EnvFilter;
 
 use crate::bridge::{AppState, BridgeServer};
 use crate::commands::*;
@@ -21,10 +22,23 @@ use crate::logging::{init_log_emitter, init_log_persister, set_app_handle, Tauri
 
 #[tokio::main]
 async fn main() {
-    // Initialize tracing with both stdout formatting and Tauri event emission
+    // Create filters to prevent log explosion from dependencies.
+    // Without filtering, sqlx logs every INSERT statement, which triggers more logging,
+    // causing an infinite feedback loop that fills the database and consumes all memory.
+    //
+    // Console filter: Show our logs at INFO+, dependencies at WARN+
+    let console_filter = EnvFilter::new("warn")
+        .add_directive("hyperstudy_bridge=info".parse().unwrap());
+
+    // Tauri layer filter: ONLY log our crate's messages to frontend/database
+    // This completely prevents dependency logs from being stored
+    let tauri_filter = EnvFilter::new("off")
+        .add_directive("hyperstudy_bridge=info".parse().unwrap());
+
+    // Initialize tracing with filtering to prevent log explosion from dependencies
     tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer()) // Keep stdout logging
-        .with(TauriLogLayer::new()) // Add Tauri event emission
+        .with(tracing_subscriber::fmt::layer().with_filter(console_filter))
+        .with(TauriLogLayer::new().with_filter(tauri_filter))
         .init();
 
     info!("Starting HyperStudy Bridge");
