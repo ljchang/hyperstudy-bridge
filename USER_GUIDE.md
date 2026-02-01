@@ -14,10 +14,9 @@
 HyperStudy Bridge is a desktop application that connects your HyperStudy web experiments with research hardware devices. It provides a unified interface for managing and controlling various neuroscience and physiological monitoring equipment.
 
 ### Supported Devices
-- **TTL Pulse Generator** (Adafruit RP2040) - For triggering external equipment
+- **TTL Pulse Generator** ([hyperstudy-ttl](https://github.com/ljchang/hyperstudy-ttl)) - For triggering external equipment
 - **Kernel Flow2** - fNIRS brain imaging
 - **Pupil Labs Neon** - Eye tracking
-- **Biopac MP150/MP160** - Physiological monitoring
 - **Lab Streaming Layer (LSL)** - Universal data streaming
 
 ### System Requirements
@@ -78,9 +77,9 @@ HyperStudy Bridge is a desktop application that connects your HyperStudy web exp
 ### TTL Pulse Generator Setup
 
 **Hardware Requirements:**
-- Adafruit RP2040 or compatible Arduino
+- [hyperstudy-ttl](https://github.com/ljchang/hyperstudy-ttl) device (or compatible Arduino)
 - USB cable
-- Programmed with TTL pulse firmware
+- Programmed with TTL pulse firmware (see [hyperstudy-ttl repository](https://github.com/ljchang/hyperstudy-ttl))
 
 **Steps:**
 1. Connect the device via USB
@@ -130,25 +129,6 @@ HyperStudy Bridge is a desktop application that connects your HyperStudy web exp
 - Recording control
 - Event annotations
 - Calibration triggers
-
-### Biopac Setup
-
-**Requirements:**
-- AcqKnowledge software running
-- Network Data Transfer (NDT) enabled
-- Same network as Bridge computer
-
-**Steps:**
-1. Configure NDT in AcqKnowledge
-2. Click "Add Device" → Select "Biopac"
-3. Enter server IP and port (default: 5000)
-4. Configure channels (ECG, GSR, etc.)
-5. Click "Connect"
-
-**Channel Configuration:**
-- Set sampling rates per channel
-- Configure gain settings
-- Name channels for identification
 
 ### Lab Streaming Layer (LSL) Setup
 
@@ -237,7 +217,7 @@ HyperStudy Bridge is a desktop application that connects your HyperStudy web exp
 - On macOS/Linux: Check user has dialout/uucp group membership
 - Try different USB port
 
-**Network Devices (Kernel, Pupil, Biopac):**
+**Network Devices (Kernel, Pupil):**
 - Verify devices are on same network
 - Check firewall settings
 - Ping device IP to test connectivity

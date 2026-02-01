@@ -8,7 +8,7 @@ A unified, high-performance desktop application for bridging HyperStudy web expe
 [![Downloads](https://img.shields.io/github/downloads/ljchang/hyperstudy-bridge/total?style=for-the-badge)](https://github.com/ljchang/hyperstudy-bridge/releases)
 [![License](https://img.shields.io/github/license/ljchang/hyperstudy-bridge?style=for-the-badge)](LICENSE)
 
-### [⬇️ Download Latest Release](https://github.com/ljchang/hyperstudy-bridge/releases/latest)
+### [Download Latest Release](https://github.com/ljchang/hyperstudy-bridge/releases/latest)
 
 | Platform | Download |
 |----------|----------|
@@ -25,28 +25,28 @@ HyperStudy Bridge provides a reliable, low-latency communication layer between t
 
 ## Features
 
-- 🚀 **High Performance**: Sub-millisecond latency for time-critical operations
-- 🔌 **Multi-Device Support**: Simultaneous connection to multiple device types
-- 🔄 **Auto-Reconnection**: Resilient connection management with automatic recovery
-- 📊 **Real-Time Monitoring**: Live status dashboard for all connected devices
-- 🔒 **Secure**: Local-only connections with sandboxed architecture
-- 🎯 **Cross-Platform**: macOS (primary), Windows, and Linux support
+- **High Performance**: Sub-millisecond latency for time-critical operations
+- **Multi-Device Support**: Simultaneous connection to multiple device types
+- **Auto-Reconnection**: Resilient connection management with automatic recovery
+- **Real-Time Monitoring**: Live status dashboard for all connected devices
+- **Secure**: Local-only connections with sandboxed architecture
+- **Cross-Platform**: macOS (primary), Windows, and Linux support
 
 ## Supported Devices
 
 | Device | Type | Connection | Status |
 |--------|------|------------|--------|
-| Adafruit RP2040 | TTL Pulse Generator | USB Serial | ✅ Supported |
-| Kernel Flow2 | fNIRS | TCP Socket | ✅ Supported |
-| Pupil Labs Neon | Eye Tracker | WebSocket | ✅ Supported |
-| Lab Streaming Layer | Various | LSL Protocol | 🚧 Planned |
+| [hyperstudy-ttl](https://github.com/ljchang/hyperstudy-ttl) | TTL Pulse Generator | USB Serial | Supported |
+| Kernel Flow2 | fNIRS | TCP Socket | Supported |
+| Pupil Labs Neon | Eye Tracker | WebSocket | Supported |
+| Lab Streaming Layer | Various | LSL Protocol | Supported |
 
 ## Quick Start
 
 ### Installation
 
 #### macOS
-1. Download the appropriate `.dmg` for your Mac from the [⬇️ Download section above](#-download-latest-release)
+1. Download the appropriate `.dmg` for your Mac from the [Download section above](#download-latest-release)
 2. Open the DMG and drag HyperStudy Bridge to Applications
 3. Launch from Applications folder
 
@@ -136,7 +136,7 @@ npm run tauri build -- --target x86_64-apple-darwin
                     └─────┬─────┘         └────┬────┘         └─────┬─────┘
                           │                     │                     │
                     ┌─────▼─────┐         ┌────▼────┐         ┌─────▼─────┐
-                    │  RP2040   │         │ Flow2   │         │   Neon    │
+                    │ TTL Device│         │ Flow2   │         │   Neon    │
                     └───────────┘         └─────────┘         └───────────┘
 ```
 
@@ -274,7 +274,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 - [x] TTL pulse generator support
 - [x] Kernel Flow2 integration
 - [x] Pupil Labs Neon support
-- [ ] Lab Streaming Layer support
+- [x] Lab Streaming Layer support
 - [ ] Auto-update system
 - [ ] Device profiles and presets
 - [ ] Data recording and playback
@@ -282,4 +282,4 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ---
 
-Built with ❤️ for the research community
+Built for the research community

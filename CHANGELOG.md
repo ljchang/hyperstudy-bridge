@@ -7,11 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-02-01
+
 ### Added
-- Comprehensive release automation with GitHub Actions
-- Automated changelog generation from commits
-- macOS code signing and notarization pipeline
-- Release creation scripts and documentation
+- Dynamic app info display in About page from Cargo.toml
+
+## [0.8.1] - 2026-02-01
+
+### Fixed
+- TTL crash (SIGABRT) caused by unsafe unwrap in logging
+- Log viewer redesign with virtual scrolling for improved performance
+
+## [0.8.0] - 2026-01-31
+
+### Added
+- SQLite database layer for persistent log and LSL storage
+- Storage module with versioned migrations
+- New Tauri commands: query_logs, get_log_stats, start/end_session
+- Session-based log management
+
+## [0.7.0] - 2026-01-28
+
+### Added
+- Real LSL library integration (replacing mock implementation)
+- Performance monitoring UI enhancements
+- Test infrastructure redesign
+
+### Removed
+- Biopac device support (simplified codebase)
+
+### Fixed
+- Kernel TCP connection timeouts
+- Lock-across-await issues in async code
+- Memory leaks in LSL module
 
 ## [0.6.0] - 2025-01-15
 
@@ -100,7 +128,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Development environment configuration
 - CI/CD pipeline foundation
 
-[Unreleased]: https://github.com/ljchang/hyperstudy-bridge/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/ljchang/hyperstudy-bridge/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/ljchang/hyperstudy-bridge/compare/v0.8.1...v0.8.2
+[0.8.1]: https://github.com/ljchang/hyperstudy-bridge/compare/v0.8.0...v0.8.1
+[0.8.0]: https://github.com/ljchang/hyperstudy-bridge/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/ljchang/hyperstudy-bridge/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/ljchang/hyperstudy-bridge/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/ljchang/hyperstudy-bridge/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/ljchang/hyperstudy-bridge/compare/v0.3.0...v0.4.0

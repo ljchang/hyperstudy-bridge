@@ -246,43 +246,6 @@ taskmgr     # Windows
    - Ensure computer and Pupil device time are synced
    - Use NTP server for both devices
 
-#### Biopac Connection Problems
-
-**Symptoms:**
-- Cannot connect to AcqKnowledge
-- No data streaming
-- Event markers not working
-
-**Solutions:**
-
-1. **Configure NDT in AcqKnowledge**
-   - File → Network Data Transfer → Setup
-   - Enable "Allow incoming connections"
-   - Set port to 5000
-   - Allow HyperStudy Bridge IP
-
-2. **Channel Configuration**
-   ```json
-   {
-     "channels": [
-       {
-         "id": 1,
-         "enabled": true,
-         "name": "ECG",
-         "calc": "none"
-       }
-     ]
-   }
-   ```
-
-3. **Test with Telnet**
-   ```bash
-   telnet 192.168.1.200 5000
-
-   # Send test command
-   START
-   ```
-
 ### Data Quality Issues
 
 #### High Latency (>1ms for TTL)
@@ -631,7 +594,7 @@ If issues persist:
 
 1. **TTL on macOS**
    - Some USB-Serial adapters have higher latency
-   - Recommended: Adafruit CP2104
+   - Recommended: [hyperstudy-ttl](https://github.com/ljchang/hyperstudy-ttl)
 
 2. **LSL on Windows**
    - Firewall may block stream discovery

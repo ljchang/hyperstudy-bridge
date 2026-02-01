@@ -22,11 +22,7 @@ Lab Streaming Layer (LSL) is a system for unified collection of measurement time
 │                      │              │    └──────────────┘ │
 │  ┌──────────────┐    │              │    ┌──────────────┐ │
 │  │ Pupil Device │───▶│              │───▶│ LSL Outlet   │ │
-│  └──────────────┘    │              │    │ (Gaze)       │ │
-│                      │              │    └──────────────┘ │
-│  ┌──────────────┐    │              │    ┌──────────────┐ │
-│  │Biopac Device │───▶│              │───▶│ LSL Outlet   │ │
-│  └──────────────┘    └──────────────┘    │ (Biosignals) │ │
+│  └──────────────┘    └──────────────┘    │ (Gaze)       │ │
 │                                          └──────────────┘ │
 │                      ┌──────────────┐    ┌──────────────┐ │
 │                      │ LSL Resolver │◀──▶│ LSL Inlets   │ │
@@ -118,7 +114,6 @@ pub struct LslConfig {
 | TTL | Markers | String | Irregular |
 | Kernel Flow2 | fNIRS | Float32[channels] | 10-100 Hz |
 | Pupil Neon | Gaze | Float32[x,y,confidence] | 30-120 Hz |
-| Biopac | Biosignals | Float32[channels] | 100-2000 Hz |
 
 ### Phase 3: Time Synchronization (Week 2)
 
@@ -176,14 +171,6 @@ fn pupil_to_lsl(gaze: GazeData) -> LslSample {
         timestamp: gaze.timestamp,
         channels: vec![gaze.x, gaze.y, gaze.confidence],
     }
-}
-
-// Biopac: Physiological data to biosignal streams
-fn biopac_to_lsl(physio: BiopacData) -> Vec<LslSample> {
-    physio.channels.iter().map(|ch| LslSample {
-        timestamp: physio.timestamp,
-        channels: vec![ch.value * ch.scale + ch.offset],
-    }).collect()
 }
 ```
 

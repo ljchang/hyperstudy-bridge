@@ -5,9 +5,9 @@
 The connection flow between HyperStudy web app and HyperStudy Bridge has been fixed to properly handle device connectivity testing and event sending.
 
 ### Key Issues Resolved:
-1. ✅ **test_connection action missing** - Bridge now properly handles connectivity tests
-2. ✅ **send_event action missing** - Events are now properly formatted for each device type
-3. ✅ **Device-specific connection patterns** - Each device type handles connections appropriately
+1. [FIXED] **test_connection action missing** - Bridge now properly handles connectivity tests
+2. [FIXED] **send_event action missing** - Events are now properly formatted for each device type
+3. [FIXED] **Device-specific connection patterns** - Each device type handles connections appropriately
 
 ## How to Test (No Hardware Required)
 
@@ -55,14 +55,14 @@ await bridgeService.sendCommand({
 
 ## What to Look For
 
-### ✅ Success Indicators:
+### Success Indicators:
 - Bridge app starts without errors
 - WebSocket server runs on port 9000
 - Test Connection button responds (even if device not found)
 - No crashes or hangs
 - Clear error messages when devices aren't available
 
-### ❌ Issues to Report:
+### Issues to Report:
 - Bridge app crashes on startup
 - Port 9000 connection refused
 - Test Connection button hangs indefinitely

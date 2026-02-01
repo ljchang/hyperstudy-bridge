@@ -124,7 +124,6 @@ npx vitest run src/lib/components/tests/
 - ✅ TTL device validation (port format, pulse duration)
 - ✅ Kernel device validation (IP address, port range)
 - ✅ Pupil device validation (URL format, checkboxes)
-- ✅ Biopac device validation (channel formats)
 - ✅ LSL configuration tab
 - ✅ Form submission and error handling
 - ✅ Unsaved changes detection

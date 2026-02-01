@@ -30,7 +30,7 @@ interface BridgeCommand {
   id?: string;  // Optional correlation ID
 }
 
-type DeviceType = "ttl" | "kernel" | "pupil" | "biopac" | "lsl";
+type DeviceType = "ttl" | "kernel" | "pupil" | "lsl";
 type ActionType = "connect" | "disconnect" | "send" | "configure" | "status" | "list";
 ```
 
@@ -232,61 +232,6 @@ type ResponseType = "status" | "data" | "error" | "ack" | "device_list";
 }
 ```
 
-### Biopac MP150/MP160
-
-#### Connect to Biopac
-```json
-{
-  "type": "command",
-  "device": "biopac",
-  "action": "connect",
-  "payload": {
-    "serverAddress": "192.168.1.200",
-    "port": 5000,
-    "protocol": "NDT"
-  }
-}
-```
-
-#### Configure Channels
-```json
-{
-  "type": "command",
-  "device": "biopac",
-  "action": "configure",
-  "payload": {
-    "channels": [
-      {
-        "id": 1,
-        "name": "ECG",
-        "samplingRate": 1000,
-        "gain": 2000
-      },
-      {
-        "id": 2,
-        "name": "GSR",
-        "samplingRate": 100,
-        "gain": 10
-      }
-    ]
-  }
-}
-```
-
-#### Send Event Marker
-```json
-{
-  "type": "command",
-  "device": "biopac",
-  "action": "send",
-  "payload": {
-    "command": "MARKER",
-    "value": "stimulus_onset",
-    "channel": 16  // Digital marker channel
-  }
-}
-```
-
 ### Lab Streaming Layer (LSL)
 
 #### Create LSL Outlet
@@ -427,7 +372,7 @@ All errors follow a consistent format:
 
 ## Streaming Data
 
-For continuous data streams (Kernel, Pupil, Biopac, LSL), the bridge will send periodic `data` messages after streaming is enabled:
+For continuous data streams (Kernel, Pupil, LSL), the bridge will send periodic `data` messages after streaming is enabled:
 
 1. Enable streaming with `configure` action
 2. Receive continuous `data` messages
@@ -588,7 +533,7 @@ await bridge.sendCommand('ttl', 'send', {
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.0.0 | 2025-01 | Initial release with TTL, Kernel, Pupil, Biopac, LSL support |
+| 1.0.0 | 2025-01 | Initial release with TTL, Kernel, Pupil, LSL support |
 
 ## Support
 

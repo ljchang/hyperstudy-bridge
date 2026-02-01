@@ -133,7 +133,6 @@ hyperstudy-bridge/
 │   │   │   ├── ttl/      # TTL implementation
 │   │   │   ├── kernel/   # Kernel implementation
 │   │   │   ├── pupil/    # Pupil implementation
-│   │   │   ├── biopac/   # Biopac implementation
 │   │   │   └── lsl/      # LSL implementation
 │   │   ├── bridge/       # Bridge core
 │   │   │   ├── mod.rs    # Bridge module
@@ -208,7 +207,6 @@ pub enum DeviceType {
     Ttl,
     Kernel,
     Pupil,
-    Biopac,
     Lsl,
     YourDevice,  // Add your device
 }
