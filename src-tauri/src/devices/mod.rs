@@ -51,7 +51,7 @@ pub struct DeviceInfo {
     pub metadata: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum DeviceType {
     TTL,
     Kernel,
@@ -60,7 +60,7 @@ pub enum DeviceType {
     Mock,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum DeviceStatus {
     Disconnected,
     Connecting,
@@ -124,6 +124,12 @@ pub trait Device: Send + Sync + Debug {
         // Default implementation: serialize and send as bytes
         let data = event.to_string();
         self.send(data.as_bytes()).await
+    }
+
+    /// Returns a reference to the device as `Any` for downcasting in tests.
+    /// Default implementation returns `None` for backwards compatibility.
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
     }
 }
 

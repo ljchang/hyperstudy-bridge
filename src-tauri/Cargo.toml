@@ -1,6 +1,6 @@
 [package]
 name = "hyperstudy-bridge"
-version = "0.7.9"
+version = "0.8.0"
 description = "HyperStudy Bridge - Hardware Device Integration"
 authors = ["HyperStudy Team"]
 edition = "2021"

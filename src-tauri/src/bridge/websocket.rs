@@ -5,7 +5,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tauri::AppHandle;
+use tauri::{AppHandle, Runtime};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
@@ -23,17 +23,17 @@ async fn send_response(tx: &mpsc::Sender<BridgeResponse>, response: BridgeRespon
     }
 }
 
-pub struct BridgeServer {
+pub struct BridgeServer<R: Runtime> {
     state: Arc<AppState>,
-    app_handle: AppHandle,
+    app_handle: AppHandle<R>,
 }
 
-impl BridgeServer {
-    pub fn new(state: Arc<AppState>, app_handle: AppHandle) -> Self {
+impl<R: Runtime> BridgeServer<R> {
+    pub fn new(state: Arc<AppState>, app_handle: AppHandle<R>) -> Self {
         Self { state, app_handle }
     }
 
-    pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let addr: SocketAddr = ([127, 0, 0, 1], WS_PORT).into();
         let listener = TcpListener::bind(&addr).await?;
 
@@ -56,12 +56,12 @@ impl BridgeServer {
     }
 }
 
-async fn handle_connection(
+async fn handle_connection<R: Runtime>(
     stream: TcpStream,
     peer_addr: SocketAddr,
     state: Arc<AppState>,
-    app_handle: AppHandle,
-) -> Result<(), Box<dyn std::error::Error>> {
+    app_handle: AppHandle<R>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let ws_stream = accept_async(stream).await?;
     let connection_id = Uuid::new_v4().to_string();
 
@@ -151,11 +151,11 @@ async fn handle_connection(
     Ok(())
 }
 
-async fn handle_command(
+async fn handle_command<R: Runtime>(
     command: BridgeCommand,
     state: &Arc<AppState>,
     tx: &mpsc::Sender<BridgeResponse>,
-    _app_handle: &AppHandle,
+    _app_handle: &AppHandle<R>,
 ) {
     match command {
         BridgeCommand::Command {
@@ -692,6 +692,315 @@ async fn handle_device_command(
                     )
                     .await;
                 }
+            }
+        }
+        CommandAction::DiscoverNeon => {
+            info!("Discovering Neon devices via LSL");
+
+            match state.neon_manager.discover_neon_devices().await {
+                Ok(devices) => {
+                    let device_list: Vec<serde_json::Value> = devices
+                        .iter()
+                        .map(|d| {
+                            json!({
+                                "device_name": d.device_name,
+                                "has_gaze_stream": d.has_gaze_stream,
+                                "has_events_stream": d.has_events_stream,
+                                "gaze_channel_count": d.gaze_channel_count,
+                            })
+                        })
+                        .collect();
+
+                    send_response(
+                        tx,
+                        BridgeResponse::data(
+                            "neon_lsl".to_string(),
+                            json!({
+                                "type": "discovery",
+                                "devices": device_list,
+                                "count": devices.len()
+                            }),
+                        ),
+                    )
+                    .await;
+
+                    if let Some(req_id) = id {
+                        send_response(
+                            tx,
+                            BridgeResponse::ack(
+                                req_id,
+                                true,
+                                Some(format!("Discovered {} Neon device(s)", devices.len())),
+                            ),
+                        )
+                        .await;
+                    }
+                }
+                Err(e) => {
+                    warn!("Neon discovery failed: {}", e);
+                    send_response(
+                        tx,
+                        BridgeResponse::device_error("neon_lsl".to_string(), e.to_string()),
+                    )
+                    .await;
+
+                    if let Some(req_id) = id {
+                        send_response(tx, BridgeResponse::ack(req_id, false, Some(e.to_string())))
+                            .await;
+                    }
+                }
+            }
+        }
+        CommandAction::ConnectNeonGaze => {
+            let device_name = payload
+                .as_ref()
+                .and_then(|p| p.get("device_name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            if device_name.is_empty() {
+                send_response(
+                    tx,
+                    BridgeResponse::device_error(
+                        "neon_lsl".to_string(),
+                        "Missing 'device_name' in payload".to_string(),
+                    ),
+                )
+                .await;
+                if let Some(req_id) = id {
+                    send_response(
+                        tx,
+                        BridgeResponse::ack(
+                            req_id,
+                            false,
+                            Some("Missing device_name".to_string()),
+                        ),
+                    )
+                    .await;
+                }
+                return;
+            }
+
+            info!("Connecting to Neon gaze stream: {}", device_name);
+
+            match state.neon_manager.connect_gaze_stream(device_name).await {
+                Ok(mut gaze_rx) => {
+                    // Spawn a task to forward gaze data to WebSocket
+                    let tx_clone = tx.clone();
+                    let device_name_clone = device_name.to_string();
+
+                    tokio::spawn(async move {
+                        while let Some(gaze) = gaze_rx.recv().await {
+                            let response = BridgeResponse::data(
+                                format!("neon_{}", device_name_clone),
+                                json!({
+                                    "type": "gaze",
+                                    "timestamp": gaze.timestamp,
+                                    "gaze_x": gaze.gaze_x,
+                                    "gaze_y": gaze.gaze_y,
+                                    "pupil_diameter": gaze.pupil_diameter,
+                                    "eyeball_center": gaze.eyeball_center,
+                                }),
+                            );
+                            if tx_clone.send(response).await.is_err() {
+                                break;
+                            }
+                        }
+                    });
+
+                    send_response(
+                        tx,
+                        BridgeResponse::status(
+                            format!("neon_{}", device_name),
+                            crate::devices::DeviceStatus::Connected,
+                        ),
+                    )
+                    .await;
+
+                    if let Some(req_id) = id {
+                        send_response(
+                            tx,
+                            BridgeResponse::ack(
+                                req_id,
+                                true,
+                                Some(format!("Connected to gaze stream: {}", device_name)),
+                            ),
+                        )
+                        .await;
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to connect Neon gaze: {}", e);
+                    send_response(
+                        tx,
+                        BridgeResponse::device_error("neon_lsl".to_string(), e.to_string()),
+                    )
+                    .await;
+
+                    if let Some(req_id) = id {
+                        send_response(tx, BridgeResponse::ack(req_id, false, Some(e.to_string())))
+                            .await;
+                    }
+                }
+            }
+        }
+        CommandAction::ConnectNeonEvents => {
+            let device_name = payload
+                .as_ref()
+                .and_then(|p| p.get("device_name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            if device_name.is_empty() {
+                send_response(
+                    tx,
+                    BridgeResponse::device_error(
+                        "neon_lsl".to_string(),
+                        "Missing 'device_name' in payload".to_string(),
+                    ),
+                )
+                .await;
+                if let Some(req_id) = id {
+                    send_response(
+                        tx,
+                        BridgeResponse::ack(
+                            req_id,
+                            false,
+                            Some("Missing device_name".to_string()),
+                        ),
+                    )
+                    .await;
+                }
+                return;
+            }
+
+            info!("Connecting to Neon events stream: {}", device_name);
+
+            match state.neon_manager.connect_events_stream(device_name).await {
+                Ok(mut events_rx) => {
+                    // Spawn a task to forward event data to WebSocket
+                    let tx_clone = tx.clone();
+                    let device_name_clone = device_name.to_string();
+
+                    tokio::spawn(async move {
+                        while let Some(event) = events_rx.recv().await {
+                            let response = BridgeResponse::data(
+                                format!("neon_{}", device_name_clone),
+                                json!({
+                                    "type": "event",
+                                    "timestamp": event.timestamp,
+                                    "event_name": event.event_name,
+                                }),
+                            );
+                            if tx_clone.send(response).await.is_err() {
+                                break;
+                            }
+                        }
+                    });
+
+                    // Send status response (consistent with ConnectNeonGaze)
+                    send_response(
+                        tx,
+                        BridgeResponse::status(
+                            format!("neon_{}", device_name),
+                            crate::devices::DeviceStatus::Connected,
+                        ),
+                    )
+                    .await;
+
+                    if let Some(req_id) = id {
+                        send_response(
+                            tx,
+                            BridgeResponse::ack(
+                                req_id,
+                                true,
+                                Some(format!("Connected to events stream: {}", device_name)),
+                            ),
+                        )
+                        .await;
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to connect Neon events: {}", e);
+                    send_response(
+                        tx,
+                        BridgeResponse::device_error("neon_lsl".to_string(), e.to_string()),
+                    )
+                    .await;
+
+                    if let Some(req_id) = id {
+                        send_response(tx, BridgeResponse::ack(req_id, false, Some(e.to_string())))
+                            .await;
+                    }
+                }
+            }
+        }
+        CommandAction::DisconnectNeon => {
+            let device_name = payload
+                .as_ref()
+                .and_then(|p| p.get("device_name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            if device_name.is_empty() {
+                // Disconnect all if no device specified
+                info!("Disconnecting all Neon streams");
+                let _ = state.neon_manager.disconnect_all().await;
+
+                if let Some(req_id) = id {
+                    send_response(
+                        tx,
+                        BridgeResponse::ack(
+                            req_id,
+                            true,
+                            Some("Disconnected all Neon streams".to_string()),
+                        ),
+                    )
+                    .await;
+                }
+            } else {
+                info!("Disconnecting Neon device: {}", device_name);
+                let _ = state.neon_manager.disconnect(device_name).await;
+
+                send_response(
+                    tx,
+                    BridgeResponse::status(
+                        format!("neon_{}", device_name),
+                        crate::devices::DeviceStatus::Disconnected,
+                    ),
+                )
+                .await;
+
+                if let Some(req_id) = id {
+                    send_response(
+                        tx,
+                        BridgeResponse::ack(
+                            req_id,
+                            true,
+                            Some(format!("Disconnected Neon device: {}", device_name)),
+                        ),
+                    )
+                    .await;
+                }
+            }
+        }
+        CommandAction::NeonStatus => {
+            let stats = state.neon_manager.get_stats().await;
+
+            send_response(
+                tx,
+                BridgeResponse::data(
+                    "neon_lsl".to_string(),
+                    json!({
+                        "type": "status",
+                        "stats": stats
+                    }),
+                ),
+            )
+            .await;
+
+            if let Some(req_id) = id {
+                send_response(tx, BridgeResponse::ack(req_id, true, None)).await;
             }
         }
         _ => {

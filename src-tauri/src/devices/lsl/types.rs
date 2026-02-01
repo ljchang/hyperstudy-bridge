@@ -131,6 +131,52 @@ impl StreamInfo {
         info
     }
 
+    /// Create stream info for Pupil Labs Neon gaze data via LSL
+    ///
+    /// Neon streams at 200Hz with either 2 channels (basic: x, y) or
+    /// 6 channels (with eye-state: x, y, pupil_diameter, eyeball_center xyz)
+    pub fn neon_gaze(device_name: &str, with_eye_state: bool) -> Self {
+        let channel_count = if with_eye_state { 6 } else { 2 };
+        let mut info = Self::new(
+            format!("{}_Neon Gaze", device_name),
+            StreamType::Gaze,
+            channel_count,
+            200.0, // Neon streams at 200Hz
+            ChannelFormat::Float32,
+            device_name.to_string(),
+        );
+        info.metadata
+            .insert("unit".to_string(), "normalized".to_string());
+        info.metadata
+            .insert("manufacturer".to_string(), "Pupil Labs".to_string());
+        info.metadata
+            .insert("device".to_string(), "Neon".to_string());
+        info.metadata.insert(
+            "eye_state".to_string(),
+            with_eye_state.to_string(),
+        );
+        info
+    }
+
+    /// Create stream info for Pupil Labs Neon event markers via LSL
+    ///
+    /// Events are string markers sent at irregular intervals
+    pub fn neon_events(device_name: &str) -> Self {
+        let mut info = Self::new(
+            format!("{}_Neon Events", device_name),
+            StreamType::Markers,
+            1,   // Single string channel
+            0.0, // Irregular sampling rate
+            ChannelFormat::String,
+            device_name.to_string(),
+        );
+        info.metadata
+            .insert("manufacturer".to_string(), "Pupil Labs".to_string());
+        info.metadata
+            .insert("device".to_string(), "Neon".to_string());
+        info
+    }
+
     /// Add metadata to the stream info
     pub fn with_metadata(mut self, key: String, value: String) -> Self {
         self.metadata.insert(key, value);
@@ -318,4 +364,133 @@ pub enum LslError {
 
     #[error("LSL library error: {0}")]
     LslLibraryError(String),
+
+    #[error("Neon device not found: {0}")]
+    NeonDeviceNotFound(String),
+
+    #[error("Neon stream not available: {0}")]
+    NeonStreamNotAvailable(String),
+}
+
+// ============================================================================
+// Pupil Labs Neon LSL Types
+// ============================================================================
+
+/// Gaze data from Pupil Labs Neon via LSL
+///
+/// Neon streams gaze at 200Hz when "Stream over LSL" is enabled in Companion App.
+/// The stream can have 2 channels (basic) or 6 channels (with eye-state enabled):
+/// - Basic: gaze_x, gaze_y (normalized 0-1 coordinates)
+/// - With eye-state: gaze_x, gaze_y, pupil_diameter, eyeball_center_x, eyeball_center_y, eyeball_center_z
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NeonGazeData {
+    /// LSL timestamp (seconds since stream start, with time correction applied)
+    pub timestamp: f64,
+    /// Gaze X coordinate (normalized 0-1, where 0=left, 1=right)
+    pub gaze_x: f32,
+    /// Gaze Y coordinate (normalized 0-1, where 0=top, 1=bottom)
+    pub gaze_y: f32,
+    /// Pupil diameter in mm (only present if eye-state is enabled)
+    pub pupil_diameter: Option<f32>,
+    /// Eyeball center position in 3D space (only present if eye-state is enabled)
+    /// Coordinates are in the scene camera coordinate system
+    pub eyeball_center: Option<(f32, f32, f32)>,
+}
+
+impl NeonGazeData {
+    /// Create gaze data from basic 2-channel LSL sample (x, y only)
+    pub fn from_basic(timestamp: f64, gaze_x: f32, gaze_y: f32) -> Self {
+        Self {
+            timestamp,
+            gaze_x,
+            gaze_y,
+            pupil_diameter: None,
+            eyeball_center: None,
+        }
+    }
+
+    /// Create gaze data from full 6-channel LSL sample (with eye-state)
+    pub fn from_full(
+        timestamp: f64,
+        gaze_x: f32,
+        gaze_y: f32,
+        pupil_diameter: f32,
+        eyeball_center_x: f32,
+        eyeball_center_y: f32,
+        eyeball_center_z: f32,
+    ) -> Self {
+        Self {
+            timestamp,
+            gaze_x,
+            gaze_y,
+            pupil_diameter: Some(pupil_diameter),
+            eyeball_center: Some((eyeball_center_x, eyeball_center_y, eyeball_center_z)),
+        }
+    }
+
+    /// Parse gaze data from LSL Float32 sample
+    ///
+    /// Handles both 2-channel (basic) and 6-channel (eye-state) formats
+    pub fn from_lsl_sample(timestamp: f64, data: &[f32]) -> Result<Self, LslError> {
+        match data.len() {
+            2 => Ok(Self::from_basic(timestamp, data[0], data[1])),
+            6 => Ok(Self::from_full(
+                timestamp, data[0], data[1], data[2], data[3], data[4], data[5],
+            )),
+            n => Err(LslError::InvalidSampleData(format!(
+                "Expected 2 or 6 channels for Neon gaze, got {}",
+                n
+            ))),
+        }
+    }
+}
+
+/// Event marker data from Pupil Labs Neon via LSL
+///
+/// Neon streams event markers as strings at irregular intervals.
+/// These correspond to events triggered in the Companion App or via API.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NeonEventData {
+    /// LSL timestamp (seconds since stream start, with time correction applied)
+    pub timestamp: f64,
+    /// Event name/marker string
+    pub event_name: String,
+}
+
+impl NeonEventData {
+    pub fn new(timestamp: f64, event_name: String) -> Self {
+        Self {
+            timestamp,
+            event_name,
+        }
+    }
+
+    /// Parse event data from LSL String sample
+    pub fn from_lsl_sample(timestamp: f64, data: &[String]) -> Result<Self, LslError> {
+        if data.is_empty() {
+            return Err(LslError::InvalidSampleData(
+                "Empty string sample for Neon event".to_string(),
+            ));
+        }
+        Ok(Self::new(timestamp, data[0].clone()))
+    }
+}
+
+/// Information about a discovered Neon device streaming via LSL
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DiscoveredNeonDevice {
+    /// Device name (extracted from stream name prefix, e.g., "MyNeon" from "MyNeon_Neon Gaze")
+    pub device_name: String,
+    /// Whether gaze stream is available
+    pub has_gaze_stream: bool,
+    /// Whether events stream is available
+    pub has_events_stream: bool,
+    /// Number of gaze channels (2 for basic, 6 for eye-state enabled)
+    pub gaze_channel_count: u32,
+    /// Gaze stream UID (if available)
+    pub gaze_stream_uid: Option<String>,
+    /// Events stream UID (if available)
+    pub events_stream_uid: Option<String>,
+    /// When this device was first discovered
+    pub discovered_at: std::time::SystemTime,
 }

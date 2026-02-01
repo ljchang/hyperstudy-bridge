@@ -1,4 +1,5 @@
 pub mod inlet;
+pub mod neon;
 pub mod outlet;
 pub mod resolver;
 pub mod sync;
@@ -16,6 +17,7 @@ use tracing::{debug, info, warn};
 
 // Re-export main types for convenience
 pub use inlet::{InletConfig, InletManager};
+pub use neon::NeonLslManager;
 pub use outlet::{OutletConfig, OutletManager};
 pub use resolver::{DiscoveredStream, StreamFilter, StreamResolver};
 pub use sync::TimeSync;

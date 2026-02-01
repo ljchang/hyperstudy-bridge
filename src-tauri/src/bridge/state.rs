@@ -1,3 +1,4 @@
+use crate::devices::lsl::{InletManager, NeonLslManager, StreamResolver, TimeSync};
 use crate::devices::{BoxedDevice, DeviceInfo, DeviceStatus};
 use crate::performance::PerformanceMonitor;
 use dashmap::DashMap;
@@ -17,6 +18,8 @@ pub struct AppState {
     pub start_time: Instant,
     pub message_count: Arc<AtomicU64>,
     pub last_error: Arc<RwLock<Option<String>>>,
+    /// Neon LSL Manager for Pupil Labs Neon eye tracking via LSL
+    pub neon_manager: Arc<NeonLslManager>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +57,12 @@ impl Default for AppState {
 
 impl AppState {
     pub fn new() -> Self {
+        // Create shared LSL infrastructure for Neon manager
+        let time_sync = Arc::new(TimeSync::new(true));
+        let resolver = Arc::new(StreamResolver::new(5.0));
+        let inlet_manager = Arc::new(InletManager::new(time_sync));
+        let neon_manager = Arc::new(NeonLslManager::new(resolver, inlet_manager));
+
         Self {
             devices: Arc::new(RwLock::new(HashMap::new())),
             connections: Arc::new(DashMap::new()),
@@ -62,6 +71,7 @@ impl AppState {
             start_time: Instant::now(),
             message_count: Arc::new(AtomicU64::new(0)),
             last_error: Arc::new(RwLock::new(None)),
+            neon_manager,
         }
     }
 

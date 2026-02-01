@@ -64,6 +64,64 @@ pub struct StreamFilter {
     pub channel_format: Option<ChannelFormat>,
 }
 
+impl StreamFilter {
+    /// Create a filter for Pupil Labs Neon gaze streams
+    ///
+    /// Matches streams with names ending in "_Neon Gaze"
+    pub fn neon_gaze() -> Self {
+        Self {
+            name_pattern: Some("_Neon Gaze".to_string()),
+            stream_type: Some(StreamType::Gaze),
+            channel_format: Some(ChannelFormat::Float32),
+            ..Default::default()
+        }
+    }
+
+    /// Create a filter for Pupil Labs Neon event marker streams
+    ///
+    /// Matches streams with names ending in "_Neon Events"
+    pub fn neon_events() -> Self {
+        Self {
+            name_pattern: Some("_Neon Events".to_string()),
+            stream_type: Some(StreamType::Markers),
+            channel_format: Some(ChannelFormat::String),
+            ..Default::default()
+        }
+    }
+
+    /// Create a filter that matches any Neon stream (gaze or events)
+    pub fn neon_any() -> Self {
+        // Use a pattern that matches both "_Neon Gaze" and "_Neon Events"
+        Self {
+            name_pattern: Some("_Neon ".to_string()),
+            ..Default::default()
+        }
+    }
+
+    /// Check if a stream name indicates a Neon gaze stream
+    pub fn is_neon_gaze_stream(stream_name: &str) -> bool {
+        stream_name.ends_with("_Neon Gaze")
+    }
+
+    /// Check if a stream name indicates a Neon events stream
+    pub fn is_neon_events_stream(stream_name: &str) -> bool {
+        stream_name.ends_with("_Neon Events")
+    }
+
+    /// Extract device name from Neon stream name
+    ///
+    /// For example, "MyNeon_Neon Gaze" -> "MyNeon"
+    pub fn extract_neon_device_name(stream_name: &str) -> Option<String> {
+        if let Some(pos) = stream_name.find("_Neon Gaze") {
+            Some(stream_name[..pos].to_string())
+        } else if let Some(pos) = stream_name.find("_Neon Events") {
+            Some(stream_name[..pos].to_string())
+        } else {
+            None
+        }
+    }
+}
+
 /// Discovery events
 #[derive(Debug, Clone)]
 pub enum DiscoveryEvent {

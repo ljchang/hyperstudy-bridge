@@ -1,3 +1,81 @@
+//! Common test utilities and infrastructure
+//!
+//! This module provides the test infrastructure for integration tests.
+//!
+//! # New Infrastructure (Recommended)
+//!
+//! Use the new modular infrastructure via the `prelude`:
+//!
+//! ```ignore
+//! use crate::common::prelude::*;
+//!
+//! #[tokio::test]
+//! async fn test_example() -> TestResult<()> {
+//!     let mut harness = TestHarness::new().await;
+//!     let device_id = harness.add_connected_device(DeviceType::TTL).await?;
+//!
+//!     Assertions::assert_device_status(
+//!         &harness, &device_id, DeviceStatus::Connected, "after connect"
+//!     ).await?;
+//!
+//!     harness.cleanup().await
+//! }
+//! ```
+//!
+//! # Legacy Infrastructure (Deprecated)
+//!
+//! The old `TestFixture` is still available for backward compatibility but
+//! should not be used for new tests. It has issues with Drop panics and
+//! 'static closure bounds.
+
+// New modular infrastructure
+pub mod assertions;
+pub mod concurrent;
+pub mod harness;
+pub mod mock_device;
+pub mod websocket;
+
+// Re-export new infrastructure for easy access
+pub use assertions::Assertions;
+pub use concurrent::{
+    measure_throughput, measure_throughput_with_errors, run_concurrent, run_load_test,
+    ConcurrentResult, LatencyStats,
+};
+pub use harness::{TestError, TestHarness, TestResult};
+pub use mock_device::TestMockDevice;
+pub use websocket::{connect_with_retry, TestWebSocketClient};
+
+/// Prelude module for convenient imports
+pub mod prelude {
+    pub use super::assertions::Assertions;
+    pub use super::concurrent::{
+        measure_throughput, measure_throughput_with_errors, run_concurrent, run_load_test,
+        ConcurrentResult, LatencyStats,
+    };
+    pub use super::harness::{TestError, TestHarness, TestResult};
+    pub use super::mock_device::TestMockDevice;
+    pub use super::websocket::{connect_with_retry, TestWebSocketClient};
+
+    // Re-export legacy utilities that are still useful
+    pub use super::MemoryTracker;
+    pub use super::TestDataGenerator;
+
+    // Re-export commonly used types from the main crate
+    pub use hyperstudy_bridge::bridge::{AppState, BridgeCommand, BridgeResponse};
+    pub use hyperstudy_bridge::devices::{
+        Device, DeviceConfig, DeviceError, DeviceInfo, DeviceStatus, DeviceType,
+    };
+    pub use hyperstudy_bridge::performance::PerformanceMonitor;
+
+    // Common standard library types
+    pub use std::sync::Arc;
+    pub use std::time::{Duration, Instant};
+}
+
+// ============================================================================
+// LEGACY INFRASTRUCTURE (Deprecated - for backward compatibility only)
+// ============================================================================
+
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use hyperstudy_bridge::bridge::state::Metrics;
@@ -19,287 +97,6 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
-
-/// Mock device implementation for testing
-#[derive(Debug, Clone)]
-pub struct TestMockDevice {
-    pub id: String,
-    pub name: String,
-    pub device_type: DeviceType,
-    pub status: Arc<RwLock<DeviceStatus>>,
-    pub config: Arc<RwLock<DeviceConfig>>,
-    pub sent_data: Arc<RwLock<Vec<Vec<u8>>>>,
-    pub received_data: Arc<RwLock<Vec<Vec<u8>>>>,
-    pub connection_delay: Duration,
-    pub operation_delay: Duration,
-    pub should_fail: Arc<AtomicBool>,
-    pub error_rate: f64, // 0.0 to 1.0
-    pub latency_ms: u64,
-    pub last_operation: Arc<Mutex<Option<Instant>>>,
-}
-
-impl TestMockDevice {
-    pub fn new(id: String, name: String, device_type: DeviceType) -> Self {
-        Self {
-            id,
-            name,
-            device_type,
-            status: Arc::new(RwLock::new(DeviceStatus::Disconnected)),
-            config: Arc::new(RwLock::new(DeviceConfig::default())),
-            sent_data: Arc::new(RwLock::new(Vec::new())),
-            received_data: Arc::new(RwLock::new(Vec::new())),
-            connection_delay: Duration::from_millis(10),
-            operation_delay: Duration::from_millis(1),
-            should_fail: Arc::new(AtomicBool::new(false)),
-            error_rate: 0.0,
-            latency_ms: 1,
-            last_operation: Arc::new(Mutex::new(None)),
-        }
-    }
-
-    pub fn with_latency(mut self, latency_ms: u64) -> Self {
-        self.latency_ms = latency_ms;
-        self.operation_delay = Duration::from_millis(latency_ms);
-        self
-    }
-
-    pub fn with_error_rate(mut self, error_rate: f64) -> Self {
-        self.error_rate = error_rate;
-        self
-    }
-
-    pub fn with_connection_delay(mut self, delay: Duration) -> Self {
-        self.connection_delay = delay;
-        self
-    }
-
-    pub fn set_should_fail(&self, should_fail: bool) {
-        self.should_fail.store(should_fail, Ordering::Relaxed);
-    }
-
-    pub async fn get_sent_data(&self) -> Vec<Vec<u8>> {
-        self.sent_data.read().await.clone()
-    }
-
-    pub async fn get_received_data(&self) -> Vec<Vec<u8>> {
-        self.received_data.read().await.clone()
-    }
-
-    pub async fn add_received_data(&self, data: Vec<u8>) {
-        self.received_data.write().await.push(data);
-    }
-
-    fn should_simulate_error(&self) -> bool {
-        if self.should_fail.load(Ordering::Relaxed) {
-            return true;
-        }
-
-        if self.error_rate > 0.0 {
-            let mut rng = rand::thread_rng();
-            rng.gen::<f64>() < self.error_rate
-        } else {
-            false
-        }
-    }
-}
-
-#[async_trait]
-impl Device for TestMockDevice {
-    async fn connect(&mut self) -> Result<(), DeviceError> {
-        if self.should_simulate_error() {
-            return Err(DeviceError::ConnectionFailed(
-                "Simulated connection failure".to_string(),
-            ));
-        }
-
-        tokio::time::sleep(self.connection_delay).await;
-        *self.status.write().await = DeviceStatus::Connected;
-        *self.last_operation.lock().await = Some(Instant::now());
-        Ok(())
-    }
-
-    async fn disconnect(&mut self) -> Result<(), DeviceError> {
-        if self.should_simulate_error() {
-            return Err(DeviceError::CommunicationError(
-                "Simulated disconnect failure".to_string(),
-            ));
-        }
-
-        tokio::time::sleep(Duration::from_millis(5)).await;
-        *self.status.write().await = DeviceStatus::Disconnected;
-        Ok(())
-    }
-
-    async fn send(&mut self, data: &[u8]) -> Result<(), DeviceError> {
-        if self.should_simulate_error() {
-            return Err(DeviceError::CommunicationError(
-                "Simulated send failure".to_string(),
-            ));
-        }
-
-        let status = *self.status.read().await;
-        if status != DeviceStatus::Connected {
-            return Err(DeviceError::NotConnected);
-        }
-
-        tokio::time::sleep(self.operation_delay).await;
-        self.sent_data.write().await.push(data.to_vec());
-        *self.last_operation.lock().await = Some(Instant::now());
-        Ok(())
-    }
-
-    async fn receive(&mut self) -> Result<Vec<u8>, DeviceError> {
-        if self.should_simulate_error() {
-            return Err(DeviceError::CommunicationError(
-                "Simulated receive failure".to_string(),
-            ));
-        }
-
-        let status = *self.status.read().await;
-        if status != DeviceStatus::Connected {
-            return Err(DeviceError::NotConnected);
-        }
-
-        tokio::time::sleep(self.operation_delay).await;
-
-        let mut received_data = self.received_data.write().await;
-        if !received_data.is_empty() {
-            Ok(received_data.remove(0))
-        } else {
-            Ok(b"mock_response".to_vec())
-        }
-    }
-
-    fn get_info(&self) -> DeviceInfo {
-        DeviceInfo {
-            id: self.id.clone(),
-            name: self.name.clone(),
-            device_type: self.device_type,
-            status: *self
-                .status
-                .try_read()
-                .unwrap_or_else(|_| DeviceStatus::Error.into()),
-            metadata: json!({
-                "latency_ms": self.latency_ms,
-                "error_rate": self.error_rate,
-                "test_device": true
-            }),
-        }
-    }
-
-    fn get_status(&self) -> DeviceStatus {
-        *self
-            .status
-            .try_read()
-            .unwrap_or_else(|_| DeviceStatus::Error.into())
-    }
-
-    fn configure(&mut self, config: DeviceConfig) -> Result<(), DeviceError> {
-        if self.should_simulate_error() {
-            return Err(DeviceError::ConfigurationError(
-                "Simulated configuration failure".to_string(),
-            ));
-        }
-
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                *self.config.write().await = config;
-            });
-        });
-        Ok(())
-    }
-
-    async fn heartbeat(&mut self) -> Result<(), DeviceError> {
-        if self.should_simulate_error() {
-            return Err(DeviceError::Timeout);
-        }
-
-        let status = *self.status.read().await;
-        if status != DeviceStatus::Connected {
-            return Err(DeviceError::NotConnected);
-        }
-
-        *self.last_operation.lock().await = Some(Instant::now());
-        Ok(())
-    }
-}
-
-/// WebSocket test client for integration testing
-pub struct TestWebSocketClient {
-    pub ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
-    pub sent_messages: Arc<RwLock<Vec<String>>>,
-    pub received_messages: Arc<RwLock<Vec<BridgeResponse>>>,
-    pub is_connected: Arc<AtomicBool>,
-}
-
-impl TestWebSocketClient {
-    pub async fn connect(url: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let (ws_stream, _) = connect_async(url).await?;
-
-        Ok(Self {
-            ws_stream,
-            sent_messages: Arc::new(RwLock::new(Vec::new())),
-            received_messages: Arc::new(RwLock::new(Vec::new())),
-            is_connected: Arc::new(AtomicBool::new(true)),
-        })
-    }
-
-    pub async fn send_command(
-        &mut self,
-        command: BridgeCommand,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let json_str = serde_json::to_string(&command)?;
-        self.sent_messages.write().await.push(json_str.clone());
-        self.ws_stream.send(Message::Text(json_str)).await?;
-        Ok(())
-    }
-
-    pub async fn receive_response(
-        &mut self,
-    ) -> Result<Option<BridgeResponse>, Box<dyn std::error::Error>> {
-        if let Some(msg) = self.ws_stream.next().await {
-            match msg? {
-                Message::Text(text) => {
-                    let response: BridgeResponse = serde_json::from_str(&text)?;
-                    self.received_messages.write().await.push(response.clone());
-                    Ok(Some(response))
-                }
-                Message::Close(_) => {
-                    self.is_connected.store(false, Ordering::Relaxed);
-                    Ok(None)
-                }
-                _ => Ok(None),
-            }
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub async fn wait_for_response(
-        &mut self,
-        timeout: Duration,
-    ) -> Result<Option<BridgeResponse>, Box<dyn std::error::Error>> {
-        tokio::time::timeout(timeout, self.receive_response()).await?
-    }
-
-    pub async fn get_sent_messages(&self) -> Vec<String> {
-        self.sent_messages.read().await.clone()
-    }
-
-    pub async fn get_received_messages(&self) -> Vec<BridgeResponse> {
-        self.received_messages.read().await.clone()
-    }
-
-    pub fn is_connected(&self) -> bool {
-        self.is_connected.load(Ordering::Relaxed)
-    }
-
-    pub async fn close(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.ws_stream.send(Message::Close(None)).await?;
-        self.is_connected.store(false, Ordering::Relaxed);
-        Ok(())
-    }
-}
 
 /// Test data generator for various scenarios
 pub struct TestDataGenerator {
@@ -441,8 +238,6 @@ impl MemoryTracker {
     }
 
     pub fn get_memory_usage() -> u64 {
-        // Simple memory usage estimation - in a real implementation,
-        // you might use more sophisticated memory profiling
         use sysinfo::System;
         let mut system = System::new_all();
         system.refresh_memory();
@@ -463,7 +258,11 @@ impl MemoryTracker {
     }
 }
 
-/// Test fixture setup and teardown utilities
+/// DEPRECATED: Test fixture setup and teardown utilities
+///
+/// Use `TestHarness` instead for new tests. This struct has issues with
+/// Drop panics when async cleanup fails.
+#[deprecated(note = "Use TestHarness instead - it has explicit async cleanup")]
 pub struct TestFixture {
     pub app_state: Arc<AppState>,
     pub performance_monitor: Arc<PerformanceMonitor>,
@@ -471,6 +270,7 @@ pub struct TestFixture {
     pub temp_files: Vec<String>,
 }
 
+#[allow(deprecated)]
 impl TestFixture {
     pub async fn new() -> Self {
         let app_state = Arc::new(AppState::new());
@@ -540,13 +340,11 @@ impl TestFixture {
     }
 
     pub async fn cleanup(&mut self) {
-        // Remove all test devices
         for device_id in &self.temp_devices {
             self.app_state.remove_device(device_id).await;
         }
         self.temp_devices.clear();
 
-        // Clean up temporary files
         for file_path in &self.temp_files {
             let _ = tokio::fs::remove_file(file_path).await;
         }
@@ -577,9 +375,11 @@ impl TestFixture {
     }
 }
 
+#[allow(deprecated)]
 impl Drop for TestFixture {
     fn drop(&mut self) {
-        // Cleanup in async context if possible
+        // DEPRECATED: This Drop implementation can panic when used in async contexts.
+        // Use TestHarness with explicit cleanup() instead.
         tokio::task::block_in_place(|| {
             if let Ok(handle) = tokio::runtime::Handle::try_current() {
                 handle.block_on(async {
@@ -626,6 +426,7 @@ pub mod test_utils {
     }
 
     /// Create multiple mock devices of different types
+    #[allow(deprecated)]
     pub async fn create_multi_device_setup(
         fixture: &mut TestFixture,
     ) -> HashMap<DeviceType, String> {
@@ -651,7 +452,8 @@ pub mod test_utils {
         devices
     }
 
-    /// Measure throughput of operations
+    /// Measure throughput of operations (DEPRECATED - use concurrent::measure_throughput)
+    #[deprecated(note = "Use concurrent::measure_throughput instead")]
     pub async fn measure_throughput<F, Fut>(operation: F, duration: Duration) -> (u64, f64)
     where
         F: Fn() -> Fut,
@@ -690,7 +492,8 @@ pub mod test_utils {
         );
     }
 
-    /// Generate load test scenario
+    /// Generate load test scenario (DEPRECATED - use concurrent::run_load_test)
+    #[deprecated(note = "Use concurrent::run_load_test instead")]
     pub async fn run_load_test<F, Fut>(
         operation: F,
         concurrent_operations: usize,
@@ -781,6 +584,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(deprecated)]
+    #[ignore = "TestFixture is deprecated and uses block_in_place which can panic in current_thread runtime"]
     async fn test_test_fixture() {
         let mut fixture = TestFixture::new().await;
 

@@ -41,6 +41,12 @@ pub enum CommandAction {
     Configure,
     Status,
     Heartbeat,
+    // Neon LSL specific actions
+    DiscoverNeon,       // Discover Neon devices streaming via LSL
+    ConnectNeonGaze,    // Connect to Neon gaze stream
+    ConnectNeonEvents,  // Connect to Neon events stream
+    DisconnectNeon,     // Disconnect from Neon streams
+    NeonStatus,         // Get Neon LSL manager status
     Custom(String),
 }
 
@@ -184,6 +190,7 @@ impl MessageHandler {
             "kernel" => Some(DeviceType::Kernel),
             "pupil" => Some(DeviceType::Pupil),
             "lsl" => Some(DeviceType::LSL),
+            "neon_lsl" => Some(DeviceType::LSL), // Neon via LSL
             "mock" => Some(DeviceType::Mock),
             _ => None,
         }

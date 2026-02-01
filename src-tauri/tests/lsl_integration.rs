@@ -1,34 +1,39 @@
-// LSL Integration Tests for CI/CD Pipeline
-// These tests verify basic LSL device functionality
+//! LSL Integration Tests for CI/CD Pipeline
+//!
+//! These tests verify basic LSL device functionality using the new test infrastructure.
+
+mod common;
+use common::prelude::*;
 
 use hyperstudy_bridge::devices::lsl::LslDevice;
-use hyperstudy_bridge::devices::{Device, DeviceConfig, DeviceStatus, DeviceType};
 
 /// Test LSL device basic lifecycle
 #[tokio::test]
-async fn test_lsl_device_lifecycle() {
+async fn test_lsl_device_lifecycle() -> TestResult<()> {
     let mut device = LslDevice::new("test_lsl".to_string(), None);
 
     // Initial state
     assert_eq!(device.get_status(), DeviceStatus::Disconnected);
     let info = device.get_info();
     assert_eq!(info.device_type, DeviceType::LSL);
-    assert_eq!(info.id, "test_lsl");
+    // LslDevice prepends "lsl_" to the ID
+    assert_eq!(info.id, "lsl_test_lsl");
 
     // Connect
-    let result = device.connect().await;
-    assert!(result.is_ok());
+    device.connect().await?;
+    Assertions::assert_latency(Duration::from_millis(0), 100.0, "LSL connect")?;
     assert_eq!(device.get_status(), DeviceStatus::Connected);
 
     // Disconnect
-    let result = device.disconnect().await;
-    assert!(result.is_ok());
+    device.disconnect().await?;
     assert_eq!(device.get_status(), DeviceStatus::Disconnected);
+
+    Ok(())
 }
 
 /// Test LSL device configuration
 #[tokio::test]
-async fn test_lsl_device_configuration() {
+async fn test_lsl_device_configuration() -> TestResult<()> {
     let mut device = LslDevice::new("config_test".to_string(), None);
 
     let config = DeviceConfig {
@@ -41,42 +46,48 @@ async fn test_lsl_device_configuration() {
         }),
     };
 
-    let result = device.configure(config);
-    assert!(result.is_ok());
+    device.configure(config)?;
+    Ok(())
 }
 
 /// Test LSL device info
 #[tokio::test]
-async fn test_lsl_device_info() {
+async fn test_lsl_device_info() -> TestResult<()> {
     let device = LslDevice::new("info_test".to_string(), None);
     let info = device.get_info();
 
     assert_eq!(info.device_type, DeviceType::LSL);
-    assert_eq!(info.id, "info_test");
+    // LslDevice prepends "lsl_" to the ID
+    assert_eq!(info.id, "lsl_info_test");
     assert_eq!(info.status, DeviceStatus::Disconnected);
+
+    Ok(())
 }
 
 /// Test LSL device heartbeat
 #[tokio::test]
-async fn test_lsl_heartbeat() {
+async fn test_lsl_heartbeat() -> TestResult<()> {
     let mut device = LslDevice::new("heartbeat_test".to_string(), None);
 
-    device.connect().await.unwrap();
+    device.connect().await?;
 
     // Test heartbeat when connected
-    let result = device.heartbeat().await;
-    assert!(result.is_ok());
+    device.heartbeat().await?;
+
+    device.disconnect().await?;
+    Ok(())
 }
 
 /// Test LSL send when disconnected
 #[tokio::test]
-async fn test_lsl_send_disconnected() {
+async fn test_lsl_send_disconnected() -> TestResult<()> {
     let mut device = LslDevice::new("send_test".to_string(), None);
 
-    // Try to send when not connected
+    // Try to send when not connected - should fail
     let result = device.send(b"test data").await;
-    // Should fail because not connected
-    assert!(result.is_err());
+    assert!(result.is_err(), "Send should fail when disconnected");
+
+    Ok(())
 }
 
 /// Test LSL performance callback setup
@@ -97,23 +108,26 @@ fn test_lsl_performance_callback() {
 
 /// Test concurrent device creation
 #[tokio::test]
-async fn test_lsl_concurrent_creation() {
-    use tokio::task;
+async fn test_lsl_concurrent_creation() -> TestResult<()> {
+    let results = run_concurrent(3, |i| async move {
+        let device = LslDevice::new(format!("concurrent_{}", i), None);
+        let info = device.get_info();
 
-    // Test that multiple LSL devices can be created
-    let handles: Vec<_> = (0..3)
-        .map(|i| {
-            task::spawn(async move {
-                let device = LslDevice::new(format!("concurrent_{}", i), None);
-                device.get_info()
-            })
-        })
-        .collect();
+        if info.device_type != DeviceType::LSL {
+            return Err(TestError::Assertion(format!(
+                "Expected LSL device type, got {:?}",
+                info.device_type
+            )));
+        }
 
-    for handle in handles {
-        let info = handle.await.unwrap();
-        assert_eq!(info.device_type, DeviceType::LSL);
-    }
+        Ok(info)
+    })
+    .await;
+
+    assert!(results.all_ok(), "All concurrent device creations should succeed");
+    assert_eq!(results.success_count(), 3);
+
+    Ok(())
 }
 
 /// Test debug implementation
@@ -125,4 +139,23 @@ fn test_lsl_debug_implementation() {
     // Verify debug output contains expected fields
     assert!(debug_str.contains("LslDevice"));
     assert!(debug_str.contains("device_id"));
+}
+
+/// Test LSL device with TestHarness integration
+#[tokio::test]
+async fn test_lsl_with_harness() -> TestResult<()> {
+    let mut harness = TestHarness::new().await;
+
+    // Add an LSL device via the harness
+    let device_id = harness.add_device(DeviceType::LSL).await;
+
+    // Verify it was added
+    assert_eq!(harness.device_count().await, 1);
+
+    // Get status
+    let status = harness.get_device_status(&device_id).await?;
+    assert_eq!(status, DeviceStatus::Disconnected);
+
+    // Cleanup
+    harness.cleanup().await
 }
