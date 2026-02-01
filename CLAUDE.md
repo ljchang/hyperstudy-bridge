@@ -313,6 +313,74 @@ pub struct AppState {
 4. **Testing**: All tests must pass before merge
 5. **Documentation**: Update docs with code changes
 
+## Creating Releases
+
+### Version Files
+Both of these files must be updated with the new version number:
+- `src-tauri/Cargo.toml` - Rust package version
+- `package.json` - Node package version
+
+### Release Process
+
+1. **Update version numbers** in both files:
+   ```bash
+   # Edit src-tauri/Cargo.toml
+   version = "X.Y.Z"
+
+   # Edit package.json
+   "version": "X.Y.Z"
+   ```
+
+2. **Update Cargo.lock** by running:
+   ```bash
+   cd src-tauri && cargo check
+   ```
+
+3. **Commit the version bump**:
+   ```bash
+   git add src-tauri/Cargo.toml src-tauri/Cargo.lock package.json
+   git commit -m "chore: Bump version to X.Y.Z"
+   ```
+
+4. **Push to main**:
+   ```bash
+   git push origin main
+   ```
+
+5. **Create the GitHub release**:
+   ```bash
+   gh release create vX.Y.Z --title "vX.Y.Z" --notes "Release notes here" --prerelease
+   ```
+
+   Or for a stable release (remove `--prerelease`):
+   ```bash
+   gh release create vX.Y.Z --title "vX.Y.Z" --notes "Release notes here"
+   ```
+
+### What Happens After
+
+Creating a release triggers GitHub Actions workflows:
+- **Create Release** - Builds macOS binaries (ARM64 and Intel), signs and notarizes them, then attaches to the release
+- **Update README Download Links** - Updates download links in README.md
+- **CI** - Runs tests on the tagged commit
+
+Monitor build progress at: https://github.com/ljchang/hyperstudy-bridge/actions
+
+### Release Notes Template
+
+```markdown
+## What's Changed
+
+### New Features
+- Feature description
+
+### Bug Fixes
+- Fix description
+
+### Technical
+- Technical change description
+```
+
 ## Troubleshooting Guide
 
 ### Common Issues
