@@ -96,3 +96,4 @@ ${{ steps.release.outputs.body }}
           git add docs/devices/hyperstudy-bridge.md
           git commit -m "Update HyperStudy Bridge release notes for ${{ steps.release.outputs.tag }}" || exit 0
           git push
+
