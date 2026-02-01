@@ -1,6 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import * as logsStore from '../stores/logs.svelte.js';
+  import VirtualLogList from './VirtualLogList.svelte';
 
   // Props
   let { isOpen = $bindable(false) } = $props();
@@ -15,31 +16,14 @@
   const dbTotalCount = $derived.by(() => logsStore.getDbTotalCount());
   const dbHasMore = $derived.by(() => logsStore.getDbHasMore());
   const useDatabase = $derived.by(() => logsStore.getUseDatabase());
+  const totalCount = $derived.by(() => logsStore.getTotalCount());
 
   // Local state
-  let logContainer = $state(null);
   let isExporting = $state(false);
   let showFilters = $state(false);
   let searchQuery = $state(logsStore.getSearchQuery());
   let levelFilter = $state(logsStore.getLevelFilter());
   let deviceFilter = $state(logsStore.getDeviceFilter());
-
-  // Auto-scroll to bottom when new logs arrive and auto-scroll is enabled
-  // Use a debounced approach to avoid excessive scrolling
-  let scrollTimeoutId = null;
-  $effect(() => {
-    const logCount = logs.length; // Track dependency
-    if (autoScroll && logContainer && logCount > 0) {
-      // Clear any pending scroll
-      if (scrollTimeoutId) clearTimeout(scrollTimeoutId);
-      // Debounce scrolling to batch rapid updates
-      scrollTimeoutId = setTimeout(() => {
-        if (logContainer) {
-          logContainer.scrollTop = logContainer.scrollHeight;
-        }
-      }, 50);
-    }
-  });
 
   // Effect to handle modal open/close
   $effect(() => {
@@ -128,25 +112,10 @@
     }
   }
 
-  // Handle scroll to detect manual scrolling (disable auto-scroll) and lazy loading
-  function handleScroll() {
-    if (logContainer && autoScroll) {
-      const { scrollTop, scrollHeight, clientHeight } = logContainer;
-      const isAtBottom = scrollTop + clientHeight >= scrollHeight - 10; // 10px threshold
-
-      if (!isAtBottom) {
-        logsStore.setAutoScroll(false);
-      }
-    }
-
-    // Lazy load more logs when scrolling near bottom in database mode
-    if (logContainer && useDatabase && dbHasMore && !isQuerying) {
-      const { scrollTop, scrollHeight, clientHeight } = logContainer;
-      const isNearBottom = scrollTop + clientHeight >= scrollHeight - 100;
-
-      if (isNearBottom) {
-        logsStore.loadMoreLogs();
-      }
+  // Handle scroll near bottom for lazy loading
+  function handleScrollNearBottom() {
+    if (useDatabase && dbHasMore && !isQuerying) {
+      logsStore.loadMoreLogs();
     }
   }
 
@@ -165,8 +134,6 @@
   });
 
   onDestroy(() => {
-    // Clean up scroll timeout
-    if (scrollTimeoutId) clearTimeout(scrollTimeoutId);
     // Always stop listening when component is destroyed
     logsStore.stopListening();
   });
@@ -186,6 +153,7 @@
               <span class="stat">Showing: {logs.length}</span>
             {:else}
               <span class="stat">Total: {logCounts.total}</span>
+              <span class="stat">Filtered: {totalCount}</span>
               {#if logCounts.error > 0}
                 <span class="stat error">Errors: {logCounts.error}</span>
               {/if}
@@ -345,12 +313,8 @@
         </div>
       {/if}
 
-      <!-- Log Content -->
-      <div
-        class="log-content"
-        bind:this={logContainer}
-        onscroll={handleScroll}
-      >
+      <!-- Log Content - Now using VirtualLogList for performance -->
+      <div class="log-content">
         {#if logs.length === 0}
           <div class="empty-logs">
             <p>No logs to display</p>
@@ -363,37 +327,16 @@
             </p>
           </div>
         {:else}
-          {#each logs as log (log.id)}
-            <div
-              class="log-entry {log.level}"
-              style="background-color: {getLevelBackground(log.level)}"
-            >
-              <div class="log-timestamp">
-                {formatTimestamp(log.timestamp)}
-              </div>
-
-              <div class="log-level" style="color: {getLevelColor(log.level)}">
-                {log.level.toUpperCase()}
-              </div>
-
-              {#if log.device}
-                <div class="log-device">
-                  [{log.device}]
-                </div>
-              {/if}
-
-              <div class="log-source">
-                ({log.source})
-              </div>
-
-              <div class="log-message">
-                {log.message}
-              </div>
-            </div>
-          {/each}
+          <VirtualLogList
+            {logs}
+            onScrollNearBottom={handleScrollNearBottom}
+            {formatTimestamp}
+            {getLevelColor}
+            {getLevelBackground}
+          />
 
           <!-- Load more indicator for database mode -->
-          {#if useDatabase}
+          {#if useDatabase && (isQuerying || dbHasMore)}
             <div class="load-more-container">
               {#if isQuerying}
                 <div class="loading-indicator">
@@ -406,10 +349,6 @@
                 <button class="load-more-btn" onclick={loadMore}>
                   Load more ({dbTotalCount - logs.length} remaining)
                 </button>
-              {:else if logs.length > 0}
-                <div class="end-of-logs">
-                  End of logs
-                </div>
               {/if}
             </div>
           {/if}
@@ -586,12 +525,10 @@
 
   .log-content {
     flex: 1;
-    overflow-y: auto;
-    padding: 1rem;
-    font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', monospace;
-    font-size: 0.875rem;
-    line-height: 1.4;
+    overflow: hidden;
     background: var(--color-background);
+    display: flex;
+    flex-direction: column;
   }
 
   .empty-logs {
@@ -613,54 +550,6 @@
     opacity: 0.8;
   }
 
-  .log-entry {
-    display: grid;
-    grid-template-columns: auto auto auto auto 1fr;
-    gap: 1rem;
-    padding: 0.5rem 0.75rem;
-    border-radius: 4px;
-    margin-bottom: 1px;
-    align-items: baseline;
-  }
-
-  .log-entry:hover {
-    background: rgba(255, 255, 255, 0.05) !important;
-  }
-
-  .log-timestamp {
-    color: var(--color-text-secondary);
-    font-size: 0.75rem;
-    white-space: nowrap;
-    opacity: 0.8;
-  }
-
-  .log-level {
-    font-weight: 600;
-    font-size: 0.75rem;
-    white-space: nowrap;
-    width: 50px;
-    text-align: center;
-  }
-
-  .log-device {
-    color: var(--color-secondary);
-    font-size: 0.75rem;
-    white-space: nowrap;
-  }
-
-  .log-source {
-    color: var(--color-text-secondary);
-    font-size: 0.75rem;
-    white-space: nowrap;
-    opacity: 0.7;
-  }
-
-  .log-message {
-    color: var(--color-text-primary);
-    word-break: break-word;
-    white-space: pre-wrap;
-  }
-
   .spin {
     animation: spin 1s linear infinite;
   }
@@ -668,25 +557,6 @@
   @keyframes spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
-  }
-
-  /* Scrollbar styling for log content */
-  .log-content::-webkit-scrollbar {
-    width: 8px;
-  }
-
-  .log-content::-webkit-scrollbar-track {
-    background: var(--color-surface);
-    border-radius: 4px;
-  }
-
-  .log-content::-webkit-scrollbar-thumb {
-    background: var(--color-surface-elevated);
-    border-radius: 4px;
-  }
-
-  .log-content::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.2);
   }
 
   /* Database mode indicator */
@@ -704,7 +574,9 @@
     justify-content: center;
     align-items: center;
     padding: 1rem;
-    margin-top: 0.5rem;
+    flex-shrink: 0;
+    border-top: 1px solid var(--color-border);
+    background: var(--color-surface);
   }
 
   .loading-indicator {
@@ -729,11 +601,5 @@
   .load-more-btn:hover {
     background: var(--color-surface-elevated);
     border-color: var(--color-primary);
-  }
-
-  .end-of-logs {
-    color: var(--color-text-secondary);
-    font-size: 0.813rem;
-    opacity: 0.7;
   }
 </style>

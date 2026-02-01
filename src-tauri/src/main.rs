@@ -17,7 +17,7 @@ use tracing_subscriber::prelude::*;
 
 use crate::bridge::{AppState, BridgeServer};
 use crate::commands::*;
-use crate::logging::{init_log_persister, set_app_handle, TauriLogLayer};
+use crate::logging::{init_log_emitter, init_log_persister, set_app_handle, TauriLogLayer};
 
 #[tokio::main]
 async fn main() {
@@ -39,6 +39,9 @@ async fn main() {
 
             // Set the app handle for the logging layer to enable event emission
             set_app_handle(app_handle.clone());
+
+            // Initialize log emitter for batched frontend events
+            init_log_emitter();
 
             // Initialize database storage
             let app_handle_for_db = app_handle.clone();

@@ -26,6 +26,9 @@ static LOG_BUFFER: OnceLock<Arc<RwLock<LogBuffer>>> = OnceLock::new();
 /// Global log persister for database writes.
 static LOG_PERSISTER: OnceLock<Arc<LogPersister>> = OnceLock::new();
 
+/// Global log emitter for batched frontend events.
+static LOG_EMITTER: OnceLock<Arc<LogEmitter>> = OnceLock::new();
+
 /// Default capacity for the log buffer (in-memory, for real-time display)
 const DEFAULT_BUFFER_CAPACITY: usize = 500;
 
@@ -34,6 +37,12 @@ const DEFAULT_PERSIST_BATCH_SIZE: usize = 100;
 
 /// Default flush interval for database writes
 const DEFAULT_PERSIST_FLUSH_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Flush interval for frontend event batching (50ms for responsive UI)
+const DEFAULT_EMIT_FLUSH_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Maximum batch size before immediate flush
+const DEFAULT_EMIT_BATCH_SIZE: usize = 50;
 
 /// A log entry that can be serialized and sent to the frontend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -271,6 +280,111 @@ impl Default for LogPersister {
     }
 }
 
+/// Batches log entries and emits them to the frontend periodically.
+///
+/// Instead of emitting each log individually (which floods the frontend),
+/// this collects logs and flushes them every 50ms or when the batch reaches
+/// 50 entries. This dramatically improves UI performance.
+pub struct LogEmitter {
+    /// Buffer for pending log entries.
+    buffer: std::sync::Mutex<Vec<LogEntry>>,
+    /// Maximum batch size before immediate flush.
+    batch_size: usize,
+    /// Maximum buffer size before dropping old entries.
+    max_buffer_size: usize,
+    /// Flush interval.
+    flush_interval: Duration,
+}
+
+impl LogEmitter {
+    /// Create a new log emitter with default settings.
+    pub fn new() -> Self {
+        Self {
+            buffer: std::sync::Mutex::new(Vec::with_capacity(DEFAULT_EMIT_BATCH_SIZE)),
+            batch_size: DEFAULT_EMIT_BATCH_SIZE,
+            max_buffer_size: DEFAULT_EMIT_BATCH_SIZE * 4, // Allow 4x batch size before dropping
+            flush_interval: DEFAULT_EMIT_FLUSH_INTERVAL,
+        }
+    }
+
+    /// Add a log entry to the emit buffer.
+    ///
+    /// If the buffer reaches batch_size, triggers an immediate flush.
+    /// If the buffer exceeds max_buffer_size, oldest entries are dropped.
+    pub fn add(&self, entry: LogEntry) {
+        let should_flush = match self.buffer.lock() {
+            Ok(mut buffer) => {
+                // Bound the buffer to prevent unbounded growth under high log pressure
+                if buffer.len() >= self.max_buffer_size {
+                    // Drop oldest entries to make room
+                    let to_remove = buffer.len() - self.max_buffer_size + 1;
+                    buffer.drain(0..to_remove);
+                }
+                buffer.push(entry);
+                buffer.len() >= self.batch_size
+            }
+            Err(poisoned) => {
+                let mut buffer = poisoned.into_inner();
+                if buffer.len() >= self.max_buffer_size {
+                    let to_remove = buffer.len() - self.max_buffer_size + 1;
+                    buffer.drain(0..to_remove);
+                }
+                buffer.push(entry);
+                buffer.len() >= self.batch_size
+            }
+        };
+
+        if should_flush {
+            self.flush_now();
+        }
+    }
+
+    /// Flush buffered logs to the frontend immediately (public for shutdown).
+    pub fn flush(&self) {
+        self.flush_now();
+    }
+
+    /// Flush buffered logs to the frontend immediately.
+    fn flush_now(&self) {
+        let entries = match self.buffer.lock() {
+            Ok(mut buffer) => {
+                if buffer.is_empty() {
+                    return;
+                }
+                std::mem::take(&mut *buffer)
+            }
+            Err(poisoned) => std::mem::take(&mut *poisoned.into_inner()),
+        };
+
+        if !entries.is_empty() {
+            if let Some(handle) = APP_HANDLE.get() {
+                // Emit batch event to frontend
+                let _ = handle.emit("log_batch", &entries);
+            }
+        }
+    }
+
+    /// Start the periodic flush timer.
+    ///
+    /// This spawns a background task that flushes the buffer every flush_interval.
+    pub fn start_periodic_flush(self: Arc<Self>) {
+        let emitter = self;
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(emitter.flush_interval);
+            loop {
+                interval.tick().await;
+                emitter.flush_now();
+            }
+        });
+    }
+}
+
+impl Default for LogEmitter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Initialize the global log persister.
 ///
 /// Should be called after storage is initialized. Safe to call multiple times;
@@ -288,7 +402,8 @@ pub fn init_log_persister() -> Arc<LogPersister> {
         }
         Err(_) => {
             // Another thread beat us to it, use theirs
-            return LOG_PERSISTER.get().unwrap().clone();
+            // Use unwrap_or to handle the edge case where get() returns None
+            return LOG_PERSISTER.get().cloned().unwrap_or(persister);
         }
     }
     persister
@@ -312,6 +427,43 @@ pub async fn flush_logs() {
 /// This must be called during Tauri's setup phase.
 pub fn set_app_handle(handle: AppHandle) {
     let _ = APP_HANDLE.set(handle);
+}
+
+/// Initialize the global log emitter for batched frontend events.
+///
+/// Should be called after the app handle is set. Safe to call multiple times;
+/// only the first call will initialize the emitter.
+pub fn init_log_emitter() -> Arc<LogEmitter> {
+    // Check if already initialized
+    if let Some(existing) = LOG_EMITTER.get() {
+        return existing.clone();
+    }
+
+    let emitter = Arc::new(LogEmitter::new());
+    match LOG_EMITTER.set(emitter.clone()) {
+        Ok(_) => {
+            emitter.clone().start_periodic_flush();
+        }
+        Err(_) => {
+            // Another thread beat us to it, use theirs
+            return LOG_EMITTER.get().cloned().unwrap_or(emitter);
+        }
+    }
+    emitter
+}
+
+/// Get the global log emitter, if initialized.
+pub fn get_log_emitter() -> Option<Arc<LogEmitter>> {
+    LOG_EMITTER.get().cloned()
+}
+
+/// Flush all buffered logs to the frontend.
+///
+/// Should be called before application shutdown to ensure no logs are lost.
+pub fn flush_log_emitter() {
+    if let Some(emitter) = get_log_emitter() {
+        emitter.flush();
+    }
 }
 
 /// Get a reference to the global log buffer.
@@ -494,9 +646,11 @@ where
             persister.add(entry.clone());
         }
 
-        // Emit to frontend if app handle is available
-        if let Some(handle) = APP_HANDLE.get() {
-            // Emit the log event to the frontend
+        // Emit to frontend via batched emitter (preferred) or directly
+        if let Some(emitter) = get_log_emitter() {
+            emitter.add(entry);
+        } else if let Some(handle) = APP_HANDLE.get() {
+            // Fallback to direct emit if emitter not initialized
             let _ = handle.emit("log_event", &entry);
         }
     }
