@@ -152,9 +152,9 @@
 
     try {
       console.log('Sending test pulse to:', device.config.port);
-      const result = await sendTtlPulse(device.config.port);
+      const { result, latency } = await sendTtlPulse(device.config.port);
       if (result.success) {
-        alert('✅ Test pulse sent successfully!');
+        alert(`✅ Test pulse sent successfully! (${latency.toFixed(1)}ms)`);
       } else {
         alert(`❌ Failed to send pulse: ${result.error || 'Unknown error'}`);
       }
