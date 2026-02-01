@@ -235,17 +235,21 @@ impl StreamInlet {
                 // Use recv_timeout to allow periodic shutdown flag checks
                 match command_rx.recv_timeout(std::time::Duration::from_millis(100)) {
                     Ok(InletCommand::OpenStream { timeout, response }) => {
-                        let result = lsl_inlet
-                            .open_stream(timeout)
-                            .map_err(|e| LslError::LslLibraryError(format!("Open failed: {:?}", e)));
+                        let result = lsl_inlet.open_stream(timeout).map_err(|e| {
+                            LslError::LslLibraryError(format!("Open failed: {:?}", e))
+                        });
                         let _ = response.send(result);
                     }
                     Ok(InletCommand::CloseStream) => {
                         lsl_inlet.close_stream();
                     }
                     Ok(InletCommand::PullSample { timeout, response }) => {
-                        let result =
-                            Self::pull_sample_from_lsl(&lsl_inlet, channel_format, channel_count, timeout);
+                        let result = Self::pull_sample_from_lsl(
+                            &lsl_inlet,
+                            channel_format,
+                            channel_count,
+                            timeout,
+                        );
                         let _ = response.send(result);
                     }
                     Ok(InletCommand::TimeCorrection { timeout, response }) => {
@@ -433,7 +437,11 @@ impl StreamInlet {
                     "Inlet thread task failed".to_string(),
                 ))
             }
-            Err(_timeout) => return Err(LslError::LslLibraryError("Inlet thread timeout".to_string())),
+            Err(_timeout) => {
+                return Err(LslError::LslLibraryError(
+                    "Inlet thread timeout".to_string(),
+                ))
+            }
         }
 
         self.active.store(true, Ordering::Relaxed);

@@ -354,7 +354,9 @@ mod client_connection_tests {
 
         // Wait for all updates to complete
         for handle in handles {
-            handle.await.map_err(|e| TestError::TaskFailed(e.to_string()))?;
+            handle
+                .await
+                .map_err(|e| TestError::TaskFailed(e.to_string()))?;
         }
 
         // Clean up connections
@@ -1010,7 +1012,11 @@ mod scalability_tests {
         // Wait for all connections
         let mut successful_connections = 0;
         for task in connect_tasks {
-            if task.await.map_err(|e| TestError::TaskFailed(e.to_string()))?.is_ok() {
+            if task
+                .await
+                .map_err(|e| TestError::TaskFailed(e.to_string()))?
+                .is_ok()
+            {
                 successful_connections += 1;
             }
         }

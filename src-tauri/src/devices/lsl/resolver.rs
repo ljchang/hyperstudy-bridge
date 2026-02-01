@@ -296,7 +296,10 @@ impl StreamResolver {
             };
 
             if !self.filters.is_empty() {
-                let matches = self.filters.iter().any(|f| self.matches_filter(&stream_info, f));
+                let matches = self
+                    .filters
+                    .iter()
+                    .any(|f| self.matches_filter(&stream_info, f));
                 if !matches {
                     continue;
                 }

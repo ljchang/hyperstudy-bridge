@@ -21,18 +21,16 @@ pub async fn run_migrations(pool: &SqlitePool) -> StorageResult<()> {
         "CREATE TABLE IF NOT EXISTS schema_version (
             version INTEGER PRIMARY KEY,
             applied_at TEXT NOT NULL
-        )"
+        )",
     )
     .execute(pool)
     .await?;
 
     // Get current version
     // Note: MAX() returns NULL when table is empty, so we use Option<i32>
-    let current_version: (Option<i32>,) = sqlx::query_as(
-        "SELECT MAX(version) FROM schema_version"
-    )
-    .fetch_one(pool)
-    .await?;
+    let current_version: (Option<i32>,) = sqlx::query_as("SELECT MAX(version) FROM schema_version")
+        .fetch_one(pool)
+        .await?;
 
     let current = current_version.0.unwrap_or(0);
 
@@ -64,7 +62,7 @@ async fn migrate_v1(pool: &SqlitePool) -> StorageResult<()> {
             started_at TEXT NOT NULL,
             ended_at TEXT,
             metadata TEXT
-        )"
+        )",
     )
     .execute(pool)
     .await?;
@@ -80,7 +78,7 @@ async fn migrate_v1(pool: &SqlitePool) -> StorageResult<()> {
             device TEXT,
             source TEXT NOT NULL,
             FOREIGN KEY (session_id) REFERENCES sessions(id)
-        )"
+        )",
     )
     .execute(pool)
     .await?;
@@ -114,7 +112,7 @@ async fn migrate_v1(pool: &SqlitePool) -> StorageResult<()> {
             metadata TEXT,
             created_at TEXT NOT NULL,
             FOREIGN KEY (session_id) REFERENCES sessions(id)
-        )"
+        )",
     )
     .execute(pool)
     .await?;
@@ -134,7 +132,7 @@ async fn migrate_v1(pool: &SqlitePool) -> StorageResult<()> {
             channel_data BLOB NOT NULL,
             FOREIGN KEY (session_id) REFERENCES sessions(id),
             FOREIGN KEY (stream_uid) REFERENCES lsl_streams(uid)
-        )"
+        )",
     )
     .execute(pool)
     .await?;
@@ -142,7 +140,7 @@ async fn migrate_v1(pool: &SqlitePool) -> StorageResult<()> {
     // Composite index for efficient time-range queries per stream
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_lsl_samples_stream_time
-         ON lsl_samples(session_id, stream_uid, timestamp)"
+         ON lsl_samples(session_id, stream_uid, timestamp)",
     )
     .execute(pool)
     .await?;
@@ -178,12 +176,11 @@ mod tests {
         run_migrations(&pool).await.unwrap();
 
         // Verify tables exist
-        let tables: Vec<(String,)> = sqlx::query_as(
-            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-        )
-        .fetch_all(&pool)
-        .await
-        .unwrap();
+        let tables: Vec<(String,)> =
+            sqlx::query_as("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
 
         let table_names: Vec<&str> = tables.iter().map(|t| t.0.as_str()).collect();
         assert!(table_names.contains(&"sessions"));
@@ -215,7 +212,7 @@ mod tests {
         run_migrations(&pool).await.unwrap();
 
         let indexes: Vec<(String,)> = sqlx::query_as(
-            "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'"
+            "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'",
         )
         .fetch_all(&pool)
         .await

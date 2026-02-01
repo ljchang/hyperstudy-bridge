@@ -50,7 +50,8 @@ mod multi_device_sync_tests {
         // Collect results
         let mut operation_results = Vec::new();
         for task in operation_tasks {
-            let (device_id, operation_time, result) = task.await
+            let (device_id, operation_time, result) = task
+                .await
                 .map_err(|e| TestError::TaskFailed(e.to_string()))?;
             operation_results.push((device_id, operation_time, result));
         }
@@ -59,8 +60,12 @@ mod multi_device_sync_tests {
 
         // Verify all operations completed successfully
         for (device_id, _, result) in &operation_results {
-            result.as_ref()
-                .map_err(|e| TestError::Assertion(format!("Operation failed for device {}: {:?}", device_id, e)))?;
+            result.as_ref().map_err(|e| {
+                TestError::Assertion(format!(
+                    "Operation failed for device {}: {:?}",
+                    device_id, e
+                ))
+            })?;
         }
 
         // Verify operations were reasonably synchronized (within 100ms of each other)
@@ -165,7 +170,8 @@ mod multi_device_sync_tests {
                     device_id,
                     DeviceStatus::Connected,
                     &format!("cycle {} after connect", cycle),
-                ).await?;
+                )
+                .await?;
             }
 
             // Perform operations on all devices
@@ -189,7 +195,8 @@ mod multi_device_sync_tests {
                     device_id,
                     DeviceStatus::Disconnected,
                     &format!("cycle {} after disconnect", cycle),
-                ).await?;
+                )
+                .await?;
             }
         }
 
@@ -232,7 +239,9 @@ mod multi_device_sync_tests {
                     let start = Instant::now();
                     if let Some(device_lock) = state.get_device(device_id).await {
                         let mut device = device_lock.write().await;
-                        device.send(operation_data.as_bytes()).await
+                        device
+                            .send(operation_data.as_bytes())
+                            .await
                             .map_err(TestError::Device)?;
                     }
                     Ok(start.elapsed())
@@ -308,7 +317,8 @@ mod time_alignment_tests {
         // Collect timestamps
         let mut operation_timestamps = Vec::new();
         for task in sync_tasks {
-            let (device_id, timestamp) = task.await
+            let (device_id, timestamp) = task
+                .await
                 .map_err(|e| TestError::TaskFailed(e.to_string()))?;
             operation_timestamps.push((device_id, timestamp));
         }
@@ -427,7 +437,9 @@ mod time_alignment_tests {
                 {
                     let device_lock = harness.app_state.get_device(device_id).await.unwrap();
                     let mut device = device_lock.write().await;
-                    device.send(format!("seq_{}_{}", sequence, index).as_bytes()).await?;
+                    device
+                        .send(format!("seq_{}_{}", sequence, index).as_bytes())
+                        .await?;
                 }
                 let operation_duration = operation_start.elapsed();
                 device_timings.push((device_id.clone(), operation_start, operation_duration));
@@ -566,8 +578,9 @@ mod data_integrity_tests {
             for device_id in &device_ids {
                 let device_lock = harness.app_state.get_device(device_id).await.unwrap();
                 let device = device_lock.read().await;
-                if let Some(mock_device) =
-                    device.as_any().and_then(|any| any.downcast_ref::<TestMockDevice>())
+                if let Some(mock_device) = device
+                    .as_any()
+                    .and_then(|any| any.downcast_ref::<TestMockDevice>())
                 {
                     let sent_data = mock_device.get_sent_data().await;
                     if sent_data.len() < data_index + 1 {
@@ -617,8 +630,9 @@ mod data_integrity_tests {
         {
             let device_lock = harness.app_state.get_device(&device_id).await.unwrap();
             let device = device_lock.read().await;
-            if let Some(mock_device) =
-                device.as_any().and_then(|any| any.downcast_ref::<TestMockDevice>())
+            if let Some(mock_device) = device
+                .as_any()
+                .and_then(|any| any.downcast_ref::<TestMockDevice>())
             {
                 let sent_data = mock_device.get_sent_data().await;
 
@@ -692,8 +706,9 @@ mod data_integrity_tests {
         {
             let device_lock = harness.app_state.get_device(&device_id).await.unwrap();
             let device = device_lock.read().await;
-            if let Some(mock_device) =
-                device.as_any().and_then(|any| any.downcast_ref::<TestMockDevice>())
+            if let Some(mock_device) = device
+                .as_any()
+                .and_then(|any| any.downcast_ref::<TestMockDevice>())
             {
                 let received_data = mock_device.get_sent_data().await;
 
@@ -757,8 +772,9 @@ mod data_integrity_tests {
             {
                 let device_lock = harness.app_state.get_device(&device_id).await.unwrap();
                 let device = device_lock.read().await;
-                if let Some(mock_device) =
-                    device.as_any().and_then(|any| any.downcast_ref::<TestMockDevice>())
+                if let Some(mock_device) = device
+                    .as_any()
+                    .and_then(|any| any.downcast_ref::<TestMockDevice>())
                 {
                     let sent_data = mock_device.get_sent_data().await;
                     let received_data = sent_data.last().unwrap();
@@ -835,8 +851,9 @@ mod lsl_integration_tests {
         {
             let device_lock = harness.app_state.get_device(&lsl_device_id).await.unwrap();
             let device = device_lock.read().await;
-            if let Some(mock_device) =
-                device.as_any().and_then(|any| any.downcast_ref::<TestMockDevice>())
+            if let Some(mock_device) = device
+                .as_any()
+                .and_then(|any| any.downcast_ref::<TestMockDevice>())
             {
                 let sent_data = mock_device.get_sent_data().await;
                 assert_eq!(sent_data.len(), stream_data_samples.len());
@@ -899,7 +916,8 @@ mod lsl_integration_tests {
             // Wait for all streams to complete this sample
             let mut sample_timestamps = Vec::new();
             for task in stream_tasks {
-                let timestamp = task.await
+                let timestamp = task
+                    .await
                     .map_err(|e| TestError::TaskFailed(e.to_string()))?;
                 sample_timestamps.push(timestamp);
             }
@@ -960,8 +978,9 @@ mod lsl_integration_tests {
         {
             let device_lock = harness.app_state.get_device(&device_id).await.unwrap();
             let device = device_lock.read().await;
-            if let Some(mock_device) =
-                device.as_any().and_then(|any| any.downcast_ref::<TestMockDevice>())
+            if let Some(mock_device) = device
+                .as_any()
+                .and_then(|any| any.downcast_ref::<TestMockDevice>())
             {
                 let buffered_data = mock_device.get_sent_data().await;
 
@@ -1058,8 +1077,9 @@ mod event_correlation_tests {
         for (device_index, device_id) in device_ids.iter().enumerate() {
             let device_lock = harness.app_state.get_device(device_id).await.unwrap();
             let device = device_lock.read().await;
-            if let Some(mock_device) =
-                device.as_any().and_then(|any| any.downcast_ref::<TestMockDevice>())
+            if let Some(mock_device) = device
+                .as_any()
+                .and_then(|any| any.downcast_ref::<TestMockDevice>())
             {
                 let device_data = mock_device.get_sent_data().await;
 
@@ -1089,7 +1109,10 @@ mod event_correlation_tests {
         let mut device_ids = Vec::new();
         for _ in 0..3 {
             let device_id = harness.add_connected_device(DeviceType::Mock).await?;
-            harness.performance_monitor.add_device(device_id.clone()).await;
+            harness
+                .performance_monitor
+                .add_device(device_id.clone())
+                .await;
             device_ids.push(device_id);
         }
 
@@ -1139,7 +1162,8 @@ mod event_correlation_tests {
             // Collect timing results
             let mut event_results = Vec::new();
             for task in event_tasks {
-                let result = task.await
+                let result = task
+                    .await
                     .map_err(|e| TestError::TaskFailed(e.to_string()))?;
                 event_results.push(result);
             }
@@ -1163,8 +1187,13 @@ mod event_correlation_tests {
 
         // Verify performance metrics show correlated events
         for device_id in &device_ids {
-            let metrics = harness.performance_monitor.get_device_metrics(device_id).await
-                .ok_or_else(|| TestError::Assertion(format!("No metrics for device {}", device_id)))?;
+            let metrics = harness
+                .performance_monitor
+                .get_device_metrics(device_id)
+                .await
+                .ok_or_else(|| {
+                    TestError::Assertion(format!("No metrics for device {}", device_id))
+                })?;
 
             if metrics.messages_sent != correlation_events as u64 {
                 return Err(TestError::Assertion(format!(
@@ -1238,14 +1267,19 @@ mod event_correlation_tests {
 
             // Wait for step completion
             for task in step_tasks {
-                task.await.map_err(|e| TestError::TaskFailed(e.to_string()))?;
+                task.await
+                    .map_err(|e| TestError::TaskFailed(e.to_string()))?;
             }
 
             let step_duration = step_start.elapsed();
             println!("  Step '{}' completed in: {:?}", step_name, step_duration);
 
             // Verify step completed quickly
-            Assertions::assert_latency(step_duration, 100.0, &format!("workflow step '{}'", step_name))?;
+            Assertions::assert_latency(
+                step_duration,
+                100.0,
+                &format!("workflow step '{}'", step_name),
+            )?;
 
             // Inter-step delay for realistic workflow timing
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1266,8 +1300,9 @@ mod event_correlation_tests {
         for (device_name, device_id) in &all_devices {
             let device_lock = harness.app_state.get_device(device_id).await.unwrap();
             let device = device_lock.read().await;
-            if let Some(mock_device) =
-                device.as_any().and_then(|any| any.downcast_ref::<TestMockDevice>())
+            if let Some(mock_device) = device
+                .as_any()
+                .and_then(|any| any.downcast_ref::<TestMockDevice>())
             {
                 let device_data = mock_device.get_sent_data().await;
                 println!(

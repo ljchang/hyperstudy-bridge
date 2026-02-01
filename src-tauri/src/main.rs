@@ -27,13 +27,13 @@ async fn main() {
     // causing an infinite feedback loop that fills the database and consumes all memory.
     //
     // Console filter: Show our logs at INFO+, dependencies at WARN+
-    let console_filter = EnvFilter::new("warn")
-        .add_directive("hyperstudy_bridge=info".parse().unwrap());
+    let console_filter =
+        EnvFilter::new("warn").add_directive("hyperstudy_bridge=info".parse().unwrap());
 
     // Tauri layer filter: ONLY log our crate's messages to frontend/database
     // This completely prevents dependency logs from being stored
-    let tauri_filter = EnvFilter::new("off")
-        .add_directive("hyperstudy_bridge=info".parse().unwrap());
+    let tauri_filter =
+        EnvFilter::new("off").add_directive("hyperstudy_bridge=info".parse().unwrap());
 
     // Initialize tracing with filtering to prevent log explosion from dependencies
     tracing_subscriber::registry()

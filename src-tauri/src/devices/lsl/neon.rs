@@ -130,17 +130,18 @@ impl NeonLslManager {
             let stream_name = &stream.info.name;
 
             if let Some(device_name) = StreamFilter::extract_neon_device_name(stream_name) {
-                let entry = device_map.entry(device_name.clone()).or_insert_with(|| {
-                    DiscoveredNeonDevice {
-                        device_name: device_name.clone(),
-                        has_gaze_stream: false,
-                        has_events_stream: false,
-                        gaze_channel_count: 0,
-                        gaze_stream_uid: None,
-                        events_stream_uid: None,
-                        discovered_at: now,
-                    }
-                });
+                let entry =
+                    device_map
+                        .entry(device_name.clone())
+                        .or_insert_with(|| DiscoveredNeonDevice {
+                            device_name: device_name.clone(),
+                            has_gaze_stream: false,
+                            has_events_stream: false,
+                            gaze_channel_count: 0,
+                            gaze_stream_uid: None,
+                            events_stream_uid: None,
+                            discovered_at: now,
+                        });
 
                 if StreamFilter::is_neon_gaze_stream(stream_name) {
                     entry.has_gaze_stream = true;
@@ -371,13 +372,9 @@ impl NeonLslManager {
         })?;
 
         // Find the stream in the resolver cache
-        let stream = self
-            .resolver
-            .get_stream(&events_uid)
-            .await
-            .ok_or_else(|| {
-                LslError::StreamNotFound(format!("Events stream not found: {}", events_uid))
-            })?;
+        let stream = self.resolver.get_stream(&events_uid).await.ok_or_else(|| {
+            LslError::StreamNotFound(format!("Events stream not found: {}", events_uid))
+        })?;
 
         // Create inlet for this stream
         let inlet_config = InletConfig {
@@ -424,7 +421,10 @@ impl NeonLslManager {
                         if let SampleData::String(data) = sample.data {
                             match NeonEventData::from_lsl_sample(sample.timestamp, &data) {
                                 Ok(event) => {
-                                    debug!("Neon event: {} @ {}", event.event_name, event.timestamp);
+                                    debug!(
+                                        "Neon event: {} @ {}",
+                                        event.event_name, event.timestamp
+                                    );
                                     if task_tx.send(event).await.is_err() {
                                         debug!("Events receiver dropped, stopping task");
                                         break;

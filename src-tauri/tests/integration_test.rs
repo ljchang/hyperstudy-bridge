@@ -20,11 +20,20 @@ mod device_lifecycle_tests {
         let device_id = harness.add_device(DeviceType::TTL).await;
 
         // Test initial state
-        Assertions::assert_device_status(&harness, &device_id, DeviceStatus::Disconnected, "initial").await?;
+        Assertions::assert_device_status(
+            &harness,
+            &device_id,
+            DeviceStatus::Disconnected,
+            "initial",
+        )
+        .await?;
 
         // Test connection
         {
-            let device_lock = harness.app_state.get_device(&device_id).await
+            let device_lock = harness
+                .app_state
+                .get_device(&device_id)
+                .await
                 .ok_or_else(|| TestError::Setup("Device not found".to_string()))?;
             let mut device = device_lock.write().await;
             device.connect().await?;
@@ -32,7 +41,13 @@ mod device_lifecycle_tests {
         }
 
         // Verify status updated in state
-        Assertions::assert_device_status(&harness, &device_id, DeviceStatus::Connected, "after connect").await?;
+        Assertions::assert_device_status(
+            &harness,
+            &device_id,
+            DeviceStatus::Connected,
+            "after connect",
+        )
+        .await?;
 
         // Test disconnection
         {
@@ -75,7 +90,13 @@ mod device_lifecycle_tests {
 
         // Verify all devices are connected
         for (_, device_id) in &devices {
-            Assertions::assert_device_status(&harness, device_id, DeviceStatus::Connected, "after concurrent connect").await?;
+            Assertions::assert_device_status(
+                &harness,
+                device_id,
+                DeviceStatus::Connected,
+                "after concurrent connect",
+            )
+            .await?;
         }
 
         harness.cleanup().await
@@ -112,11 +133,17 @@ mod device_lifecycle_tests {
 
         // Test connection failure
         {
-            let device_lock = harness.app_state.get_device(&device_id).await
+            let device_lock = harness
+                .app_state
+                .get_device(&device_id)
+                .await
                 .ok_or_else(|| TestError::Setup("Device not found".to_string()))?;
             let mut device = device_lock.write().await;
             let result = device.connect().await;
-            assert!(result.is_err(), "Connection should fail with 100% error rate");
+            assert!(
+                result.is_err(),
+                "Connection should fail with 100% error rate"
+            );
         }
 
         harness.cleanup().await
@@ -135,7 +162,10 @@ mod device_lifecycle_tests {
         };
 
         {
-            let device_lock = harness.app_state.get_device(&device_id).await
+            let device_lock = harness
+                .app_state
+                .get_device(&device_id)
+                .await
                 .ok_or_else(|| TestError::Setup("Device not found".to_string()))?;
             let mut device = device_lock.write().await;
             device.configure(config.clone())?;
@@ -284,7 +314,10 @@ mod performance_tests {
         let device_id = harness.add_connected_device(DeviceType::TTL).await?;
 
         // Add device to performance monitoring
-        harness.performance_monitor.add_device(device_id.clone()).await;
+        harness
+            .performance_monitor
+            .add_device(device_id.clone())
+            .await;
 
         // Record operations with performance monitor
         for _ in 0..10 {
@@ -296,13 +329,17 @@ mod performance_tests {
             }
             let latency = start.elapsed();
 
-            harness.performance_monitor
+            harness
+                .performance_monitor
                 .record_device_operation(&device_id, latency, 4, 0)
                 .await;
         }
 
         // Verify metrics collection
-        let metrics = harness.performance_monitor.get_device_metrics(&device_id).await
+        let metrics = harness
+            .performance_monitor
+            .get_device_metrics(&device_id)
+            .await
             .ok_or_else(|| TestError::Assertion("No metrics found".to_string()))?;
 
         assert_eq!(metrics.messages_sent, 10);
@@ -439,7 +476,10 @@ mod error_recovery_tests {
         let device_id = harness.add_unreliable_device(DeviceType::TTL, 0.8).await; // 80% error rate
 
         // Add to performance monitoring
-        harness.performance_monitor.add_device(device_id.clone()).await;
+        harness
+            .performance_monitor
+            .add_device(device_id.clone())
+            .await;
 
         // Attempt operations to generate errors
         let total_operations = 20;
@@ -447,7 +487,8 @@ mod error_recovery_tests {
             let device_lock = harness.app_state.get_device(&device_id).await.unwrap();
             let mut device = device_lock.write().await;
             if let Err(e) = device.connect().await {
-                harness.performance_monitor
+                harness
+                    .performance_monitor
                     .record_device_error(&device_id, &e.to_string())
                     .await;
             } else {
@@ -456,7 +497,10 @@ mod error_recovery_tests {
         }
 
         // Check error metrics
-        let metrics = harness.performance_monitor.get_device_metrics(&device_id).await
+        let metrics = harness
+            .performance_monitor
+            .get_device_metrics(&device_id)
+            .await
             .ok_or_else(|| TestError::Assertion("No metrics found".to_string()))?;
 
         assert!(
@@ -510,7 +554,11 @@ mod memory_leak_tests {
 
         // Note: Memory measurements can be noisy due to system activity
         // We use a generous threshold (100MB) to avoid flaky tests
-        Assertions::assert_no_memory_leak(memory_tracker.memory_increase(), 100, "device connection cycles")?;
+        Assertions::assert_no_memory_leak(
+            memory_tracker.memory_increase(),
+            100,
+            "device connection cycles",
+        )?;
 
         println!(
             "Memory increase: {} bytes",
@@ -546,7 +594,11 @@ mod memory_leak_tests {
 
         // Note: Memory measurements can be noisy due to system activity
         // We use a generous threshold (100MB) to avoid flaky tests
-        Assertions::assert_no_memory_leak(memory_tracker.memory_increase(), 100, "message processing")?;
+        Assertions::assert_no_memory_leak(
+            memory_tracker.memory_increase(),
+            100,
+            "message processing",
+        )?;
 
         println!(
             "Memory increase after 1000 messages: {} bytes",
@@ -589,7 +641,11 @@ mod memory_leak_tests {
 
         // Note: Memory measurements can be noisy due to system activity
         // We use a generous threshold (100MB) to avoid flaky tests
-        Assertions::assert_no_memory_leak(memory_tracker.memory_increase(), 100, "device state management")?;
+        Assertions::assert_no_memory_leak(
+            memory_tracker.memory_increase(),
+            100,
+            "device state management",
+        )?;
 
         println!(
             "Memory increase after device lifecycle test: {} bytes",
@@ -609,11 +665,16 @@ mod edge_case_tests {
     #[tokio::test]
     async fn test_extremely_high_latency_device() -> TestResult<()> {
         let mut harness = TestHarness::new().await;
-        let device_id = harness.add_device_with_latency(DeviceType::Kernel, 5000).await; // 5 second latency
+        let device_id = harness
+            .add_device_with_latency(DeviceType::Kernel, 5000)
+            .await; // 5 second latency
 
         // Test connection with timeout
         let connect_result = timeout(Duration::from_secs(10), async {
-            let device_lock = harness.app_state.get_device(&device_id).await
+            let device_lock = harness
+                .app_state
+                .get_device(&device_id)
+                .await
                 .ok_or_else(|| TestError::Setup("Device not found".to_string()))?;
             let mut device = device_lock.write().await;
             device.connect().await.map_err(TestError::Device)
@@ -667,9 +728,10 @@ mod edge_case_tests {
             let device_lock = harness.app_state.get_device(&device_id).await.unwrap();
             let mut device = device_lock.write().await;
 
-            device.connect().await
-                .map_err(|e| TestError::Device(e))?;
-            device.disconnect().await
+            device.connect().await.map_err(|e| TestError::Device(e))?;
+            device
+                .disconnect()
+                .await
                 .map_err(|e| TestError::Device(e))?;
         }
 
@@ -693,7 +755,10 @@ mod edge_case_tests {
                 for _ in 0..10 {
                     if let Some(device_lock) = state.get_device(&device_id).await {
                         let mut device = device_lock.write().await;
-                        device.send(test_data.as_bytes()).await.map_err(TestError::Device)?;
+                        device
+                            .send(test_data.as_bytes())
+                            .await
+                            .map_err(TestError::Device)?;
                     }
                     tokio::time::sleep(Duration::from_millis(1)).await;
                 }
@@ -722,10 +787,16 @@ mod edge_case_tests {
             assert!(send_result.is_err(), "Send should fail when disconnected");
 
             let receive_result = device.receive().await;
-            assert!(receive_result.is_err(), "Receive should fail when disconnected");
+            assert!(
+                receive_result.is_err(),
+                "Receive should fail when disconnected"
+            );
 
             let heartbeat_result = device.heartbeat().await;
-            assert!(heartbeat_result.is_err(), "Heartbeat should fail when disconnected");
+            assert!(
+                heartbeat_result.is_err(),
+                "Heartbeat should fail when disconnected"
+            );
         }
 
         harness.cleanup().await
@@ -779,14 +850,24 @@ mod resource_cleanup_tests {
         let mut device_ids = Vec::new();
         for _ in 0..3 {
             let device_id = harness.add_device(DeviceType::TTL).await;
-            harness.performance_monitor.add_device(device_id.clone()).await;
+            harness
+                .performance_monitor
+                .add_device(device_id.clone())
+                .await;
             device_ids.push(device_id);
         }
 
         // Verify metrics exist for all devices
         for device_id in &device_ids {
-            let metrics = harness.performance_monitor.get_device_metrics(device_id).await;
-            assert!(metrics.is_some(), "Metrics not found for device {}", device_id);
+            let metrics = harness
+                .performance_monitor
+                .get_device_metrics(device_id)
+                .await;
+            assert!(
+                metrics.is_some(),
+                "Metrics not found for device {}",
+                device_id
+            );
         }
 
         // Remove devices from performance monitoring
@@ -796,7 +877,10 @@ mod resource_cleanup_tests {
 
         // Verify metrics are cleaned up
         for device_id in &device_ids {
-            let metrics = harness.performance_monitor.get_device_metrics(device_id).await;
+            let metrics = harness
+                .performance_monitor
+                .get_device_metrics(device_id)
+                .await;
             assert!(
                 metrics.is_none(),
                 "Metrics still exist for device {} after cleanup",

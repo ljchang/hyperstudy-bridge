@@ -42,11 +42,11 @@ pub enum CommandAction {
     Status,
     Heartbeat,
     // Neon LSL specific actions
-    DiscoverNeon,       // Discover Neon devices streaming via LSL
-    ConnectNeonGaze,    // Connect to Neon gaze stream
-    ConnectNeonEvents,  // Connect to Neon events stream
-    DisconnectNeon,     // Disconnect from Neon streams
-    NeonStatus,         // Get Neon LSL manager status
+    DiscoverNeon,      // Discover Neon devices streaming via LSL
+    ConnectNeonGaze,   // Connect to Neon gaze stream
+    ConnectNeonEvents, // Connect to Neon events stream
+    DisconnectNeon,    // Disconnect from Neon streams
+    NeonStatus,        // Get Neon LSL manager status
     Custom(String),
 }
 

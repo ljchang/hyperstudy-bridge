@@ -352,14 +352,20 @@ pub async fn send_ttl_pulse(
         }
     } else if let Some(port) = port {
         // Quick connect and pulse for lowest latency
-        info!("Sending TTL pulse via temporary connection on port: {}", port);
+        info!(
+            "Sending TTL pulse via temporary connection on port: {}",
+            port
+        );
         let mut device = TtlDevice::new(port.clone());
         match device.connect().await {
             Ok(_) => match device.send(b"PULSE\n").await {
                 Ok(_) => {
                     let latency_us = start_time.elapsed().as_micros() as u64;
                     let _ = device.disconnect().await;
-                    info!("TTL pulse sent successfully via {} (latency: {}µs)", port, latency_us);
+                    info!(
+                        "TTL pulse sent successfully via {} (latency: {}µs)",
+                        port, latency_us
+                    );
                     Ok(CommandResult::success(latency_us))
                 }
                 Err(e) => {
@@ -677,9 +683,7 @@ pub async fn query_logs(
     let storage = match crate::storage::get_storage() {
         Some(s) => s,
         None => {
-            return Ok(CommandResult::error(
-                "Database not initialized".to_string(),
-            ));
+            return Ok(CommandResult::error("Database not initialized".to_string()));
         }
     };
 
@@ -706,9 +710,7 @@ pub async fn get_log_stats() -> Result<CommandResult<serde_json::Value>, ()> {
     let storage = match crate::storage::get_storage() {
         Some(s) => s,
         None => {
-            return Ok(CommandResult::error(
-                "Database not initialized".to_string(),
-            ));
+            return Ok(CommandResult::error("Database not initialized".to_string()));
         }
     };
 
@@ -730,9 +732,7 @@ pub async fn get_storage_stats() -> Result<CommandResult<crate::storage::Storage
     let storage = match crate::storage::get_storage() {
         Some(s) => s,
         None => {
-            return Ok(CommandResult::error(
-                "Database not initialized".to_string(),
-            ));
+            return Ok(CommandResult::error("Database not initialized".to_string()));
         }
     };
 
@@ -750,9 +750,7 @@ pub async fn start_session(
     let storage = match crate::storage::get_storage() {
         Some(s) => s,
         None => {
-            return Ok(CommandResult::error(
-                "Database not initialized".to_string(),
-            ));
+            return Ok(CommandResult::error("Database not initialized".to_string()));
         }
     };
 
@@ -774,9 +772,7 @@ pub async fn end_session() -> Result<CommandResult<String>, ()> {
     let storage = match crate::storage::get_storage() {
         Some(s) => s,
         None => {
-            return Ok(CommandResult::error(
-                "Database not initialized".to_string(),
-            ));
+            return Ok(CommandResult::error("Database not initialized".to_string()));
         }
     };
 
@@ -803,9 +799,7 @@ pub async fn list_sessions(
     let storage = match crate::storage::get_storage() {
         Some(s) => s,
         None => {
-            return Ok(CommandResult::error(
-                "Database not initialized".to_string(),
-            ));
+            return Ok(CommandResult::error("Database not initialized".to_string()));
         }
     };
 
@@ -820,9 +814,7 @@ pub async fn list_sessions(
 /// Deletes logs older than the specified number of days.
 /// The `older_than_days` parameter must be at least 1 to prevent accidental deletion.
 #[tauri::command]
-pub async fn cleanup_old_logs(
-    older_than_days: i64,
-) -> Result<CommandResult<u64>, ()> {
+pub async fn cleanup_old_logs(older_than_days: i64) -> Result<CommandResult<u64>, ()> {
     // Validate input to prevent accidental deletion
     if older_than_days < 1 {
         return Ok(CommandResult::error(
@@ -836,15 +828,16 @@ pub async fn cleanup_old_logs(
     let storage = match crate::storage::get_storage() {
         Some(s) => s,
         None => {
-            return Ok(CommandResult::error(
-                "Database not initialized".to_string(),
-            ));
+            return Ok(CommandResult::error("Database not initialized".to_string()));
         }
     };
 
     match storage.cleanup_old_logs(days).await {
         Ok(deleted) => {
-            info!("Deleted {} old log entries (older than {} days)", deleted, days);
+            info!(
+                "Deleted {} old log entries (older than {} days)",
+                deleted, days
+            );
             Ok(CommandResult::success(deleted))
         }
         Err(e) => Ok(CommandResult::error(format!("Cleanup failed: {}", e))),
@@ -859,9 +852,7 @@ pub async fn clear_all_logs() -> Result<CommandResult<u64>, ()> {
     let storage = match crate::storage::get_storage() {
         Some(s) => s,
         None => {
-            return Ok(CommandResult::error(
-                "Database not initialized".to_string(),
-            ));
+            return Ok(CommandResult::error("Database not initialized".to_string()));
         }
     };
 

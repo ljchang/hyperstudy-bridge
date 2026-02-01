@@ -76,8 +76,7 @@ impl LslSample {
             .chunks_exact(8)
             .map(|chunk| {
                 f64::from_le_bytes([
-                    chunk[0], chunk[1], chunk[2], chunk[3],
-                    chunk[4], chunk[5], chunk[6], chunk[7],
+                    chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
                 ])
             })
             .collect()
@@ -226,7 +225,7 @@ impl SampleBatcher {
         for (session_id, sample) in samples {
             sqlx::query(
                 "INSERT INTO lsl_samples (session_id, stream_uid, timestamp, channel_data)
-                 VALUES (?, ?, ?, ?)"
+                 VALUES (?, ?, ?, ?)",
             )
             .bind(session_id)
             .bind(&sample.stream_uid)
@@ -266,7 +265,7 @@ pub async fn register_stream(
         "INSERT OR REPLACE INTO lsl_streams
          (uid, session_id, name, stream_type, channel_count, sample_rate,
           channel_format, source_id, hostname, metadata, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(uid)
     .bind(session_id)
@@ -291,7 +290,7 @@ pub async fn get_stream(pool: &SqlitePool, uid: &str) -> StorageResult<Option<St
     let stream = sqlx::query_as::<_, StreamMetadata>(
         "SELECT uid, session_id, name, stream_type, channel_count, sample_rate,
                 channel_format, source_id, hostname, metadata, created_at
-         FROM lsl_streams WHERE uid = ?"
+         FROM lsl_streams WHERE uid = ?",
     )
     .bind(uid)
     .fetch_optional(pool)
@@ -301,11 +300,14 @@ pub async fn get_stream(pool: &SqlitePool, uid: &str) -> StorageResult<Option<St
 }
 
 /// List all streams for a session.
-pub async fn list_streams(pool: &SqlitePool, session_id: &str) -> StorageResult<Vec<StreamMetadata>> {
+pub async fn list_streams(
+    pool: &SqlitePool,
+    session_id: &str,
+) -> StorageResult<Vec<StreamMetadata>> {
     let streams = sqlx::query_as::<_, StreamMetadata>(
         "SELECT uid, session_id, name, stream_type, channel_count, sample_rate,
                 channel_format, source_id, hostname, metadata, created_at
-         FROM lsl_streams WHERE session_id = ? ORDER BY created_at"
+         FROM lsl_streams WHERE session_id = ? ORDER BY created_at",
     )
     .bind(session_id)
     .fetch_all(pool)
@@ -352,10 +354,7 @@ pub async fn query_samples(
     let limit = options.limit.unwrap_or(1000).clamp(1, 10000);
     let offset = options.offset.unwrap_or(0).max(0);
 
-    let mut conditions = vec![
-        "session_id = ?".to_string(),
-        "stream_uid = ?".to_string(),
-    ];
+    let mut conditions = vec!["session_id = ?".to_string(), "stream_uid = ?".to_string()];
 
     if options.from_timestamp.is_some() {
         conditions.push("timestamp >= ?".to_string());
@@ -367,10 +366,7 @@ pub async fn query_samples(
     let where_clause = conditions.join(" AND ");
 
     // Get total count
-    let count_query = format!(
-        "SELECT COUNT(*) FROM lsl_samples WHERE {}",
-        where_clause
-    );
+    let count_query = format!("SELECT COUNT(*) FROM lsl_samples WHERE {}", where_clause);
 
     let mut count_builder = sqlx::query_as::<_, (i64,)>(&count_query)
         .bind(&options.session_id)
@@ -403,11 +399,7 @@ pub async fn query_samples(
         builder = builder.bind(to_ts);
     }
 
-    let samples = builder
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?;
+    let samples = builder.bind(limit).bind(offset).fetch_all(pool).await?;
 
     let has_more = offset + (samples.len() as i64) < total_count;
 
@@ -424,13 +416,12 @@ pub async fn get_sample_count(
     session_id: &str,
     stream_uid: &str,
 ) -> StorageResult<i64> {
-    let count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM lsl_samples WHERE session_id = ? AND stream_uid = ?"
-    )
-    .bind(session_id)
-    .bind(stream_uid)
-    .fetch_one(pool)
-    .await?;
+    let count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM lsl_samples WHERE session_id = ? AND stream_uid = ?")
+            .bind(session_id)
+            .bind(stream_uid)
+            .fetch_one(pool)
+            .await?;
 
     Ok(count.0)
 }
@@ -443,7 +434,7 @@ pub async fn get_time_range(
 ) -> StorageResult<Option<(f64, f64)>> {
     let result: Option<(f64, f64)> = sqlx::query_as(
         "SELECT MIN(timestamp), MAX(timestamp) FROM lsl_samples
-         WHERE session_id = ? AND stream_uid = ?"
+         WHERE session_id = ? AND stream_uid = ?",
     )
     .bind(session_id)
     .bind(stream_uid)
@@ -468,7 +459,7 @@ pub async fn insert_samples_batch(
     for sample in samples {
         sqlx::query(
             "INSERT INTO lsl_samples (session_id, stream_uid, timestamp, channel_data)
-             VALUES (?, ?, ?, ?)"
+             VALUES (?, ?, ?, ?)",
         )
         .bind(session_id)
         .bind(&sample.stream_uid)
@@ -580,13 +571,7 @@ mod tests {
 
         // Insert samples
         let samples: Vec<LslSample> = (0..10)
-            .map(|i| {
-                LslSample::from_f32(
-                    "stream-001".to_string(),
-                    i as f64 * 0.01,
-                    &[i as f32; 4],
-                )
-            })
+            .map(|i| LslSample::from_f32("stream-001".to_string(), i as f64 * 0.01, &[i as f32; 4]))
             .collect();
 
         insert_samples_batch(&pool, "test-session", &samples)
@@ -594,11 +579,14 @@ mod tests {
             .unwrap();
 
         // Query samples
-        let result = query_samples(&pool, SampleQueryOptions {
-            session_id: "test-session".to_string(),
-            stream_uid: "stream-001".to_string(),
-            ..Default::default()
-        })
+        let result = query_samples(
+            &pool,
+            SampleQueryOptions {
+                session_id: "test-session".to_string(),
+                stream_uid: "stream-001".to_string(),
+                ..Default::default()
+            },
+        )
         .await
         .unwrap();
 
@@ -635,13 +623,7 @@ mod tests {
 
         // Insert samples with specific timestamps
         let samples: Vec<LslSample> = (0..100)
-            .map(|i| {
-                LslSample::from_f32(
-                    "stream-001".to_string(),
-                    i as f64,
-                    &[1.0; 4],
-                )
-            })
+            .map(|i| LslSample::from_f32("stream-001".to_string(), i as f64, &[1.0; 4]))
             .collect();
 
         insert_samples_batch(&pool, "test-session", &samples)
@@ -649,13 +631,16 @@ mod tests {
             .unwrap();
 
         // Query specific time range
-        let result = query_samples(&pool, SampleQueryOptions {
-            session_id: "test-session".to_string(),
-            stream_uid: "stream-001".to_string(),
-            from_timestamp: Some(25.0),
-            to_timestamp: Some(75.0),
-            ..Default::default()
-        })
+        let result = query_samples(
+            &pool,
+            SampleQueryOptions {
+                session_id: "test-session".to_string(),
+                stream_uid: "stream-001".to_string(),
+                from_timestamp: Some(25.0),
+                to_timestamp: Some(75.0),
+                ..Default::default()
+            },
+        )
         .await
         .unwrap();
 
@@ -697,11 +682,7 @@ mod tests {
 
         // Add samples below threshold
         for i in 0..9 {
-            let sample = LslSample::from_f32(
-                "stream-001".to_string(),
-                i as f64,
-                &[1.0; 4],
-            );
+            let sample = LslSample::from_f32("stream-001".to_string(), i as f64, &[1.0; 4]);
             batcher.add("test-session".to_string(), sample).await;
         }
 

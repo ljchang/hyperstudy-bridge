@@ -240,7 +240,11 @@ async fn handle_device_command(
                             if let Some(req_id) = id {
                                 send_response(
                                     tx,
-                                    BridgeResponse::ack(req_id, false, Some("Missing port configuration".to_string())),
+                                    BridgeResponse::ack(
+                                        req_id,
+                                        false,
+                                        Some("Missing port configuration".to_string()),
+                                    ),
                                 )
                                 .await;
                             }
@@ -258,14 +262,19 @@ async fn handle_device_command(
                                 tx,
                                 BridgeResponse::device_error(
                                     device_id.clone(),
-                                    "Kernel device requires 'ip' in config (e.g., 192.168.1.100)".to_string(),
+                                    "Kernel device requires 'ip' in config (e.g., 192.168.1.100)"
+                                        .to_string(),
                                 ),
                             )
                             .await;
                             if let Some(req_id) = id {
                                 send_response(
                                     tx,
-                                    BridgeResponse::ack(req_id, false, Some("Missing IP configuration".to_string())),
+                                    BridgeResponse::ack(
+                                        req_id,
+                                        false,
+                                        Some("Missing IP configuration".to_string()),
+                                    ),
                                 )
                                 .await;
                             }
@@ -283,14 +292,19 @@ async fn handle_device_command(
                                 tx,
                                 BridgeResponse::device_error(
                                     device_id.clone(),
-                                    "Pupil device requires 'url' in config (e.g., localhost:8081)".to_string(),
+                                    "Pupil device requires 'url' in config (e.g., localhost:8081)"
+                                        .to_string(),
                                 ),
                             )
                             .await;
                             if let Some(req_id) = id {
                                 send_response(
                                     tx,
-                                    BridgeResponse::ack(req_id, false, Some("Missing URL configuration".to_string())),
+                                    BridgeResponse::ack(
+                                        req_id,
+                                        false,
+                                        Some("Missing URL configuration".to_string()),
+                                    ),
                                 )
                                 .await;
                             }
@@ -497,7 +511,11 @@ async fn handle_device_command(
                             if let Some(req_id) = id {
                                 send_response(
                                     tx,
-                                    BridgeResponse::ack(req_id, false, Some("TTL test requires 'port' in config".to_string())),
+                                    BridgeResponse::ack(
+                                        req_id,
+                                        false,
+                                        Some("TTL test requires 'port' in config".to_string()),
+                                    ),
                                 )
                                 .await;
                             }
@@ -517,7 +535,11 @@ async fn handle_device_command(
                             if let Some(req_id) = id {
                                 send_response(
                                     tx,
-                                    BridgeResponse::ack(req_id, false, Some("Kernel test requires 'ip' in config".to_string())),
+                                    BridgeResponse::ack(
+                                        req_id,
+                                        false,
+                                        Some("Kernel test requires 'ip' in config".to_string()),
+                                    ),
                                 )
                                 .await;
                             }
@@ -537,7 +559,11 @@ async fn handle_device_command(
                             if let Some(req_id) = id {
                                 send_response(
                                     tx,
-                                    BridgeResponse::ack(req_id, false, Some("Pupil test requires 'url' in config".to_string())),
+                                    BridgeResponse::ack(
+                                        req_id,
+                                        false,
+                                        Some("Pupil test requires 'url' in config".to_string()),
+                                    ),
                                 )
                                 .await;
                             }
@@ -770,11 +796,7 @@ async fn handle_device_command(
                 if let Some(req_id) = id {
                     send_response(
                         tx,
-                        BridgeResponse::ack(
-                            req_id,
-                            false,
-                            Some("Missing device_name".to_string()),
-                        ),
+                        BridgeResponse::ack(req_id, false, Some("Missing device_name".to_string())),
                     )
                     .await;
                 }
@@ -863,11 +885,7 @@ async fn handle_device_command(
                 if let Some(req_id) = id {
                     send_response(
                         tx,
-                        BridgeResponse::ack(
-                            req_id,
-                            false,
-                            Some("Missing device_name".to_string()),
-                        ),
+                        BridgeResponse::ack(req_id, false, Some("Missing device_name".to_string())),
                     )
                     .await;
                 }

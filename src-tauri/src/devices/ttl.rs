@@ -252,12 +252,12 @@ impl TtlDevice {
             let result = tokio::task::spawn_blocking(move || {
                 // Wrap in catch_unwind to prevent mutex poisoning on panic
                 let panic_result = catch_unwind(AssertUnwindSafe(|| {
-                    let mut port = port_clone
-                        .lock()
-                        .map_err(|e| {
-                            error!("Mutex poisoned in send_pulse: {}", e);
-                            DeviceError::CommunicationError("Mutex poisoned - device needs reset".to_string())
-                        })?;
+                    let mut port = port_clone.lock().map_err(|e| {
+                        error!("Mutex poisoned in send_pulse: {}", e);
+                        DeviceError::CommunicationError(
+                            "Mutex poisoned - device needs reset".to_string(),
+                        )
+                    })?;
                     port.write_all(PULSE_COMMAND)
                         .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
                     port.flush()
@@ -276,7 +276,10 @@ impl TtlDevice {
                             "Unknown panic in serial operation".to_string()
                         };
                         error!("Panic caught in send_pulse: {}", msg);
-                        Err(DeviceError::CommunicationError(format!("Serial operation panicked: {}", msg)))
+                        Err(DeviceError::CommunicationError(format!(
+                            "Serial operation panicked: {}",
+                            msg
+                        )))
                     }
                 }
             })
@@ -445,12 +448,12 @@ impl Device for TtlDevice {
             // Run blocking serial I/O on the blocking thread pool with panic recovery
             let result = tokio::task::spawn_blocking(move || {
                 let panic_result = catch_unwind(AssertUnwindSafe(|| {
-                    let mut port = port_clone
-                        .lock()
-                        .map_err(|e| {
-                            error!("Mutex poisoned in send: {}", e);
-                            DeviceError::CommunicationError("Mutex poisoned - device needs reset".to_string())
-                        })?;
+                    let mut port = port_clone.lock().map_err(|e| {
+                        error!("Mutex poisoned in send: {}", e);
+                        DeviceError::CommunicationError(
+                            "Mutex poisoned - device needs reset".to_string(),
+                        )
+                    })?;
                     port.write_all(&data_owned)
                         .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
                     port.flush()
@@ -469,7 +472,10 @@ impl Device for TtlDevice {
                             "Unknown panic in send operation".to_string()
                         };
                         error!("Panic caught in send: {}", msg);
-                        Err(DeviceError::CommunicationError(format!("Send operation panicked: {}", msg)))
+                        Err(DeviceError::CommunicationError(format!(
+                            "Send operation panicked: {}",
+                            msg
+                        )))
                     }
                 }
             })
@@ -500,12 +506,12 @@ impl Device for TtlDevice {
             let result = tokio::task::spawn_blocking(move || {
                 let panic_result = catch_unwind(AssertUnwindSafe(|| {
                     let mut buffer = vec![0u8; 256];
-                    let mut port = port_clone
-                        .lock()
-                        .map_err(|e| {
-                            error!("Mutex poisoned in receive: {}", e);
-                            DeviceError::CommunicationError("Mutex poisoned - device needs reset".to_string())
-                        })?;
+                    let mut port = port_clone.lock().map_err(|e| {
+                        error!("Mutex poisoned in receive: {}", e);
+                        DeviceError::CommunicationError(
+                            "Mutex poisoned - device needs reset".to_string(),
+                        )
+                    })?;
                     match port.read(&mut buffer) {
                         Ok(bytes_read) => {
                             buffer.truncate(bytes_read);
@@ -527,7 +533,10 @@ impl Device for TtlDevice {
                             "Unknown panic in receive operation".to_string()
                         };
                         error!("Panic caught in receive: {}", msg);
-                        Err(DeviceError::CommunicationError(format!("Receive operation panicked: {}", msg)))
+                        Err(DeviceError::CommunicationError(format!(
+                            "Receive operation panicked: {}",
+                            msg
+                        )))
                     }
                 }
             })

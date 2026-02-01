@@ -85,9 +85,13 @@ impl TestWebSocketClient {
     pub async fn wait_for_response(&mut self, timeout: Duration) -> TestResult<BridgeResponse> {
         let response = tokio::time::timeout(timeout, self.receive_response())
             .await
-            .map_err(|_| TestError::Timeout("Waiting for WebSocket response timed out".to_string()))??;
+            .map_err(|_| {
+                TestError::Timeout("Waiting for WebSocket response timed out".to_string())
+            })??;
 
-        response.ok_or_else(|| TestError::WebSocket("Connection closed while waiting for response".to_string()))
+        response.ok_or_else(|| {
+            TestError::WebSocket("Connection closed while waiting for response".to_string())
+        })
     }
 
     /// Receive the next response (no timeout)
@@ -96,8 +100,9 @@ impl TestWebSocketClient {
             match msg.map_err(|e| TestError::WebSocket(format!("WebSocket error: {}", e)))? {
                 Message::Text(text) => {
                     let text_str: &str = &text;
-                    let response: BridgeResponse = serde_json::from_str(text_str)
-                        .map_err(|e| TestError::WebSocket(format!("Failed to parse response: {}", e)))?;
+                    let response: BridgeResponse = serde_json::from_str(text_str).map_err(|e| {
+                        TestError::WebSocket(format!("Failed to parse response: {}", e))
+                    })?;
                     self.received_messages.write().await.push(response.clone());
                     Ok(Some(response))
                 }
@@ -203,7 +208,10 @@ pub async fn connect_with_retry(
     }
 
     Err(last_error.unwrap_or_else(|| {
-        TestError::WebSocket(format!("Failed to connect to {} after {} attempts", url, max_attempts))
+        TestError::WebSocket(format!(
+            "Failed to connect to {} after {} attempts",
+            url, max_attempts
+        ))
     }))
 }
 

@@ -74,17 +74,17 @@ impl Assertions {
 
     /// Assert that message throughput meets the 1000 msg/sec requirement
     pub fn assert_message_throughput(throughput: f64, context: &str) -> TestResult<()> {
-        Self::assert_throughput(throughput, 1000.0, &format!("Message throughput {}", context))
+        Self::assert_throughput(
+            throughput,
+            1000.0,
+            &format!("Message throughput {}", context),
+        )
     }
 
     /// Wait for a synchronous condition with timeout
     ///
     /// Returns Ok(()) if condition becomes true, Err(Timeout) otherwise.
-    pub async fn wait_for<F>(
-        mut condition: F,
-        timeout: Duration,
-        context: &str,
-    ) -> TestResult<()>
+    pub async fn wait_for<F>(mut condition: F, timeout: Duration, context: &str) -> TestResult<()>
     where
         F: FnMut() -> bool,
     {
@@ -146,9 +146,7 @@ impl Assertions {
             || {
                 let state = app_state.clone();
                 let id = device_id_owned.clone();
-                async move {
-                    state.get_device_status(&id).await == Some(expected)
-                }
+                async move { state.get_device_status(&id).await == Some(expected) }
             },
             timeout,
             &format!("device {} to become {:?}", device_id, expected),
@@ -173,7 +171,12 @@ impl Assertions {
     }
 
     /// Assert approximate equality for floating point values
-    pub fn assert_approx_eq(actual: f64, expected: f64, tolerance: f64, context: &str) -> TestResult<()> {
+    pub fn assert_approx_eq(
+        actual: f64,
+        expected: f64,
+        tolerance: f64,
+        context: &str,
+    ) -> TestResult<()> {
         let diff = (actual - expected).abs();
         if diff > tolerance {
             return Err(TestError::Assertion(format!(
@@ -207,7 +210,11 @@ impl Assertions {
     }
 
     /// Assert that memory increase is within threshold
-    pub fn assert_no_memory_leak(increase_bytes: u64, threshold_mb: u64, context: &str) -> TestResult<()> {
+    pub fn assert_no_memory_leak(
+        increase_bytes: u64,
+        threshold_mb: u64,
+        context: &str,
+    ) -> TestResult<()> {
         let increase_mb = increase_bytes / 1024 / 1024;
         if increase_mb > threshold_mb {
             return Err(TestError::Assertion(format!(
@@ -260,23 +267,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_wait_for_immediate() {
-        let result = Assertions::wait_for(
-            || true,
-            Duration::from_millis(100),
-            "immediate",
-        )
-        .await;
+        let result = Assertions::wait_for(|| true, Duration::from_millis(100), "immediate").await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_wait_for_timeout() {
-        let result = Assertions::wait_for(
-            || false,
-            Duration::from_millis(50),
-            "never true",
-        )
-        .await;
+        let result = Assertions::wait_for(|| false, Duration::from_millis(50), "never true").await;
         assert!(result.is_err());
     }
 }

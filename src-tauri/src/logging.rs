@@ -173,7 +173,8 @@ impl LogPersister {
                     // Drop oldest entries to make room (bounded buffer)
                     let to_remove = buffer.len() - self.max_buffer_size + 1;
                     buffer.drain(0..to_remove);
-                    self.dropped_count.fetch_add(to_remove as u64, std::sync::atomic::Ordering::Relaxed);
+                    self.dropped_count
+                        .fetch_add(to_remove as u64, std::sync::atomic::Ordering::Relaxed);
                 }
 
                 buffer.push(entry);
@@ -218,7 +219,9 @@ impl LogPersister {
     }
 
     /// Flush buffered entries to the database.
-    async fn flush_entries(entries: Vec<LogEntry>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn flush_entries(
+        entries: Vec<LogEntry>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if entries.is_empty() {
             return Ok(());
         }
@@ -258,7 +261,8 @@ impl LogPersister {
 
     /// Get the count of dropped log entries (for diagnostics).
     pub fn dropped_count(&self) -> u64 {
-        self.dropped_count.load(std::sync::atomic::Ordering::Relaxed)
+        self.dropped_count
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Start a background task that periodically flushes logs.

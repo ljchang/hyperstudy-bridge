@@ -122,19 +122,20 @@ impl Storage {
     /// Start a new recording session.
     ///
     /// Returns the session ID for use in subsequent operations.
-    pub async fn start_session(&self, metadata: Option<serde_json::Value>) -> StorageResult<String> {
+    pub async fn start_session(
+        &self,
+        metadata: Option<serde_json::Value>,
+    ) -> StorageResult<String> {
         let session_id = uuid::Uuid::new_v4().to_string();
         let started_at = chrono::Utc::now().to_rfc3339();
         let metadata_json = metadata.map(|m| m.to_string());
 
-        sqlx::query(
-            "INSERT INTO sessions (id, started_at, metadata) VALUES (?, ?, ?)"
-        )
-        .bind(&session_id)
-        .bind(&started_at)
-        .bind(&metadata_json)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("INSERT INTO sessions (id, started_at, metadata) VALUES (?, ?, ?)")
+            .bind(&session_id)
+            .bind(&started_at)
+            .bind(&metadata_json)
+            .execute(&self.pool)
+            .await?;
 
         *self.current_session_id.write().await = Some(session_id.clone());
 
@@ -169,7 +170,7 @@ impl Storage {
     /// Get session metadata by ID.
     pub async fn get_session(&self, session_id: &str) -> StorageResult<Option<Session>> {
         let session = sqlx::query_as::<_, Session>(
-            "SELECT id, started_at, ended_at, metadata FROM sessions WHERE id = ?"
+            "SELECT id, started_at, ended_at, metadata FROM sessions WHERE id = ?",
         )
         .bind(session_id)
         .fetch_optional(&self.pool)
@@ -184,7 +185,7 @@ impl Storage {
 
         let sessions = sqlx::query_as::<_, Session>(
             "SELECT id, started_at, ended_at, metadata FROM sessions
-             ORDER BY started_at DESC LIMIT ?"
+             ORDER BY started_at DESC LIMIT ?",
         )
         .bind(limit)
         .fetch_all(&self.pool)
@@ -213,7 +214,7 @@ impl Storage {
 
         // Get database file size (approximate via page_count * page_size)
         let page_info: (i64, i64) = sqlx::query_as(
-            "SELECT page_count, page_size FROM pragma_page_count(), pragma_page_size()"
+            "SELECT page_count, page_size FROM pragma_page_count(), pragma_page_size()",
         )
         .fetch_one(&self.pool)
         .await
@@ -237,9 +238,7 @@ impl Storage {
 
     /// Delete ALL logs from the database.
     pub async fn clear_all_logs(&self) -> StorageResult<u64> {
-        let result = sqlx::query("DELETE FROM logs")
-            .execute(&self.pool)
-            .await?;
+        let result = sqlx::query("DELETE FROM logs").execute(&self.pool).await?;
 
         let deleted = result.rows_affected();
         info!("Cleared {} log entries from database", deleted);
@@ -271,7 +270,7 @@ impl Storage {
         // Delete samples from sessions that ended before the cutoff
         let result = sqlx::query(
             "DELETE FROM lsl_samples WHERE session_id IN
-             (SELECT id FROM sessions WHERE ended_at IS NOT NULL AND ended_at < ?)"
+             (SELECT id FROM sessions WHERE ended_at IS NOT NULL AND ended_at < ?)",
         )
         .bind(&cutoff_str)
         .execute(&self.pool)

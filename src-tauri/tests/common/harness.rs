@@ -237,16 +237,24 @@ impl TestHarness {
 
     /// Get device status with proper error handling
     pub async fn get_device_status(&self, device_id: &str) -> TestResult<DeviceStatus> {
-        self.app_state.get_device_status(device_id).await.ok_or_else(|| {
-            TestError::Setup(format!("Device {} not found", device_id))
-        })
+        self.app_state
+            .get_device_status(device_id)
+            .await
+            .ok_or_else(|| TestError::Setup(format!("Device {} not found", device_id)))
     }
 
     /// Add multiple devices of different types for multi-device testing
-    pub async fn add_multi_device_setup(&mut self) -> std::collections::HashMap<DeviceType, String> {
+    pub async fn add_multi_device_setup(
+        &mut self,
+    ) -> std::collections::HashMap<DeviceType, String> {
         let mut devices = std::collections::HashMap::new();
 
-        for device_type in [DeviceType::TTL, DeviceType::Kernel, DeviceType::Pupil, DeviceType::Mock] {
+        for device_type in [
+            DeviceType::TTL,
+            DeviceType::Kernel,
+            DeviceType::Pupil,
+            DeviceType::Mock,
+        ] {
             let device_id = self.add_device(device_type).await;
             devices.insert(device_type, device_id);
         }
@@ -255,10 +263,17 @@ impl TestHarness {
     }
 
     /// Add and connect multiple devices for multi-device testing
-    pub async fn add_connected_multi_device_setup(&mut self) -> TestResult<std::collections::HashMap<DeviceType, String>> {
+    pub async fn add_connected_multi_device_setup(
+        &mut self,
+    ) -> TestResult<std::collections::HashMap<DeviceType, String>> {
         let mut devices = std::collections::HashMap::new();
 
-        for device_type in [DeviceType::TTL, DeviceType::Kernel, DeviceType::Pupil, DeviceType::Mock] {
+        for device_type in [
+            DeviceType::TTL,
+            DeviceType::Kernel,
+            DeviceType::Pupil,
+            DeviceType::Mock,
+        ] {
             let device_id = self.add_connected_device(device_type).await?;
             devices.insert(device_type, device_id);
         }

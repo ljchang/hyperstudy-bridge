@@ -131,7 +131,7 @@ impl LogBatcher {
         for entry in entries {
             sqlx::query(
                 "INSERT INTO logs (session_id, timestamp, level, message, device, source)
-                 VALUES (?, ?, ?, ?, ?, ?)"
+                 VALUES (?, ?, ?, ?, ?, ?)",
             )
             .bind(session_id)
             .bind(&entry.timestamp)
@@ -213,16 +213,19 @@ impl From<StoredLogEntry> for LogEntry {
 ///
 /// Uses parameterized queries to prevent SQL injection attacks.
 /// All filter parameters are properly bound as query parameters.
-pub async fn query_logs(pool: &SqlitePool, options: LogQueryOptions) -> StorageResult<LogQueryResult> {
+pub async fn query_logs(
+    pool: &SqlitePool,
+    options: LogQueryOptions,
+) -> StorageResult<LogQueryResult> {
     let limit = options.limit.unwrap_or(100).clamp(1, 10000);
     let offset = options.offset.unwrap_or(0).max(0);
 
     // Prepare search pattern if provided (escape SQL LIKE wildcards)
     let search_pattern = options.search.as_ref().map(|s| {
         let escaped = s
-            .replace('\\', "\\\\")  // Escape backslash first
-            .replace('%', "\\%")     // Escape percent
-            .replace('_', "\\_");    // Escape underscore
+            .replace('\\', "\\\\") // Escape backslash first
+            .replace('%', "\\%") // Escape percent
+            .replace('_', "\\_"); // Escape underscore
         format!("%{}%", escaped)
     });
 
@@ -312,7 +315,7 @@ pub async fn query_logs(pool: &SqlitePool, options: LogQueryOptions) -> StorageR
 pub async fn get_recent_logs(pool: &SqlitePool, limit: i64) -> StorageResult<Vec<StoredLogEntry>> {
     let logs = sqlx::query_as::<_, StoredLogEntry>(
         "SELECT id, session_id, timestamp, level, message, device, source
-         FROM logs ORDER BY timestamp DESC LIMIT ?"
+         FROM logs ORDER BY timestamp DESC LIMIT ?",
     )
     .bind(limit)
     .fetch_all(pool)
@@ -323,20 +326,23 @@ pub async fn get_recent_logs(pool: &SqlitePool, limit: i64) -> StorageResult<Vec
 
 /// Get log count by level (for dashboard statistics).
 pub async fn get_log_counts_by_level(pool: &SqlitePool) -> StorageResult<Vec<(String, i64)>> {
-    let counts: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT level, COUNT(*) as count FROM logs GROUP BY level"
-    )
-    .fetch_all(pool)
-    .await?;
+    let counts: Vec<(String, i64)> =
+        sqlx::query_as("SELECT level, COUNT(*) as count FROM logs GROUP BY level")
+            .fetch_all(pool)
+            .await?;
 
     Ok(counts)
 }
 
 /// Insert a single log entry directly (bypassing the batcher).
-pub async fn insert_log(pool: &SqlitePool, entry: &LogEntry, session_id: Option<&str>) -> StorageResult<i64> {
+pub async fn insert_log(
+    pool: &SqlitePool,
+    entry: &LogEntry,
+    session_id: Option<&str>,
+) -> StorageResult<i64> {
     let result = sqlx::query(
         "INSERT INTO logs (session_id, timestamp, level, message, device, source)
-         VALUES (?, ?, ?, ?, ?, ?)"
+         VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(session_id)
     .bind(&entry.timestamp)
@@ -365,7 +371,7 @@ pub async fn insert_logs_batch(
     for entry in entries {
         sqlx::query(
             "INSERT INTO logs (session_id, timestamp, level, message, device, source)
-             VALUES (?, ?, ?, ?, ?, ?)"
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(session_id)
         .bind(&entry.timestamp)
@@ -441,10 +447,15 @@ mod tests {
         insert_logs_batch(&pool, &entries, None).await.unwrap();
 
         // Filter by level
-        let result = query_logs(&pool, LogQueryOptions {
-            level: Some("error".to_string()),
-            ..Default::default()
-        }).await.unwrap();
+        let result = query_logs(
+            &pool,
+            LogQueryOptions {
+                level: Some("error".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.total_count, 1);
         assert_eq!(result.logs[0].level, "error");
@@ -463,10 +474,15 @@ mod tests {
         insert_logs_batch(&pool, &entries, None).await.unwrap();
 
         // Search for "Connection"
-        let result = query_logs(&pool, LogQueryOptions {
-            search: Some("Connection".to_string()),
-            ..Default::default()
-        }).await.unwrap();
+        let result = query_logs(
+            &pool,
+            LogQueryOptions {
+                search: Some("Connection".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.total_count, 2);
     }
@@ -483,11 +499,16 @@ mod tests {
         insert_logs_batch(&pool, &entries, None).await.unwrap();
 
         // Query with limit and offset
-        let result = query_logs(&pool, LogQueryOptions {
-            limit: Some(3),
-            offset: Some(2),
-            ..Default::default()
-        }).await.unwrap();
+        let result = query_logs(
+            &pool,
+            LogQueryOptions {
+                limit: Some(3),
+                offset: Some(2),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.total_count, 10);
         assert_eq!(result.logs.len(), 3);
@@ -505,7 +526,9 @@ mod tests {
 
         // Add 4 entries (below threshold)
         for i in 0..4 {
-            batcher.add(create_test_entry("info", &format!("Msg {}", i))).await;
+            batcher
+                .add(create_test_entry("info", &format!("Msg {}", i)))
+                .await;
         }
 
         assert_eq!(batcher.buffered_count().await, 4);
@@ -571,17 +594,27 @@ mod tests {
         // These should NOT cause errors or return unexpected results
 
         // SQL injection attempt in level filter
-        let result = query_logs(&pool, LogQueryOptions {
-            level: Some("info' OR '1'='1".to_string()),
-            ..Default::default()
-        }).await.unwrap();
+        let result = query_logs(
+            &pool,
+            LogQueryOptions {
+                level: Some("info' OR '1'='1".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(result.total_count, 0); // Should find nothing, not all entries
 
         // SQL injection attempt in search
-        let result = query_logs(&pool, LogQueryOptions {
-            search: Some("'; DROP TABLE logs; --".to_string()),
-            ..Default::default()
-        }).await.unwrap();
+        let result = query_logs(
+            &pool,
+            LogQueryOptions {
+                search: Some("'; DROP TABLE logs; --".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(result.total_count, 0); // Should find nothing
 
         // Verify table still exists
@@ -589,18 +622,28 @@ mod tests {
         assert_eq!(result.total_count, 1); // Original entry still exists
 
         // SQL injection attempt with wildcards in search
-        let result = query_logs(&pool, LogQueryOptions {
-            search: Some("%".to_string()),
-            ..Default::default()
-        }).await.unwrap();
+        let result = query_logs(
+            &pool,
+            LogQueryOptions {
+                search: Some("%".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
         // Should treat % literally, not as wildcard (escaped)
         assert_eq!(result.total_count, 0);
 
         // Verify normal search still works
-        let result = query_logs(&pool, LogQueryOptions {
-            search: Some("Normal".to_string()),
-            ..Default::default()
-        }).await.unwrap();
+        let result = query_logs(
+            &pool,
+            LogQueryOptions {
+                search: Some("Normal".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(result.total_count, 1);
     }
 
@@ -617,17 +660,27 @@ mod tests {
         insert_logs_batch(&pool, &entries, None).await.unwrap();
 
         // Search for literal %
-        let result = query_logs(&pool, LogQueryOptions {
-            search: Some("100%".to_string()),
-            ..Default::default()
-        }).await.unwrap();
+        let result = query_logs(
+            &pool,
+            LogQueryOptions {
+                search: Some("100%".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(result.total_count, 1);
 
         // Search for backslash
-        let result = query_logs(&pool, LogQueryOptions {
-            search: Some("C:\\".to_string()),
-            ..Default::default()
-        }).await.unwrap();
+        let result = query_logs(
+            &pool,
+            LogQueryOptions {
+                search: Some("C:\\".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(result.total_count, 1);
     }
 }

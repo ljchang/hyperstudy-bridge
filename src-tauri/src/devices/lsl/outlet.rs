@@ -27,9 +27,7 @@ enum OutletCommand {
         response: ResponseSender<Result<(), LslError>>,
     },
     /// Check if outlet has consumers
-    HaveConsumers {
-        response: ResponseSender<bool>,
-    },
+    HaveConsumers { response: ResponseSender<bool> },
     /// Shutdown the outlet thread
     Shutdown,
 }

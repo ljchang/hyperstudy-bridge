@@ -72,7 +72,8 @@ impl<T> ConcurrentResult<Vec<T>> {
     /// Flatten results from workers that each return Vec<T>
     pub fn flatten(self) -> ConcurrentResult<T> {
         let duration = self.duration;
-        let results: Vec<Result<T, TestError>> = self.results
+        let results: Vec<Result<T, TestError>> = self
+            .results
             .into_iter()
             .flat_map(|r| match r {
                 Ok(vec) => vec.into_iter().map(Ok).collect::<Vec<_>>(),
@@ -121,10 +122,12 @@ where
             for op_id in 0..ops_per_worker {
                 match op(worker_id, op_id).await {
                     Ok(latency) => latencies.push(latency),
-                    Err(e) => return Err(TestError::TaskFailed(format!(
-                        "Worker {} op {} failed: {}",
-                        worker_id, op_id, e
-                    ))),
+                    Err(e) => {
+                        return Err(TestError::TaskFailed(format!(
+                            "Worker {} op {} failed: {}",
+                            worker_id, op_id, e
+                        )))
+                    }
                 }
             }
             Ok(latencies)
@@ -152,10 +155,7 @@ where
 /// Run concurrent operations and collect all results
 ///
 /// Unlike run_load_test, this is more flexible about the return type.
-pub async fn run_concurrent<F, Fut, T>(
-    tasks: usize,
-    operation: F,
-) -> ConcurrentResult<T>
+pub async fn run_concurrent<F, Fut, T>(tasks: usize, operation: F) -> ConcurrentResult<T>
 where
     F: Fn(usize) -> Fut + Send + Sync + Clone + 'static,
     Fut: Future<Output = TestResult<T>> + Send + 'static,
@@ -167,9 +167,9 @@ where
     for task_id in 0..tasks {
         let op = operation.clone();
         let handle = tokio::spawn(async move {
-            op(task_id).await.map_err(|e| {
-                TestError::TaskFailed(format!("Task {} failed: {}", task_id, e))
-            })
+            op(task_id)
+                .await
+                .map_err(|e| TestError::TaskFailed(format!("Task {} failed: {}", task_id, e)))
         });
         handles.push(handle);
     }
@@ -194,10 +194,7 @@ where
 /// Measure throughput of an operation over a duration
 ///
 /// Returns (operation_count, operations_per_second)
-pub async fn measure_throughput<F, Fut>(
-    operation: F,
-    duration: Duration,
-) -> (u64, f64)
+pub async fn measure_throughput<F, Fut>(operation: F, duration: Duration) -> (u64, f64)
 where
     F: Fn() -> Fut,
     Fut: Future<Output = ()>,
@@ -318,7 +315,7 @@ mod tests {
 
         assert!(!result.all_ok());
         assert_eq!(result.success_count(), 3); // 0, 2, 4
-        assert_eq!(result.error_count(), 2);   // 1, 3
+        assert_eq!(result.error_count(), 2); // 1, 3
     }
 
     #[tokio::test]
@@ -349,9 +346,7 @@ mod tests {
 
     #[test]
     fn test_latency_stats() {
-        let latencies: Vec<Duration> = (1..=100)
-            .map(|i| Duration::from_millis(i))
-            .collect();
+        let latencies: Vec<Duration> = (1..=100).map(|i| Duration::from_millis(i)).collect();
 
         let stats = LatencyStats::from_latencies(&latencies).unwrap();
 

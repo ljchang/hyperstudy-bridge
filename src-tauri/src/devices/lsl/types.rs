@@ -151,10 +151,8 @@ impl StreamInfo {
             .insert("manufacturer".to_string(), "Pupil Labs".to_string());
         info.metadata
             .insert("device".to_string(), "Neon".to_string());
-        info.metadata.insert(
-            "eye_state".to_string(),
-            with_eye_state.to_string(),
-        );
+        info.metadata
+            .insert("eye_state".to_string(), with_eye_state.to_string());
         info
     }
 

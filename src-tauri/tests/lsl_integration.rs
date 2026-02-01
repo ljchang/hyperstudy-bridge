@@ -124,7 +124,10 @@ async fn test_lsl_concurrent_creation() -> TestResult<()> {
     })
     .await;
 
-    assert!(results.all_ok(), "All concurrent device creations should succeed");
+    assert!(
+        results.all_ok(),
+        "All concurrent device creations should succeed"
+    );
     assert_eq!(results.success_count(), 3);
 
     Ok(())
