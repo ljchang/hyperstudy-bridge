@@ -4,11 +4,13 @@
 //! - `LogBuffer`: A thread-safe circular buffer for storing recent log entries
 //! - `TauriLogLayer`: A custom tracing Layer that captures log events and emits them to the frontend
 //! - `LogEntry`: The serializable log entry structure shared with the frontend
+//! - `LogPersister`: Batches logs and flushes them to the database
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::{Arc, OnceLock, RwLock};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber};
@@ -21,8 +23,17 @@ static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 /// Global log buffer for storing logs before and after AppHandle is available.
 static LOG_BUFFER: OnceLock<Arc<RwLock<LogBuffer>>> = OnceLock::new();
 
-/// Default capacity for the log buffer
+/// Global log persister for database writes.
+static LOG_PERSISTER: OnceLock<Arc<LogPersister>> = OnceLock::new();
+
+/// Default capacity for the log buffer (in-memory, for real-time display)
 const DEFAULT_BUFFER_CAPACITY: usize = 500;
+
+/// Default batch size for database writes
+const DEFAULT_PERSIST_BATCH_SIZE: usize = 100;
+
+/// Default flush interval for database writes
+const DEFAULT_PERSIST_FLUSH_INTERVAL: Duration = Duration::from_secs(5);
 
 /// A log entry that can be serialized and sent to the frontend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,6 +106,205 @@ impl LogBuffer {
 impl Default for LogBuffer {
     fn default() -> Self {
         Self::new(DEFAULT_BUFFER_CAPACITY)
+    }
+}
+
+/// Persists logs to the database in batches.
+///
+/// Uses a bounded buffer with a std::sync::Mutex for lock-free sync access.
+/// When the buffer is full, oldest entries are dropped (bounded buffer behavior).
+/// Entries are periodically flushed to the database.
+pub struct LogPersister {
+    /// Buffer for pending log entries. Uses std::sync::Mutex for sync access.
+    buffer: std::sync::Mutex<Vec<LogEntry>>,
+    /// Maximum buffer size before triggering flush or dropping entries.
+    max_buffer_size: usize,
+    /// Number of entries to trigger an immediate flush.
+    batch_size: usize,
+    /// Interval between periodic flushes.
+    flush_interval: Duration,
+    /// Track dropped entries for diagnostics.
+    dropped_count: std::sync::atomic::AtomicU64,
+}
+
+impl LogPersister {
+    /// Create a new log persister with default settings.
+    pub fn new() -> Self {
+        Self {
+            buffer: std::sync::Mutex::new(Vec::with_capacity(DEFAULT_PERSIST_BATCH_SIZE)),
+            max_buffer_size: DEFAULT_PERSIST_BATCH_SIZE * 10, // Allow 10x batch size before dropping
+            batch_size: DEFAULT_PERSIST_BATCH_SIZE,
+            flush_interval: DEFAULT_PERSIST_FLUSH_INTERVAL,
+            dropped_count: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+
+    /// Create a new log persister with custom settings.
+    pub fn with_config(batch_size: usize, flush_interval: Duration) -> Self {
+        Self {
+            buffer: std::sync::Mutex::new(Vec::with_capacity(batch_size)),
+            max_buffer_size: batch_size * 10,
+            batch_size,
+            flush_interval,
+            dropped_count: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+
+    /// Add a log entry to the persist buffer.
+    ///
+    /// This is called from a sync context (tracing layer). Uses std::sync::Mutex
+    /// which can be briefly held without issue. If the buffer is full, the entry
+    /// is dropped rather than blocking.
+    pub fn add(&self, entry: LogEntry) {
+        // Use std::sync::Mutex - brief lock is acceptable in sync context
+        let should_flush = match self.buffer.lock() {
+            Ok(mut buffer) => {
+                // Check if buffer is at max capacity
+                if buffer.len() >= self.max_buffer_size {
+                    // Drop oldest entries to make room (bounded buffer)
+                    let to_remove = buffer.len() - self.max_buffer_size + 1;
+                    buffer.drain(0..to_remove);
+                    self.dropped_count.fetch_add(to_remove as u64, std::sync::atomic::Ordering::Relaxed);
+                }
+
+                buffer.push(entry);
+                buffer.len() >= self.batch_size
+            }
+            Err(poisoned) => {
+                // Mutex was poisoned (panic occurred while held)
+                // Recover by taking the lock anyway
+                let mut buffer = poisoned.into_inner();
+                buffer.push(entry);
+                buffer.len() >= self.batch_size
+            }
+        };
+
+        if should_flush {
+            // Trigger async flush
+            self.trigger_flush();
+        }
+    }
+
+    /// Trigger an async flush without blocking.
+    fn trigger_flush(&self) {
+        // Take entries from buffer
+        let entries = match self.buffer.lock() {
+            Ok(mut buffer) => {
+                if buffer.len() >= self.batch_size {
+                    std::mem::take(&mut *buffer)
+                } else {
+                    return; // Nothing to flush
+                }
+            }
+            Err(poisoned) => std::mem::take(&mut *poisoned.into_inner()),
+        };
+
+        if !entries.is_empty() {
+            tokio::spawn(async move {
+                if let Err(e) = Self::flush_entries(entries).await {
+                    eprintln!("Failed to persist logs: {}", e);
+                }
+            });
+        }
+    }
+
+    /// Flush buffered entries to the database.
+    async fn flush_entries(entries: Vec<LogEntry>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        if let Some(storage) = crate::storage::get_storage() {
+            let session_id = storage.current_session_id().await;
+            crate::storage::logs::insert_logs_batch(
+                storage.pool(),
+                &entries,
+                session_id.as_deref(),
+            )
+            .await?;
+        }
+
+        Ok(())
+    }
+
+    /// Force flush all buffered logs (called on shutdown).
+    pub async fn flush(&self) {
+        let entries = match self.buffer.lock() {
+            Ok(mut buffer) => std::mem::take(&mut *buffer),
+            Err(poisoned) => std::mem::take(&mut *poisoned.into_inner()),
+        };
+
+        if let Err(e) = Self::flush_entries(entries).await {
+            eprintln!("Failed to flush logs on shutdown: {}", e);
+        }
+    }
+
+    /// Get the number of entries currently buffered.
+    pub fn buffered_count(&self) -> usize {
+        match self.buffer.lock() {
+            Ok(buffer) => buffer.len(),
+            Err(poisoned) => poisoned.into_inner().len(),
+        }
+    }
+
+    /// Get the count of dropped log entries (for diagnostics).
+    pub fn dropped_count(&self) -> u64 {
+        self.dropped_count.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Start a background task that periodically flushes logs.
+    pub fn start_periodic_flush(self: Arc<Self>) {
+        let persister = self;
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(persister.flush_interval);
+            loop {
+                interval.tick().await;
+                persister.flush().await;
+            }
+        });
+    }
+}
+
+impl Default for LogPersister {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Initialize the global log persister.
+///
+/// Should be called after storage is initialized. Safe to call multiple times;
+/// only the first call will initialize the persister.
+pub fn init_log_persister() -> Arc<LogPersister> {
+    // Check if already initialized
+    if let Some(existing) = LOG_PERSISTER.get() {
+        return existing.clone();
+    }
+
+    let persister = Arc::new(LogPersister::new());
+    match LOG_PERSISTER.set(persister.clone()) {
+        Ok(_) => {
+            persister.clone().start_periodic_flush();
+        }
+        Err(_) => {
+            // Another thread beat us to it, use theirs
+            return LOG_PERSISTER.get().unwrap().clone();
+        }
+    }
+    persister
+}
+
+/// Get the global log persister, if initialized.
+pub fn get_log_persister() -> Option<Arc<LogPersister>> {
+    LOG_PERSISTER.get().cloned()
+}
+
+/// Flush all buffered logs to the database.
+///
+/// Should be called before application shutdown.
+pub async fn flush_logs() {
+    if let Some(persister) = get_log_persister() {
+        persister.flush().await;
     }
 }
 
@@ -274,9 +484,14 @@ where
             source.to_string(),
         );
 
-        // Store in buffer
+        // Store in buffer (for real-time frontend display)
         if let Ok(mut buffer) = get_log_buffer().write() {
             buffer.push(entry.clone());
+        }
+
+        // Persist to database (batched)
+        if let Some(persister) = get_log_persister() {
+            persister.add(entry.clone());
         }
 
         // Emit to frontend if app handle is available
@@ -363,5 +578,68 @@ mod tests {
         assert_eq!(entry.device, Some("ttl".to_string()));
         assert_eq!(entry.source, "bridge");
         assert!(!entry.timestamp.is_empty());
+    }
+
+    #[test]
+    fn test_log_persister_buffering() {
+        let persister = LogPersister::with_config(10, Duration::from_secs(60));
+
+        // Add entries below batch size
+        for i in 0..5 {
+            persister.add(LogEntry::new(
+                "info",
+                format!("message {}", i),
+                None,
+                "test".to_string(),
+            ));
+        }
+
+        assert_eq!(persister.buffered_count(), 5);
+    }
+
+    #[tokio::test]
+    async fn test_log_persister_bounded_buffer() {
+        // Create persister with small max buffer (batch_size * 10 = 20)
+        // Note: batch_size of 2 means flushes trigger frequently, requiring tokio runtime
+        let persister = LogPersister::with_config(2, Duration::from_secs(60));
+        // max_buffer_size = 2 * 10 = 20
+
+        // Add more entries than max buffer size
+        // This will trigger flushes (which spawn async tasks) and bound the buffer
+        for i in 0..25 {
+            persister.add(LogEntry::new(
+                "info",
+                format!("message {}", i),
+                None,
+                "test".to_string(),
+            ));
+        }
+
+        // Buffer should be bounded or flushed, entries may have been dropped or flushed
+        assert!(
+            persister.buffered_count() <= 20,
+            "Buffer exceeded max size: {}",
+            persister.buffered_count()
+        );
+
+        // Verify dropped count was tracked (some entries may have been flushed instead of dropped)
+        let dropped = persister
+            .dropped_count
+            .load(std::sync::atomic::Ordering::Relaxed);
+        // At least some entries should have been dropped or we should have a bounded buffer
+        assert!(
+            dropped > 0 || persister.buffered_count() <= 20,
+            "Expected bounded behavior"
+        );
+    }
+
+    #[test]
+    fn test_log_persister_default() {
+        let persister = LogPersister::new();
+
+        // Verify default config
+        assert_eq!(persister.batch_size, DEFAULT_PERSIST_BATCH_SIZE);
+        assert_eq!(persister.flush_interval, DEFAULT_PERSIST_FLUSH_INTERVAL);
+        assert_eq!(persister.buffered_count(), 0);
     }
 }

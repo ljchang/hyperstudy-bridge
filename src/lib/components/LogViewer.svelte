@@ -11,6 +11,10 @@
   const deviceList = $derived.by(() => logsStore.getDeviceList());
   const isListening = $derived.by(() => logsStore.getIsListening());
   const autoScroll = $derived.by(() => logsStore.getAutoScroll());
+  const isQuerying = $derived.by(() => logsStore.getIsQuerying());
+  const dbTotalCount = $derived.by(() => logsStore.getDbTotalCount());
+  const dbHasMore = $derived.by(() => logsStore.getDbHasMore());
+  const useDatabase = $derived.by(() => logsStore.getUseDatabase());
 
   // Local state
   let logContainer = $state(null);
@@ -124,7 +128,7 @@
     }
   }
 
-  // Handle scroll to detect manual scrolling (disable auto-scroll)
+  // Handle scroll to detect manual scrolling (disable auto-scroll) and lazy loading
   function handleScroll() {
     if (logContainer && autoScroll) {
       const { scrollTop, scrollHeight, clientHeight } = logContainer;
@@ -134,6 +138,26 @@
         logsStore.setAutoScroll(false);
       }
     }
+
+    // Lazy load more logs when scrolling near bottom in database mode
+    if (logContainer && useDatabase && dbHasMore && !isQuerying) {
+      const { scrollTop, scrollHeight, clientHeight } = logContainer;
+      const isNearBottom = scrollTop + clientHeight >= scrollHeight - 100;
+
+      if (isNearBottom) {
+        logsStore.loadMoreLogs();
+      }
+    }
+  }
+
+  // Toggle database mode
+  function toggleDatabaseMode() {
+    logsStore.setDatabaseMode(!useDatabase);
+  }
+
+  // Load more logs manually
+  async function loadMore() {
+    await logsStore.loadMoreLogs();
   }
 
   onMount(() => {
@@ -156,17 +180,37 @@
         <div class="log-title">
           <h2>Log Viewer</h2>
           <div class="log-stats">
-            <span class="stat">Total: {logCounts.total}</span>
-            {#if logCounts.error > 0}
-              <span class="stat error">Errors: {logCounts.error}</span>
-            {/if}
-            {#if logCounts.warn > 0}
-              <span class="stat warn">Warnings: {logCounts.warn}</span>
+            {#if useDatabase}
+              <span class="stat db-mode">DB Mode</span>
+              <span class="stat">Total: {dbTotalCount}</span>
+              <span class="stat">Showing: {logs.length}</span>
+            {:else}
+              <span class="stat">Total: {logCounts.total}</span>
+              {#if logCounts.error > 0}
+                <span class="stat error">Errors: {logCounts.error}</span>
+              {/if}
+              {#if logCounts.warn > 0}
+                <span class="stat warn">Warnings: {logCounts.warn}</span>
+              {/if}
             {/if}
           </div>
         </div>
 
         <div class="log-controls">
+          <button
+            class="control-btn"
+            class:active={useDatabase}
+            onclick={toggleDatabaseMode}
+            aria-label="Toggle database mode"
+            title={useDatabase ? "Switch to live mode" : "Query from database (for large history)"}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+              <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+              <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+            </svg>
+          </button>
+
           <button
             class="control-btn"
             class:active={showFilters}
@@ -347,6 +391,28 @@
               </div>
             </div>
           {/each}
+
+          <!-- Load more indicator for database mode -->
+          {#if useDatabase}
+            <div class="load-more-container">
+              {#if isQuerying}
+                <div class="loading-indicator">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin">
+                    <circle cx="12" cy="12" r="10"></circle>
+                  </svg>
+                  <span>Loading...</span>
+                </div>
+              {:else if dbHasMore}
+                <button class="load-more-btn" onclick={loadMore}>
+                  Load more ({dbTotalCount - logs.length} remaining)
+                </button>
+              {:else if logs.length > 0}
+                <div class="end-of-logs">
+                  End of logs
+                </div>
+              {/if}
+            </div>
+          {/if}
         {/if}
       </div>
     </div>
@@ -621,5 +687,53 @@
 
   .log-content::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.2);
+  }
+
+  /* Database mode indicator */
+  .stat.db-mode {
+    color: var(--color-primary);
+    font-weight: 600;
+    padding: 0.125rem 0.5rem;
+    background: rgba(76, 175, 80, 0.15);
+    border-radius: 4px;
+  }
+
+  /* Load more container */
+  .load-more-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 1rem;
+    margin-top: 0.5rem;
+  }
+
+  .loading-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--color-text-secondary);
+    font-size: 0.875rem;
+  }
+
+  .load-more-btn {
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    background: var(--color-surface);
+    color: var(--color-text-primary);
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .load-more-btn:hover {
+    background: var(--color-surface-elevated);
+    border-color: var(--color-primary);
+  }
+
+  .end-of-logs {
+    color: var(--color-text-secondary);
+    font-size: 0.813rem;
+    opacity: 0.7;
   }
 </style>

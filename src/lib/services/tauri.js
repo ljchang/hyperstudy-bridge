@@ -288,6 +288,117 @@ export async function getLogs() {
     }
 }
 
+/**
+ * Query logs from the database with filtering and pagination.
+ * @param {Object} options - Query options
+ * @param {number} [options.limit=100] - Maximum number of logs to return
+ * @param {number} [options.offset=0] - Number of logs to skip (for pagination)
+ * @param {string} [options.level] - Filter by log level (debug, info, warn, error)
+ * @param {string} [options.device] - Filter by device name
+ * @param {string} [options.search] - Search term to match against message
+ * @param {string} [options.fromTimestamp] - Filter logs after this ISO 8601 timestamp
+ * @param {string} [options.toTimestamp] - Filter logs before this ISO 8601 timestamp
+ * @param {string} [options.sessionId] - Filter by session ID
+ * @returns {Promise<{logs: Array, totalCount: number, hasMore: boolean}>}
+ */
+export async function queryLogs(options = {}) {
+    try {
+        return await invoke('query_logs', {
+            limit: options.limit,
+            offset: options.offset,
+            level: options.level,
+            device: options.device,
+            search: options.search,
+            fromTimestamp: options.fromTimestamp,
+            toTimestamp: options.toTimestamp,
+            sessionId: options.sessionId
+        });
+    } catch (error) {
+        console.error('Failed to query logs:', error);
+        throw error;
+    }
+}
+
+/**
+ * Get log statistics (counts by level).
+ * @returns {Promise<{debug: number, info: number, warn: number, error: number}>}
+ */
+export async function getLogStats() {
+    try {
+        return await invoke('get_log_stats');
+    } catch (error) {
+        console.error('Failed to get log stats:', error);
+        throw error;
+    }
+}
+
+/**
+ * Get storage statistics (database size, record counts).
+ * @returns {Promise<{logCount: number, sampleCount: number, streamCount: number, sessionCount: number, databaseSizeBytes: number}>}
+ */
+export async function getStorageStats() {
+    try {
+        return await invoke('get_storage_stats');
+    } catch (error) {
+        console.error('Failed to get storage stats:', error);
+        throw error;
+    }
+}
+
+/**
+ * Start a new recording session.
+ * @param {Object} [metadata] - Optional session metadata
+ * @returns {Promise<string>} Session ID
+ */
+export async function startSession(metadata = null) {
+    try {
+        return await invoke('start_session', { metadata });
+    } catch (error) {
+        console.error('Failed to start session:', error);
+        throw error;
+    }
+}
+
+/**
+ * End the current recording session.
+ */
+export async function endSession() {
+    try {
+        return await invoke('end_session');
+    } catch (error) {
+        console.error('Failed to end session:', error);
+        throw error;
+    }
+}
+
+/**
+ * List all recording sessions.
+ * @param {number} [limit=100] - Maximum number of sessions to return
+ * @returns {Promise<Array<{id: string, startedAt: string, endedAt: string|null, metadata: string|null}>>}
+ */
+export async function listSessions(limit = 100) {
+    try {
+        return await invoke('list_sessions', { limit });
+    } catch (error) {
+        console.error('Failed to list sessions:', error);
+        throw error;
+    }
+}
+
+/**
+ * Clean up old logs from the database.
+ * @param {number} olderThanDays - Delete logs older than this many days
+ * @returns {Promise<number>} Number of deleted log entries
+ */
+export async function cleanupOldLogs(olderThanDays) {
+    try {
+        return await invoke('cleanup_old_logs', { olderThanDays });
+    } catch (error) {
+        console.error('Failed to cleanup old logs:', error);
+        throw error;
+    }
+}
+
 export async function exportLogs(logsData) {
     try {
         return await invoke('export_logs', { logsData });
@@ -443,7 +554,15 @@ export const tauriService = {
     cleanupEventListeners,
     loadConfiguration,
     saveConfiguration,
+    // Logging and storage
     getLogs,
+    queryLogs,
+    getLogStats,
+    getStorageStats,
+    startSession,
+    endSession,
+    listSessions,
+    cleanupOldLogs,
     exportLogs,
     setLogLevel,
     getPerformanceMetrics,

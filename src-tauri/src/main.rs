@@ -8,14 +8,16 @@ mod commands;
 mod devices;
 mod logging;
 mod performance;
+mod storage;
 
 use std::sync::Arc;
-use tracing::{error, info};
+use tauri::Manager;
+use tracing::{error, info, warn};
 use tracing_subscriber::prelude::*;
 
 use crate::bridge::{AppState, BridgeServer};
 use crate::commands::*;
-use crate::logging::{set_app_handle, TauriLogLayer};
+use crate::logging::{init_log_persister, set_app_handle, TauriLogLayer};
 
 #[tokio::main]
 async fn main() {
@@ -38,8 +40,43 @@ async fn main() {
             // Set the app handle for the logging layer to enable event emission
             set_app_handle(app_handle.clone());
 
+            // Initialize database storage
+            let app_handle_for_db = app_handle.clone();
             tokio::spawn(async move {
-                let mut server = BridgeServer::new(state, app_handle);
+                // Get app data directory for database
+                let db_path = match app_handle_for_db.path().app_data_dir() {
+                    Ok(dir) => dir.join("hyperstudy-bridge.db"),
+                    Err(e) => {
+                        error!("Failed to get app data directory: {}", e);
+                        return;
+                    }
+                };
+
+                // Initialize storage
+                match storage::init_storage(&db_path).await {
+                    Ok(storage) => {
+                        info!("Database initialized at {:?}", db_path);
+
+                        // Start a default session for logging
+                        if let Err(e) = storage.start_session(None).await {
+                            warn!("Failed to start default session: {}", e);
+                        }
+
+                        // Initialize log persister after storage is ready
+                        init_log_persister();
+                        info!("Log persistence enabled");
+                    }
+                    Err(e) => {
+                        error!("Failed to initialize database: {}", e);
+                        // App continues without persistence
+                    }
+                }
+            });
+
+            // Start WebSocket server
+            let app_handle_for_ws = app_handle.clone();
+            tokio::spawn(async move {
+                let mut server = BridgeServer::new(state, app_handle_for_ws);
                 if let Err(e) = server.start().await {
                     error!("Failed to start WebSocket server: {}", e);
                 }
@@ -71,6 +108,13 @@ async fn main() {
             check_ttl_latency_compliance,
             reset_performance_metrics,
             get_logs,
+            query_logs,
+            get_log_stats,
+            get_storage_stats,
+            start_session,
+            end_session,
+            list_sessions,
+            cleanup_old_logs,
             export_logs,
             set_log_level,
             test_ttl_device,

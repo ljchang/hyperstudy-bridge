@@ -51,6 +51,10 @@ parking_lot = "0.12"
 dashmap = "6"
 uuid = { version = "1", features = ["v4"] }
 
+# Database
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "migrate"] }
+base64 = "0.22"
+
 # Testing utilities
 rand = "0.9"
 

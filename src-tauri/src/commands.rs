@@ -618,6 +618,8 @@ pub async fn reset_performance_metrics(
 // Logging commands
 // Note: LogEntry is imported from crate::logging
 
+/// Get logs from the in-memory buffer (for real-time display).
+/// This returns the most recent logs quickly without database access.
 #[tauri::command]
 pub async fn get_logs(
     _state: State<'_, Arc<AppState>>,
@@ -625,6 +627,196 @@ pub async fn get_logs(
     // Return actual logs from the circular buffer
     let logs = get_all_logs();
     Ok(CommandResult::success(logs))
+}
+
+/// Query logs from the database with filtering and pagination.
+/// Use this for historical log access with search, filtering, and pagination.
+#[tauri::command]
+pub async fn query_logs(
+    limit: Option<i64>,
+    offset: Option<i64>,
+    level: Option<String>,
+    device: Option<String>,
+    search: Option<String>,
+    from_timestamp: Option<String>,
+    to_timestamp: Option<String>,
+    session_id: Option<String>,
+) -> Result<CommandResult<crate::storage::logs::LogQueryResult>, ()> {
+    let storage = match crate::storage::get_storage() {
+        Some(s) => s,
+        None => {
+            return Ok(CommandResult::error(
+                "Database not initialized".to_string(),
+            ));
+        }
+    };
+
+    let options = crate::storage::logs::LogQueryOptions {
+        limit,
+        offset,
+        level,
+        device,
+        search,
+        from_timestamp,
+        to_timestamp,
+        session_id,
+    };
+
+    match crate::storage::logs::query_logs(storage.pool(), options).await {
+        Ok(result) => Ok(CommandResult::success(result)),
+        Err(e) => Ok(CommandResult::error(format!("Query failed: {}", e))),
+    }
+}
+
+/// Get log statistics (counts by level).
+#[tauri::command]
+pub async fn get_log_stats() -> Result<CommandResult<serde_json::Value>, ()> {
+    let storage = match crate::storage::get_storage() {
+        Some(s) => s,
+        None => {
+            return Ok(CommandResult::error(
+                "Database not initialized".to_string(),
+            ));
+        }
+    };
+
+    match crate::storage::logs::get_log_counts_by_level(storage.pool()).await {
+        Ok(counts) => {
+            let stats: serde_json::Map<String, serde_json::Value> = counts
+                .into_iter()
+                .map(|(level, count)| (level, serde_json::Value::Number(count.into())))
+                .collect();
+            Ok(CommandResult::success(serde_json::Value::Object(stats)))
+        }
+        Err(e) => Ok(CommandResult::error(format!("Query failed: {}", e))),
+    }
+}
+
+/// Get storage statistics (database size, record counts).
+#[tauri::command]
+pub async fn get_storage_stats() -> Result<CommandResult<crate::storage::StorageStats>, ()> {
+    let storage = match crate::storage::get_storage() {
+        Some(s) => s,
+        None => {
+            return Ok(CommandResult::error(
+                "Database not initialized".to_string(),
+            ));
+        }
+    };
+
+    match storage.get_stats().await {
+        Ok(stats) => Ok(CommandResult::success(stats)),
+        Err(e) => Ok(CommandResult::error(format!("Query failed: {}", e))),
+    }
+}
+
+/// Start a new recording session.
+#[tauri::command]
+pub async fn start_session(
+    metadata: Option<serde_json::Value>,
+) -> Result<CommandResult<String>, ()> {
+    let storage = match crate::storage::get_storage() {
+        Some(s) => s,
+        None => {
+            return Ok(CommandResult::error(
+                "Database not initialized".to_string(),
+            ));
+        }
+    };
+
+    match storage.start_session(metadata).await {
+        Ok(session_id) => {
+            info!("Started recording session: {}", session_id);
+            Ok(CommandResult::success(session_id))
+        }
+        Err(e) => Ok(CommandResult::error(format!(
+            "Failed to start session: {}",
+            e
+        ))),
+    }
+}
+
+/// End the current recording session.
+#[tauri::command]
+pub async fn end_session() -> Result<CommandResult<String>, ()> {
+    let storage = match crate::storage::get_storage() {
+        Some(s) => s,
+        None => {
+            return Ok(CommandResult::error(
+                "Database not initialized".to_string(),
+            ));
+        }
+    };
+
+    // Flush logs before ending session
+    crate::logging::flush_logs().await;
+
+    match storage.end_session().await {
+        Ok(_) => {
+            info!("Ended recording session");
+            Ok(CommandResult::success("Session ended".to_string()))
+        }
+        Err(e) => Ok(CommandResult::error(format!(
+            "Failed to end session: {}",
+            e
+        ))),
+    }
+}
+
+/// List all recording sessions.
+#[tauri::command]
+pub async fn list_sessions(
+    limit: Option<i64>,
+) -> Result<CommandResult<Vec<crate::storage::Session>>, ()> {
+    let storage = match crate::storage::get_storage() {
+        Some(s) => s,
+        None => {
+            return Ok(CommandResult::error(
+                "Database not initialized".to_string(),
+            ));
+        }
+    };
+
+    match storage.list_sessions(limit).await {
+        Ok(sessions) => Ok(CommandResult::success(sessions)),
+        Err(e) => Ok(CommandResult::error(format!("Query failed: {}", e))),
+    }
+}
+
+/// Clean up old logs from the database.
+///
+/// Deletes logs older than the specified number of days.
+/// The `older_than_days` parameter must be at least 1 to prevent accidental deletion.
+#[tauri::command]
+pub async fn cleanup_old_logs(
+    older_than_days: i64,
+) -> Result<CommandResult<u64>, ()> {
+    // Validate input to prevent accidental deletion
+    if older_than_days < 1 {
+        return Ok(CommandResult::error(
+            "older_than_days must be at least 1".to_string(),
+        ));
+    }
+
+    // Cap at reasonable maximum to prevent overflow issues
+    let days = older_than_days.min(36500); // ~100 years max
+
+    let storage = match crate::storage::get_storage() {
+        Some(s) => s,
+        None => {
+            return Ok(CommandResult::error(
+                "Database not initialized".to_string(),
+            ));
+        }
+    };
+
+    match storage.cleanup_old_logs(days).await {
+        Ok(deleted) => {
+            info!("Deleted {} old log entries (older than {} days)", deleted, days);
+            Ok(CommandResult::success(deleted))
+        }
+        Err(e) => Ok(CommandResult::error(format!("Cleanup failed: {}", e))),
+    }
 }
 
 #[tauri::command]

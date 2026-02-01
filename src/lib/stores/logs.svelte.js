@@ -2,7 +2,7 @@
 // This file uses .svelte.js extension to enable runes
 // Uses object wrapper pattern for cross-module reactivity (Svelte 5 best practice)
 
-import { tauriService } from '../services/tauri.js';
+import { tauriService, queryLogs as queryLogsFromDb, getLogStats as getLogStatsFromDb, getStorageStats as getStorageStatsFromDb } from '../services/tauri.js';
 import { listen } from '@tauri-apps/api/event';
 
 // Log levels
@@ -36,7 +36,14 @@ const state = $state({
     lastError: null,
     levelFilter: 'all',
     deviceFilter: 'all',
-    searchQuery: ''
+    searchQuery: '',
+    // Database query state
+    isQuerying: false,
+    dbTotalCount: 0,
+    dbHasMore: false,
+    dbOffset: 0,
+    dbPageSize: 100,
+    useDatabase: false // Whether to query from database instead of memory
 });
 
 // Cache for deduplication - stores hashes of recent logs to avoid O(n) lookups
@@ -298,6 +305,106 @@ function log(level, message, device = null) {
     addLog(level, message, device, 'frontend');
 }
 
+// Query logs from database with filtering and pagination
+async function queryFromDatabase(options = {}) {
+    if (state.isQuerying) return;
+
+    state.isQuerying = true;
+    try {
+        const queryOptions = {
+            limit: options.limit || state.dbPageSize,
+            offset: options.offset ?? state.dbOffset,
+            level: state.levelFilter !== 'all' ? state.levelFilter : undefined,
+            device: state.deviceFilter !== 'all' ? state.deviceFilter : undefined,
+            search: state.searchQuery.trim() || undefined
+        };
+
+        const result = await queryLogsFromDb(queryOptions);
+
+        if (result.success && result.data) {
+            // Convert database logs to LogEntry format
+            const dbLogs = result.data.logs.map(log => new LogEntry(
+                log.level,
+                log.message,
+                new Date(log.timestamp),
+                log.device,
+                log.source
+            ));
+
+            if (options.append) {
+                // Append to existing logs (for "load more")
+                state.logs.push(...dbLogs);
+            } else {
+                // Replace logs
+                state.logs.length = 0;
+                state.logs.push(...dbLogs);
+            }
+
+            state.dbTotalCount = result.data.total_count;
+            state.dbHasMore = result.data.has_more;
+            state.dbOffset = queryOptions.offset + dbLogs.length;
+            state.lastError = null;
+        } else {
+            throw new Error(result.error || 'Failed to query logs');
+        }
+    } catch (error) {
+        console.error('Failed to query logs from database:', error);
+        state.lastError = error?.message || 'Query failed';
+    } finally {
+        state.isQuerying = false;
+    }
+}
+
+// Load more logs from database (pagination)
+async function loadMoreLogs() {
+    if (!state.useDatabase || !state.dbHasMore || state.isQuerying) return;
+
+    await queryFromDatabase({ append: true });
+}
+
+// Refresh logs from database (reset pagination)
+async function refreshLogsFromDatabase() {
+    state.dbOffset = 0;
+    await queryFromDatabase({ offset: 0 });
+}
+
+// Get database statistics
+async function getDatabaseStats() {
+    try {
+        const result = await getStorageStatsFromDb();
+        if (result.success) {
+            return result.data;
+        }
+        return null;
+    } catch (error) {
+        console.error('Failed to get database stats:', error);
+        return null;
+    }
+}
+
+// Get log statistics from database
+async function getDbLogStats() {
+    try {
+        const result = await getLogStatsFromDb();
+        if (result.success) {
+            return result.data;
+        }
+        return null;
+    } catch (error) {
+        console.error('Failed to get log stats:', error);
+        return null;
+    }
+}
+
+// Switch between memory and database mode
+function setDatabaseMode(enabled) {
+    state.useDatabase = enabled;
+    if (enabled) {
+        // Query from database when switching to database mode
+        refreshLogsFromDatabase();
+    }
+}
+
 // Initialize logging
 async function init() {
     try {
@@ -331,6 +438,10 @@ export const getLastError = () => state.lastError;
 export const getLevelFilter = () => state.levelFilter;
 export const getDeviceFilter = () => state.deviceFilter;
 export const getSearchQuery = () => state.searchQuery;
+export const getIsQuerying = () => state.isQuerying;
+export const getDbTotalCount = () => state.dbTotalCount;
+export const getDbHasMore = () => state.dbHasMore;
+export const getUseDatabase = () => state.useDatabase;
 
 
 // Derived state exports
@@ -345,7 +456,14 @@ export {
     stopListening,
     fetchHistoricalLogs,
     cleanup,
-    init
+    init,
+    // Database query exports
+    queryFromDatabase,
+    loadMoreLogs,
+    refreshLogsFromDatabase,
+    getDatabaseStats,
+    getDbLogStats,
+    setDatabaseMode
 };
 
 
@@ -355,3 +473,4 @@ export const setDeviceFilter = (device) => { state.deviceFilter = device; };
 export const setSearchQuery = (query) => { state.searchQuery = query; };
 export const setAutoScroll = (enabled) => { state.autoScroll = enabled; };
 export const setMaxLogs = (max) => { state.maxLogs = max; };
+export const setDbPageSize = (size) => { state.dbPageSize = size; };
