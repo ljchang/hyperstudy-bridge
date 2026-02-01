@@ -121,7 +121,8 @@ async fn main() {
             export_logs,
             set_log_level,
             test_ttl_device,
-            reset_device
+            reset_device,
+            get_app_info
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

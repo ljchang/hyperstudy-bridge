@@ -2,7 +2,10 @@
 name = "hyperstudy-bridge"
 version = "0.8.2"
 description = "HyperStudy Bridge - Hardware Device Integration"
-authors = ["HyperStudy Team"]
+authors = ["Luke Chang <luke.j.chang@dartmouth.edu>"]
+license = "MIT"
+repository = "https://github.com/ljchang/hyperstudy-bridge"
+homepage = "https://github.com/ljchang/hyperstudy-bridge"
 edition = "2021"
 
 [lib]

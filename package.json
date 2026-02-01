@@ -39,7 +39,7 @@
     "prepare": "npm run format && npm run type-check"
   },
   "keywords": [],
-  "author": "",
+  "author": "Luke Chang",
   "license": "ISC",
   "devDependencies": {
     "@playwright/test": "^1.55.0",

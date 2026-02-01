@@ -533,6 +533,19 @@ export async function getLslMetrics() {
     }
 }
 
+/**
+ * Get application info from Cargo.toml metadata.
+ * @returns {Promise<{name: string, version: string, description: string, authors: string[], license: string, repository: string, homepage: string}>}
+ */
+export async function getAppInfo() {
+    try {
+        return await invoke('get_app_info');
+    } catch (error) {
+        console.error('Failed to get app info:', error);
+        return null;
+    }
+}
+
 // Export all functions as a service object for convenience
 export const tauriService = {
     startBridgeServer,
@@ -577,5 +590,7 @@ export const tauriService = {
     configureLslOutlet,
     getLslStreamInfo,
     setLslBufferSize,
-    getLslMetrics
+    getLslMetrics,
+    // App info
+    getAppInfo
 };

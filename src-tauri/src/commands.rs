@@ -973,3 +973,41 @@ pub async fn reset_device(
         device_id
     )))
 }
+
+/// Application metadata from Cargo.toml
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AppInfo {
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub authors: Vec<String>,
+    pub license: String,
+    pub repository: String,
+    pub homepage: String,
+}
+
+/// Get application information from Cargo.toml metadata.
+/// This uses compile-time env! macros to embed Cargo.toml values.
+#[tauri::command]
+pub fn get_app_info() -> AppInfo {
+    // Parse authors string (comma-separated in Cargo.toml)
+    let authors_str = env!("CARGO_PKG_AUTHORS");
+    let authors: Vec<String> = if authors_str.is_empty() {
+        vec![]
+    } else {
+        authors_str
+            .split(':')
+            .map(|s| s.trim().to_string())
+            .collect()
+    };
+
+    AppInfo {
+        name: env!("CARGO_PKG_NAME").to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        description: env!("CARGO_PKG_DESCRIPTION").to_string(),
+        authors,
+        license: env!("CARGO_PKG_LICENSE").to_string(),
+        repository: env!("CARGO_PKG_REPOSITORY").to_string(),
+        homepage: env!("CARGO_PKG_HOMEPAGE").to_string(),
+    }
+}
