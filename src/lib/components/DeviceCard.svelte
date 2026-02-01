@@ -1,10 +1,10 @@
 <script>
   import { onMount } from 'svelte';
   import * as bridgeStore from '../stores/websocket.svelte.js';
-  import { sendTtlPulse, listTtlDevices, testTtlDevice, resetDevice } from '../services/tauri.js';
+  import { sendTtlPulse, listTtlDevices, resetDevice } from '../services/tauri.js';
   import DeviceConfigModal from './DeviceConfigModal.svelte';
 
-  let { device, onConfigUpdate = () => {} } = $props();
+  let { device, onConfigUpdate = () => {}, onRemove = () => {} } = $props();
 
   // Modal state
   let showConfigModal = $state(false);
@@ -12,7 +12,6 @@
   // TTL device list for dropdown
   let detectedTtlDevices = $state([]);
   let isLoadingDevices = $state(false);
-  let isTestingConnection = $state(false);
   let isResetting = $state(false);
 
   // Load TTL devices on mount if this is a TTL device
@@ -44,28 +43,6 @@
 
   function updateTtlPort(port) {
     device.config = { ...device.config, port };
-  }
-
-  async function testTtlConnection() {
-    if (!device.config.port) {
-      alert('Please select a port first');
-      return;
-    }
-
-    isTestingConnection = true;
-    try {
-      const result = await testTtlDevice(device.config.port);
-      if (result.success) {
-        alert(`Device responded: ${result.data || 'OK'}`);
-      } else {
-        alert(`Test failed: ${result.error || 'No response'}`);
-      }
-    } catch (error) {
-      console.error('Error testing TTL device:', error);
-      alert(`Error: ${error.message || error}`);
-    } finally {
-      isTestingConnection = false;
-    }
   }
 
   async function resetDeviceState() {
@@ -147,20 +124,39 @@
     showConfigModal = true;
   }
 
+  async function removeDevice() {
+    // Disconnect first if connected
+    if (device.status === 'connected') {
+      try {
+        await bridgeStore.disconnectDevice(device.id);
+      } catch (error) {
+        console.error(`Failed to disconnect before removal:`, error);
+      }
+    }
+    onRemove(device.id);
+  }
+
   async function sendTestPulse() {
-    if (device.id !== 'ttl') return;
+    console.log('sendTestPulse clicked!');
+    if (device.id !== 'ttl') {
+      console.log('Not TTL device, returning');
+      return;
+    }
 
     try {
       console.log('Sending test pulse to:', device.config.port);
-      const { result, latency } = await sendTtlPulse(device.config.port);
+      const pulseResult = await sendTtlPulse(device.config.port);
+      console.log('Pulse result:', pulseResult);
+      const { result, latency } = pulseResult;
+      console.log('Result:', result, 'Latency:', latency);
       if (result.success) {
-        alert(`✅ Test pulse sent successfully! (${latency.toFixed(1)}ms)`);
+        alert(`Test pulse sent successfully! (${latency.toFixed(1)}ms)`);
       } else {
-        alert(`❌ Failed to send pulse: ${result.error || 'Unknown error'}`);
+        alert(`Failed to send pulse: ${result.error || 'Unknown error'}`);
       }
     } catch (error) {
-      console.error('Error sending test pulse:', error);
-      alert(`❌ Error: ${error.message || error}`);
+      console.error('Error in sendTestPulse:', error);
+      alert(`Error: ${error.message || String(error)}`);
     }
   }
 
@@ -196,11 +192,24 @@
 <div class="device-card">
   <div class="device-header">
     <h3>{device.name}</h3>
-    <div 
-      class="status-dot" 
-      style="background-color: {getStatusColor(device.status)}"
-      title={getStatusLabel(device.status)}
-    ></div>
+    <div class="header-actions">
+      <div
+        class="status-dot"
+        style="background-color: {getStatusColor(device.status)}"
+        title={getStatusLabel(device.status)}
+      ></div>
+      <button
+        class="remove-btn"
+        onclick={removeDevice}
+        title="Remove device"
+        aria-label="Remove device"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
   </div>
   
   <div class="device-info">
@@ -280,15 +289,6 @@
     >
       {device.status === 'connected' ? 'Disconnect' : 'Connect'}
     </button>
-    {#if device.id === 'ttl' && device.status !== 'connected' && device.status !== 'connecting'}
-      <button
-        class="action-btn test-btn"
-        onclick={testTtlConnection}
-        disabled={!device.config.port || isTestingConnection}
-      >
-        {isTestingConnection ? 'Testing...' : 'Test'}
-      </button>
-    {/if}
     {#if device.id === 'ttl' && device.status === 'connected'}
       <button
         class="action-btn pulse-btn"
@@ -344,13 +344,44 @@
     color: var(--color-text-primary);
   }
   
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
   .status-dot {
     width: 12px;
     height: 12px;
     border-radius: 50%;
     animation: pulse 2s infinite;
   }
-  
+
+  .remove-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    opacity: 0;
+    transition: all 0.2s;
+  }
+
+  .device-card:hover .remove-btn {
+    opacity: 1;
+  }
+
+  .remove-btn:hover {
+    background: var(--color-error);
+    color: white;
+  }
+
   @keyframes pulse {
     0%, 100% {
       opacity: 1;
@@ -447,17 +478,6 @@
     background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
     transform: translateY(-1px);
     box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-  }
-
-  .test-btn {
-    background: var(--color-surface-elevated);
-    color: var(--color-text-primary);
-    border: 1px solid var(--color-primary);
-  }
-
-  .test-btn:hover:not(:disabled) {
-    background: var(--color-primary);
-    color: white;
   }
 
   .reset-btn {

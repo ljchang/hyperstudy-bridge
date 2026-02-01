@@ -104,23 +104,28 @@
 
   // Clear ALL logs from database
   async function clearDatabase() {
-    if (confirm('⚠️ PERMANENTLY DELETE all logs from the database?\n\nThis cannot be undone.')) {
-      try {
-        const { clearAllLogs } = await import('../services/tauri.js');
-        const result = await clearAllLogs();
-        if (result.success) {
-          alert(`Deleted ${result.data} log entries from database.`);
-          logsStore.clearLogs(); // Also clear frontend buffer
-          if (useDatabase) {
-            logsStore.refreshLogsFromDatabase();
-          }
-        } else {
-          alert(`Failed to clear database: ${result.error}`);
+    console.log('clearDatabase clicked!');
+    const confirmed = confirm('PERMANENTLY DELETE all logs from the database?\n\nThis cannot be undone.');
+    console.log('User confirmed:', confirmed);
+    if (!confirmed) return;
+
+    try {
+      const { clearAllLogs } = await import('../services/tauri.js');
+      console.log('clearAllLogs imported');
+      const result = await clearAllLogs();
+      console.log('clearAllLogs result:', result);
+      if (result.success) {
+        alert(`Deleted ${result.data} log entries from database.`);
+        logsStore.clearLogs(); // Also clear frontend buffer
+        if (useDatabase) {
+          logsStore.refreshLogsFromDatabase();
         }
-      } catch (error) {
-        console.error('Failed to clear database:', error);
-        alert(`Error: ${error.message}`);
+      } else {
+        alert(`Failed to clear database: ${result.error}`);
       }
+    } catch (error) {
+      console.error('Error in clearDatabase:', error);
+      alert(`Error: ${error.message}`);
     }
   }
 

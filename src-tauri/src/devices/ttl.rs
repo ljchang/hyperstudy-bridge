@@ -7,7 +7,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 const PULSE_COMMAND: &[u8] = b"PULSE\n";
 const PULSE_DURATION_MS: u64 = 10;
@@ -293,7 +293,7 @@ impl TtlDevice {
                 callback(&device_id, latency, PULSE_COMMAND.len() as u64, 0);
             }
 
-            debug!("TTL pulse sent with latency: {:?}", latency);
+            info!("TTL pulse sent with latency: {:?}", latency);
 
             // Check for compliance with <1ms requirement
             if latency > Duration::from_millis(1) {

@@ -39,40 +39,6 @@
     })
   );
 
-  // Connect all selected devices
-  async function connectAll() {
-    console.log('Connect All button clicked');
-    console.log('Bridge status:', bridgeStatus);
-    console.log('Selected devices:', selectedDevices);
-
-    const errors = [];
-
-    // Snapshot the array to prevent issues if selectedDevices changes during iteration
-    const devicesToConnect = [...selectedDevices];
-
-    // Connect devices sequentially with error isolation
-    for (const device of devicesToConnect) {
-      console.log(`Connecting device: ${device.id}`);
-      try {
-        await bridgeStore.connectDevice(device.id, device.config);
-        console.log(`Successfully sent connect command for ${device.id}`);
-        // Small delay between connections to avoid overwhelming the backend
-        await new Promise(resolve => setTimeout(resolve, 500));
-      } catch (error) {
-        // Log but continue with remaining devices
-        console.error(`Failed to connect ${device.id}:`, error);
-        errors.push({ device: device.name, error: error.message || String(error) });
-        // Continue to next device instead of breaking
-      }
-    }
-
-    // Show summary of any failures
-    if (errors.length > 0) {
-      const errorMessages = errors.map(e => `• ${e.device}: ${e.error}`).join('\n');
-      alert(`Failed to connect some devices:\n${errorMessages}`);
-    }
-  }
-
   // Disconnect all selected devices
   async function disconnectAll() {
     console.log('Disconnect All button clicked');
@@ -117,6 +83,11 @@
     });
   }
 
+  // Remove a device from the selected devices list
+  function removeDevice(deviceId) {
+    console.log('Removing device:', deviceId);
+    selectedDevices = selectedDevices.filter(d => d.id !== deviceId);
+  }
 
   onMount(async () => {
     // Bridge store auto-connects in constructor
@@ -214,7 +185,7 @@
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="3"></circle>
-          <path d="m12 1 2.1 3.6 3.9.9-2.8 3.4.7 3.9-3.9-2.1-3.9 2.1.7-3.9L5 7.5l3.9-.9L12 1z"></path>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
         </svg>
         Settings
       </button>
@@ -230,13 +201,6 @@
         onclick={() => showAddDeviceModal = true}
       >
         Add Device
-      </button>
-      <button
-        class="connect-btn"
-        onclick={connectAll}
-        disabled={bridgeStatus !== 'ready' || selectedDevices.length === 0}
-      >
-        Connect All
       </button>
       <button
         class="disconnect-btn"
@@ -255,7 +219,7 @@
         </div>
       {:else}
         {#each devices as device}
-          <DeviceCard {device} onConfigUpdate={updateDeviceConfig} />
+          <DeviceCard {device} onConfigUpdate={updateDeviceConfig} onRemove={removeDevice} />
         {/each}
       {/if}
     </div>
@@ -373,17 +337,6 @@
     border-color: var(--color-border-hover);
   }
 
-  .connect-btn {
-    background: var(--color-primary);
-    color: white;
-  }
-  
-  .connect-btn:hover:not(:disabled) {
-    background: var(--color-primary-hover);
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
-  }
-  
   .disconnect-btn {
     background: var(--color-error);
     color: white;

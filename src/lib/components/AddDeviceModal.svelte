@@ -27,13 +27,6 @@
       type: 'Eye Tracker',
       connection: 'WebSocket',
       config: { url: 'localhost:8081' }
-    },
-    {
-      id: 'mock',
-      name: 'Mock Device',
-      type: 'Testing',
-      connection: 'Virtual',
-      config: {}
     }
   ]);
 
