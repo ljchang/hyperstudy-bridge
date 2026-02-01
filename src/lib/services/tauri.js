@@ -399,6 +399,19 @@ export async function cleanupOldLogs(olderThanDays) {
     }
 }
 
+/**
+ * Clear ALL logs from the database.
+ * @returns {Promise<{success: boolean, data?: number, error?: string}>} Number of deleted log entries
+ */
+export async function clearAllLogs() {
+    try {
+        return await invoke('clear_all_logs');
+    } catch (error) {
+        console.error('Failed to clear all logs:', error);
+        throw error;
+    }
+}
+
 export async function exportLogs(logsData) {
     try {
         return await invoke('export_logs', { logsData });
@@ -576,6 +589,7 @@ export const tauriService = {
     endSession,
     listSessions,
     cleanupOldLogs,
+    clearAllLogs,
     exportLogs,
     setLogLevel,
     getPerformanceMetrics,

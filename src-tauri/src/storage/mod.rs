@@ -235,6 +235,17 @@ impl Storage {
         Ok(())
     }
 
+    /// Delete ALL logs from the database.
+    pub async fn clear_all_logs(&self) -> StorageResult<u64> {
+        let result = sqlx::query("DELETE FROM logs")
+            .execute(&self.pool)
+            .await?;
+
+        let deleted = result.rows_affected();
+        info!("Cleared {} log entries from database", deleted);
+        Ok(deleted)
+    }
+
     /// Delete logs older than the specified duration.
     pub async fn cleanup_old_logs(&self, older_than_days: i64) -> StorageResult<u64> {
         let cutoff = chrono::Utc::now() - chrono::Duration::days(older_than_days);

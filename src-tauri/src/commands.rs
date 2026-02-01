@@ -851,6 +851,29 @@ pub async fn cleanup_old_logs(
     }
 }
 
+/// Clear ALL logs from the database.
+///
+/// This permanently deletes all log entries. Use with caution.
+#[tauri::command]
+pub async fn clear_all_logs() -> Result<CommandResult<u64>, ()> {
+    let storage = match crate::storage::get_storage() {
+        Some(s) => s,
+        None => {
+            return Ok(CommandResult::error(
+                "Database not initialized".to_string(),
+            ));
+        }
+    };
+
+    match storage.clear_all_logs().await {
+        Ok(deleted) => {
+            info!("Cleared all {} log entries from database", deleted);
+            Ok(CommandResult::success(deleted))
+        }
+        Err(e) => Ok(CommandResult::error(format!("Clear failed: {}", e))),
+    }
+}
+
 #[tauri::command]
 pub async fn export_logs(
     logs_data: Vec<serde_json::Value>,

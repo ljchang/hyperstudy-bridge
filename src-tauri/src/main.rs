@@ -132,6 +132,7 @@ async fn main() {
             end_session,
             list_sessions,
             cleanup_old_logs,
+            clear_all_logs,
             export_logs,
             set_log_level,
             test_ttl_device,

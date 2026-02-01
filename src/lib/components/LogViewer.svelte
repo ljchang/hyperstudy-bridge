@@ -95,10 +95,32 @@
     }
   }
 
-  // Clear logs
+  // Clear logs (frontend buffer only)
   function clearLogs() {
-    if (confirm('Are you sure you want to clear all logs?')) {
+    if (confirm('Clear the log viewer? (This only clears displayed logs, not the database)')) {
       logsStore.clearLogs();
+    }
+  }
+
+  // Clear ALL logs from database
+  async function clearDatabase() {
+    if (confirm('⚠️ PERMANENTLY DELETE all logs from the database?\n\nThis cannot be undone.')) {
+      try {
+        const { clearAllLogs } = await import('../services/tauri.js');
+        const result = await clearAllLogs();
+        if (result.success) {
+          alert(`Deleted ${result.data} log entries from database.`);
+          logsStore.clearLogs(); // Also clear frontend buffer
+          if (useDatabase) {
+            logsStore.refreshLogsFromDatabase();
+          }
+        } else {
+          alert(`Failed to clear database: ${result.error}`);
+        }
+      } catch (error) {
+        console.error('Failed to clear database:', error);
+        alert(`Error: ${error.message}`);
+      }
     }
   }
 
@@ -230,12 +252,27 @@
           <button
             class="control-btn"
             onclick={clearLogs}
-            aria-label="Clear all logs"
-            title="Clear all logs"
+            aria-label="Clear displayed logs"
+            title="Clear displayed logs (keeps database)"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="3,6 5,6 21,6"></polyline>
               <path d="m19,6v14a2,2 0 0,1 -2,2H7a2,2 0 0,1 -2,-2V6m3,0V4a2,2 0 0,1 2,-2h4a2,2 0 0,1 2,2v2"></path>
+            </svg>
+          </button>
+
+          <button
+            class="control-btn danger-btn"
+            onclick={clearDatabase}
+            aria-label="Clear database"
+            title="Delete ALL logs from database"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+              <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+              <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+              <line x1="9" y1="10" x2="15" y2="16"></line>
+              <line x1="15" y1="10" x2="9" y2="16"></line>
             </svg>
           </button>
 
@@ -462,6 +499,12 @@
   .control-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .control-btn.danger-btn:hover {
+    background: var(--color-error);
+    border-color: var(--color-error);
+    color: white;
   }
 
   .export-btn:hover:not(:disabled) {
