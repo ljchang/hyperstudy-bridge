@@ -66,8 +66,19 @@ function addLog(level, message, device = null, source = 'bridge') {
 
 // Add a log entry from backend event (already has timestamp)
 function addLogFromEvent(logData) {
+    // Defensive check for invalid log data
+    if (!logData || typeof logData !== 'object') {
+        console.warn('Invalid log data received:', logData);
+        return;
+    }
+
+    // Ensure required fields exist
+    const level = logData.level || 'info';
+    const message = logData.message || '';
+    const timestamp = logData.timestamp || new Date().toISOString();
+
     // Create hash for O(1) duplicate check
-    const hash = getLogHash(logData.timestamp, logData.level, logData.message);
+    const hash = getLogHash(timestamp, level, message);
 
     // Skip if we've seen this log recently
     if (recentLogHashes.has(hash)) {
@@ -75,9 +86,9 @@ function addLogFromEvent(logData) {
     }
 
     const entry = new LogEntry(
-        logData.level,
-        logData.message,
-        new Date(logData.timestamp),
+        level,
+        message,
+        new Date(timestamp),
         logData.device,
         logData.source || 'backend'
     );
@@ -164,19 +175,29 @@ function getLogCounts() {
 async function fetchHistoricalLogs() {
     try {
         const result = await tauriService.getLogs();
-        if (result.success && result.data) {
+        if (result.success && result.data && Array.isArray(result.data)) {
             const newLogs = [];
 
-            // Process backend logs
+            // Process backend logs with defensive checks
             result.data.forEach(logData => {
+                // Skip invalid log entries
+                if (!logData || typeof logData !== 'object') {
+                    return;
+                }
+
+                // Ensure required fields with defaults
+                const level = logData.level || 'info';
+                const message = logData.message || '';
+                const timestamp = logData.timestamp || new Date().toISOString();
+
                 // Use hash for O(1) duplicate check
-                const hash = getLogHash(logData.timestamp, logData.level, logData.message);
+                const hash = getLogHash(timestamp, level, message);
 
                 if (!recentLogHashes.has(hash)) {
                     const entry = new LogEntry(
-                        logData.level,
-                        logData.message,
-                        new Date(logData.timestamp),
+                        level,
+                        message,
+                        new Date(timestamp),
                         logData.device,
                         logData.source || 'backend'
                     );
@@ -187,9 +208,12 @@ async function fetchHistoricalLogs() {
 
             if (newLogs.length > 0) {
                 // Combine and sort by timestamp (newest first)
-                const combined = [...newLogs, ...state.logs].sort((a, b) =>
-                    b.timestamp.getTime() - a.timestamp.getTime()
-                );
+                // Use safe timestamp comparison (handle invalid dates)
+                const combined = [...newLogs, ...state.logs].sort((a, b) => {
+                    const timeA = a.timestamp?.getTime?.() || 0;
+                    const timeB = b.timestamp?.getTime?.() || 0;
+                    return timeB - timeA;
+                });
 
                 // Update state with sorted, truncated logs
                 state.logs.length = 0; // Clear array
@@ -200,7 +224,7 @@ async function fetchHistoricalLogs() {
         }
     } catch (error) {
         console.error('Failed to fetch historical logs:', error);
-        state.lastError = error.message;
+        state.lastError = error?.message || 'Unknown error';
     }
 }
 
@@ -276,14 +300,21 @@ function log(level, message, device = null) {
 
 // Initialize logging
 async function init() {
-    // Add welcome message
-    addLog('info', 'HyperStudy Bridge log viewer initialized', null, 'frontend');
+    try {
+        // Add welcome message
+        addLog('info', 'HyperStudy Bridge log viewer initialized', null, 'frontend');
 
-    // Fetch historical logs first (for late-joining clients)
-    await fetchHistoricalLogs();
+        // Fetch historical logs first (for late-joining clients)
+        await fetchHistoricalLogs();
 
-    // Start listening for real-time log events
-    await startListening();
+        // Start listening for real-time log events
+        await startListening();
+    } catch (error) {
+        console.error('Failed to initialize log viewer:', error);
+        state.lastError = error?.message || 'Failed to initialize';
+        // Add error to logs so user can see it
+        addLog('error', `Log viewer initialization failed: ${error?.message || 'Unknown error'}`, null, 'frontend');
+    }
 }
 
 // Cleanup

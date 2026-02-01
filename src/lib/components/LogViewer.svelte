@@ -42,7 +42,9 @@
     if (isOpen) {
       // Start listening when opening if not already running
       if (!isListening) {
-        logsStore.init();
+        logsStore.init().catch(err => {
+          console.error('Failed to initialize log viewer:', err);
+        });
       }
     } else {
       // Stop listening when closing to prevent memory leaks
@@ -72,8 +74,12 @@
     }
   }
 
-  // Format timestamp
+  // Format timestamp with defensive checks
   function formatTimestamp(timestamp) {
+    // Handle invalid or missing timestamps
+    if (!timestamp || !(timestamp instanceof Date) || isNaN(timestamp.getTime())) {
+      return '--:--:--.---';
+    }
     return timestamp.toLocaleTimeString('en-US', {
       hour12: false,
       hour: '2-digit',
