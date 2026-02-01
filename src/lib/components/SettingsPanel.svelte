@@ -203,6 +203,9 @@
                   <option value="warn">Warning</option>
                   <option value="error">Error</option>
                 </select>
+                <p class="setting-description">
+                  Controls which messages are captured. Debug shows everything, Error shows only errors.
+                </p>
               </div>
 
               <div class="setting-group">
@@ -241,7 +244,6 @@
                   Created by {appInfo.authors.join(', ')}
                 </p>
               {/if}
-              <p>Built with Tauri, Rust, and Svelte.</p>
               {#if appInfo.license}
                 <p>Released under the {appInfo.license} License.</p>
               {/if}

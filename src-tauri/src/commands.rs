@@ -352,20 +352,26 @@ pub async fn send_ttl_pulse(
         }
     } else if let Some(port) = port {
         // Quick connect and pulse for lowest latency
-        let mut device = TtlDevice::new(port);
+        info!("Sending TTL pulse via temporary connection on port: {}", port);
+        let mut device = TtlDevice::new(port.clone());
         match device.connect().await {
             Ok(_) => match device.send(b"PULSE\n").await {
                 Ok(_) => {
                     let latency_us = start_time.elapsed().as_micros() as u64;
                     let _ = device.disconnect().await;
+                    info!("TTL pulse sent successfully via {} (latency: {}µs)", port, latency_us);
                     Ok(CommandResult::success(latency_us))
                 }
                 Err(e) => {
                     let _ = device.disconnect().await;
+                    error!("Failed to send TTL pulse: {}", e);
                     Ok(CommandResult::error(e.to_string()))
                 }
             },
-            Err(e) => Ok(CommandResult::error(e.to_string())),
+            Err(e) => {
+                error!("Failed to connect to TTL device on {}: {}", port, e);
+                Ok(CommandResult::error(e.to_string()))
+            }
         }
     } else {
         Ok(CommandResult::error(

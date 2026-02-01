@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { getVersion } from '@tauri-apps/api/app';
+  import { tauriService } from './lib/services/tauri.js';
   import DeviceCard from './lib/components/DeviceCard.svelte';
   import StatusIndicator from './lib/components/StatusIndicator.svelte';
   import AddDeviceModal from './lib/components/AddDeviceModal.svelte';
@@ -103,14 +103,33 @@
     showAddDeviceModal = false;
   }
 
+  // Update device configuration (called from DeviceCard)
+  function updateDeviceConfig(deviceId, newConfig, newLslConfig = null) {
+    selectedDevices = selectedDevices.map(device => {
+      if (device.id === deviceId) {
+        return {
+          ...device,
+          config: { ...device.config, ...newConfig },
+          ...(newLslConfig && { lslConfig: { ...device.lslConfig, ...newLslConfig } })
+        };
+      }
+      return device;
+    });
+  }
+
 
   onMount(async () => {
     // Bridge store auto-connects in constructor
     console.log('HyperStudy Bridge initialized');
 
-    // Fetch app version from Tauri
+    // Fetch app version from Tauri (via get_app_info command for reliability)
     try {
-      appVersion = await getVersion();
+      const info = await tauriService.getAppInfo();
+      if (info && info.version) {
+        appVersion = info.version;
+      } else {
+        appVersion = 'unknown';
+      }
     } catch (error) {
       console.error('Failed to fetch app version:', error);
       appVersion = 'unknown';
@@ -236,7 +255,7 @@
         </div>
       {:else}
         {#each devices as device}
-          <DeviceCard {device} />
+          <DeviceCard {device} onConfigUpdate={updateDeviceConfig} />
         {/each}
       {/if}
     </div>

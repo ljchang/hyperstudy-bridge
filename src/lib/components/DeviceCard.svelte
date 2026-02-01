@@ -4,7 +4,7 @@
   import { sendTtlPulse, listTtlDevices, testTtlDevice, resetDevice } from '../services/tauri.js';
   import DeviceConfigModal from './DeviceConfigModal.svelte';
 
-  let { device } = $props();
+  let { device, onConfigUpdate = () => {} } = $props();
 
   // Modal state
   let showConfigModal = $state(false);
@@ -175,13 +175,8 @@
     }
 
     try {
-      // Update the device config locally
-      device.config = { ...device.config, ...newConfig };
-
-      // Update LSL config if provided
-      if (newLslConfig) {
-        device.lslConfig = { ...device.lslConfig, ...newLslConfig };
-      }
+      // Update the device config via parent callback (persists to selectedDevices)
+      onConfigUpdate(deviceId, newConfig, newLslConfig);
 
       // If the device was connected, reconnect with new config
       // disconnectDevice properly awaits completion, so no arbitrary delay needed
