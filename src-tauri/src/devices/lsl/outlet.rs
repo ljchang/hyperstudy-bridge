@@ -331,13 +331,15 @@ impl StreamOutlet {
                 }
             }
             SampleData::Int64(values) => {
+                // LSL doesn't support i64 natively, convert to i32 (may truncate large values)
+                let values_i32: Vec<i32> = values.iter().map(|&v| v as i32).collect();
                 if use_explicit_timestamp {
                     outlet
-                        .push_sample_ex(values, timestamp, true)
+                        .push_sample_ex(&values_i32, timestamp, true)
                         .map_err(|e| LslError::LslLibraryError(format!("Push failed: {:?}", e)))?;
                 } else {
                     outlet
-                        .push_sample(values)
+                        .push_sample(&values_i32)
                         .map_err(|e| LslError::LslLibraryError(format!("Push failed: {:?}", e)))?;
                 }
             }
