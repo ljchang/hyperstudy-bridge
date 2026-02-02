@@ -9,6 +9,7 @@
   import LslConfigPanel from './lib/components/LslConfigPanel.svelte';
   import PerformancePanel from './lib/components/PerformancePanel.svelte';
   import * as bridgeStore from './lib/stores/websocket.svelte.js';
+  import { initialize } from './lib/stores/websocket.svelte.js';
   import logo from './assets/hyperstudy-logo.svg';
 
   // App version
@@ -90,7 +91,8 @@
   }
 
   onMount(async () => {
-    // Bridge store auto-connects in constructor
+    // Initialize the WebSocket connection
+    initialize();
     console.log('HyperStudy Bridge initialized');
 
     // Fetch app version from Tauri (via get_app_info command for reliability)

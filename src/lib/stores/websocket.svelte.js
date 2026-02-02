@@ -14,6 +14,9 @@ let reconnectTimeout = null;
 const maxReconnectAttempts = 5;
 const reconnectDelay = 1000;
 
+// Track initialization to prevent double-init
+let initialized = false;
+
 // Timeout constants (in milliseconds)
 const CONNECT_TIMEOUT_MS = 5000;
 const DISCONNECT_TIMEOUT_MS = 5000;
@@ -27,8 +30,10 @@ const requestCallbacks = new Map();
 let requestIdCounter = 0;
 
 // WebSocket connection management
+// Note: We use globalThis.WebSocket to ensure testability - this allows tests to mock WebSocket
 function connect() {
-    if (ws?.readyState === WebSocket.OPEN) {
+    const WS = globalThis.WebSocket;
+    if (ws?.readyState === WS.OPEN) {
         console.log('WebSocket already connected');
         return;
     }
@@ -36,7 +41,7 @@ function connect() {
     status = 'connecting';
 
     try {
-        const socket = new WebSocket('ws://localhost:9000');
+        const socket = new WS('ws://localhost:9000');
 
         socket.onopen = () => {
             console.log('WebSocket connected to bridge server');
@@ -258,10 +263,11 @@ function generateId() {
 }
 
 function send(message) {
+    const WS = globalThis.WebSocket;
     console.log('Attempting to send message:', message);
-    console.log('WebSocket state:', ws?.readyState, 'OPEN=', WebSocket.OPEN);
+    console.log('WebSocket state:', ws?.readyState, 'OPEN=', WS.OPEN);
 
-    if (ws?.readyState === WebSocket.OPEN) {
+    if (ws?.readyState === WS.OPEN) {
         const messageStr = JSON.stringify(message);
         console.log('Sending to WebSocket:', messageStr);
         ws.send(messageStr);
@@ -437,9 +443,45 @@ export function disconnect() {
     tauriService.cleanupEventListeners();
 }
 
-// Initialize connection and Tauri listeners
-connect();
-tauriService.setupEventListeners();
+// Initialize the WebSocket connection and Tauri listeners
+// Call this once from App.svelte on mount
+export function initialize() {
+    if (initialized) {
+        console.log('WebSocket store already initialized');
+        return;
+    }
+    initialized = true;
+    connect();
+    tauriService.setupEventListeners();
+}
+
+// Reset all state for testing - allows proper test isolation
+export function _resetForTesting() {
+    // Disconnect and clean up
+    if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = null;
+    }
+    if (ws) {
+        ws.close();
+        ws = null;
+    }
+
+    // Reset all state
+    status = 'disconnected';
+    devices = new Map();
+    lastError = null;
+    metrics = {};
+    reconnectAttempts = 0;
+    requestIdCounter = 0;
+    initialized = false;
+
+    // Clear callbacks and handlers
+    requestCallbacks.clear();
+    messageHandlers.clear();
+
+    tauriService.cleanupEventListeners();
+}
 
 // Generic message sending function
 export function sendMessage(message) {

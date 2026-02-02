@@ -1,11 +1,15 @@
 import { defineConfig } from 'vitest/config';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { svelteTesting } from '@testing-library/svelte/vite';
 
 export default defineConfig({
-  plugins: [svelte({
-    hot: false,  // Disable HMR for tests
-    configFile: './svelte.config.js'
-  })],
+  plugins: [
+    svelte({
+      hot: false,  // Disable HMR for tests
+      configFile: './svelte.config.js'
+    }),
+    svelteTesting(),  // Enables Svelte 5 lifecycle handling for tests
+  ],
   resolve: {
     // Ensure browser exports are used for Svelte 5
     conditions: ['browser', 'import', 'module', 'default']
