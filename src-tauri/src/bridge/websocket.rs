@@ -698,25 +698,90 @@ async fn handle_device_command(
             }
         }
         CommandAction::Status => {
-            if let Some(status) = state.get_device_status(&device_id).await {
+            if device_id == "all" {
+                // Return status for all registered devices
+                let devices = state.list_devices().await;
+                let statuses: Vec<serde_json::Value> = devices
+                    .iter()
+                    .map(|d| {
+                        json!({
+                            "device": d.id,
+                            "device_type": d.device_type,
+                            "status": d.status,
+                            "name": d.name
+                        })
+                    })
+                    .collect();
+
+                send_response(
+                    tx,
+                    BridgeResponse::data("all".to_string(), json!({ "devices": statuses })),
+                )
+                .await;
+
+                if let Some(req_id) = id {
+                    send_response(tx, BridgeResponse::ack(req_id, true, None)).await;
+                }
+            } else if let Some(status) = state.get_device_status(&device_id).await {
+                // Exact device ID match
                 send_response(tx, BridgeResponse::status(device_id, status)).await;
 
                 if let Some(req_id) = id {
                     send_response(tx, BridgeResponse::ack(req_id, true, None)).await;
                 }
             } else {
-                send_response(
-                    tx,
-                    BridgeResponse::device_error(device_id, "Device not found".to_string()),
-                )
-                .await;
+                // Try matching by device type (e.g., "ttl" matches any TTL device)
+                let devices = state.list_devices().await;
+                let device_type_upper = device_id.to_uppercase();
+                let matching_devices: Vec<_> = devices
+                    .iter()
+                    .filter(|d| format!("{:?}", d.device_type).to_uppercase() == device_type_upper)
+                    .collect();
 
-                if let Some(req_id) = id {
+                if !matching_devices.is_empty() {
+                    // Return status for all devices of this type
+                    let statuses: Vec<serde_json::Value> = matching_devices
+                        .iter()
+                        .map(|d| {
+                            json!({
+                                "device": d.id,
+                                "device_type": d.device_type,
+                                "status": d.status,
+                                "name": d.name
+                            })
+                        })
+                        .collect();
+
                     send_response(
                         tx,
-                        BridgeResponse::ack(req_id, false, Some("Device not found".to_string())),
+                        BridgeResponse::data(device_id, json!({ "devices": statuses })),
                     )
                     .await;
+
+                    if let Some(req_id) = id {
+                        send_response(tx, BridgeResponse::ack(req_id, true, None)).await;
+                    }
+                } else {
+                    send_response(
+                        tx,
+                        BridgeResponse::device_error(
+                            device_id,
+                            "Device not found".to_string(),
+                        ),
+                    )
+                    .await;
+
+                    if let Some(req_id) = id {
+                        send_response(
+                            tx,
+                            BridgeResponse::ack(
+                                req_id,
+                                false,
+                                Some("Device not found".to_string()),
+                            ),
+                        )
+                        .await;
+                    }
                 }
             }
         }
