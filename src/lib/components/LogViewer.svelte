@@ -104,16 +104,12 @@
 
   // Clear ALL logs from database
   async function clearDatabase() {
-    console.log('clearDatabase clicked!');
     const confirmed = confirm('PERMANENTLY DELETE all logs from the database?\n\nThis cannot be undone.');
-    console.log('User confirmed:', confirmed);
     if (!confirmed) return;
 
     try {
       const { clearAllLogs } = await import('../services/tauri.js');
-      console.log('clearAllLogs imported');
       const result = await clearAllLogs();
-      console.log('clearAllLogs result:', result);
       if (result.success) {
         alert(`Deleted ${result.data} log entries from database.`);
         logsStore.clearLogs(); // Also clear frontend buffer
@@ -172,8 +168,8 @@
 
 <!-- Log Viewer Modal -->
 {#if isOpen}
-  <div class="log-modal-overlay" role="presentation" onclick={() => isOpen = false} onkeydown={(e) => { if (e.key === 'Escape') isOpen = false; }}>
-    <div class="log-modal" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === 'Escape' && (isOpen = false)}>
+  <div class="log-modal-overlay" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) isOpen = false; }} onkeydown={(e) => { if (e.key === 'Escape') isOpen = false; }}>
+    <div class="log-modal" role="dialog" aria-modal="true" tabindex="-1" onkeydown={(e) => e.key === 'Escape' && (isOpen = false)}>
       <div class="log-header">
         <div class="log-title">
           <h2>Log Viewer</h2>
