@@ -59,27 +59,38 @@ jobs:
 
       - name: Update release notes
         if: steps.check.outputs.exists == 'false'
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          DATE: ${{ steps.release.outputs.date }}
+          BODY: ${{ steps.release.outputs.body }}
         run: |
-          TAG="${{ steps.release.outputs.tag }}"
-          DATE="${{ steps.release.outputs.date }}"
           FILE="docs-repo/docs/devices/hyperstudy-bridge.md"
 
-          # Create the new release entry
-          RELEASE_ENTRY="### $TAG
+          # Create the new release entry in a temp file
+          {
+            echo "### $TAG"
+            echo ""
+            echo "**Released:** $DATE"
+            echo ""
+            echo "$BODY"
+            echo ""
+            echo "---"
+          } > /tmp/release_entry.txt
 
-**Released:** $DATE
+          # Insert after RELEASE_NOTES_START marker using sed
+          # First, escape special characters in the release entry for sed
+          ESCAPED_ENTRY=$(sed -e 's/[&/\]/\\&/g' -e 's/$/\\/' /tmp/release_entry.txt | tr -d '\n' | sed 's/\\$//')
 
-${{ steps.release.outputs.body }}
-
----"
-
-          # Insert after RELEASE_NOTES_START marker
-          # Use awk to insert content after the marker line
-          awk -v entry="$RELEASE_ENTRY" '
+          # Use awk for safer multi-line insertion
+          awk '
             /<!-- RELEASE_NOTES_START -->/ {
               print
               print ""
-              print entry
+              while ((getline line < "/tmp/release_entry.txt") > 0) {
+                print line
+              }
+              close("/tmp/release_entry.txt")
+              print ""
               next
             }
             { print }
