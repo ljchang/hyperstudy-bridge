@@ -195,7 +195,7 @@ mod message_routing_tests {
     async fn test_response_message_serialization() -> TestResult<()> {
         // Test status response
         let status_response =
-            BridgeResponse::status("test_device".to_string(), DeviceStatus::Connected);
+            BridgeResponse::status("test_device".to_string(), DeviceStatus::Connected, None);
         let json_str = serde_json::to_string(&status_response).unwrap();
         let parsed_response: BridgeResponse = serde_json::from_str(&json_str).unwrap();
 
@@ -209,7 +209,7 @@ mod message_routing_tests {
 
         // Test error response
         let error_response =
-            BridgeResponse::device_error("test_device".to_string(), "Test error".to_string());
+            BridgeResponse::device_error("test_device".to_string(), "Test error".to_string(), None);
         let json_str = serde_json::to_string(&error_response).unwrap();
         let parsed_response: BridgeResponse = serde_json::from_str(&json_str).unwrap();
 

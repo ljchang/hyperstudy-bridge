@@ -67,12 +67,16 @@ pub enum BridgeResponse {
     Status {
         device: String,
         status: DeviceStatus,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
         timestamp: u64,
     },
     #[serde(rename = "data")]
     Data {
         device: String,
         payload: Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
         timestamp: u64,
     },
     #[serde(rename = "error")]
@@ -80,13 +84,8 @@ pub enum BridgeResponse {
         device: Option<String>,
         message: String,
         code: Option<String>,
-        timestamp: u64,
-    },
-    #[serde(rename = "ack")]
-    Ack {
-        id: String,
-        success: bool,
-        message: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
         timestamp: u64,
     },
     #[serde(rename = "event")]
@@ -105,45 +104,40 @@ pub enum BridgeResponse {
 }
 
 impl BridgeResponse {
-    pub fn error(message: String) -> Self {
+    pub fn error(message: String, id: Option<String>) -> Self {
         Self::Error {
             device: None,
             message,
             code: None,
+            id,
             timestamp: Self::timestamp(),
         }
     }
 
-    pub fn device_error(device: String, message: String) -> Self {
+    pub fn device_error(device: String, message: String, id: Option<String>) -> Self {
         Self::Error {
             device: Some(device),
             message,
             code: None,
-            timestamp: Self::timestamp(),
-        }
-    }
-
-    pub fn ack(id: String, success: bool, message: Option<String>) -> Self {
-        Self::Ack {
             id,
-            success,
-            message,
             timestamp: Self::timestamp(),
         }
     }
 
-    pub fn data(device: String, payload: Value) -> Self {
+    pub fn data(device: String, payload: Value, id: Option<String>) -> Self {
         Self::Data {
             device,
             payload,
+            id,
             timestamp: Self::timestamp(),
         }
     }
 
-    pub fn status(device: String, status: DeviceStatus) -> Self {
+    pub fn status(device: String, status: DeviceStatus, id: Option<String>) -> Self {
         Self::Status {
             device,
             status,
+            id,
             timestamp: Self::timestamp(),
         }
     }
