@@ -412,9 +412,9 @@ export async function clearAllLogs() {
     }
 }
 
-export async function exportLogs(logsData) {
+export async function exportLogs(logsData, filePath = null) {
     try {
-        return await invoke('export_logs', { logsData });
+        return await invoke('export_logs', { logsData, filePath });
     } catch (error) {
         console.error('Failed to export logs:', error);
         throw error;

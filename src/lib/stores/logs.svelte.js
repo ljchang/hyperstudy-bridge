@@ -7,6 +7,8 @@
 
 import { tauriService, queryLogs as queryLogsFromDb, getLogStats as getLogStatsFromDb, getStorageStats as getStorageStatsFromDb } from '../services/tauri.js';
 import { listen } from '@tauri-apps/api/event';
+import { save } from '@tauri-apps/plugin-dialog';
+import { downloadDir, join } from '@tauri-apps/api/path';
 
 // Log levels
 export const LOG_LEVELS = {
@@ -59,8 +61,7 @@ const dbState = $state({
     totalCount: 0,
     hasMore: false,
     offset: 0,
-    pageSize: 100,
-    useDatabase: false
+    pageSize: 100
 });
 
 // ============================================================================
@@ -448,7 +449,7 @@ async function queryFromDatabase(options = {}) {
 
 // Load more logs from database (pagination)
 async function loadMoreLogs() {
-    if (!dbState.useDatabase || !dbState.hasMore || dbState.isQuerying) return;
+    if (!dbState.hasMore || dbState.isQuerying) return;
     await queryFromDatabase({ append: true });
 }
 
@@ -486,14 +487,6 @@ async function getDbLogStats() {
     }
 }
 
-// Switch between memory and database mode
-function setDatabaseMode(enabled) {
-    dbState.useDatabase = enabled;
-    if (enabled) {
-        refreshLogsFromDatabase();
-    }
-}
-
 // ============================================================================
 // ACTIONS
 // ============================================================================
@@ -505,9 +498,38 @@ function clearLogs() {
     filterIndex = null;
 }
 
-// Export logs to file
+// Export logs to file with save dialog
 async function exportLogs() {
     try {
+        // Generate default filename with timestamp
+        const now = new Date();
+        const timestamp = now.toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
+        const defaultFilename = `hyperstudy_bridge_logs_${timestamp}.json`;
+
+        // Get downloads directory as default location
+        let defaultPath;
+        try {
+            const downloads = await downloadDir();
+            defaultPath = await join(downloads, defaultFilename);
+        } catch {
+            defaultPath = defaultFilename;
+        }
+
+        // Show native save dialog
+        const filePath = await save({
+            defaultPath,
+            filters: [{
+                name: 'JSON Files',
+                extensions: ['json']
+            }],
+            title: 'Export Logs'
+        });
+
+        // User cancelled the dialog
+        if (!filePath) {
+            return null;
+        }
+
         const logsToExport = getFilteredLogs().map(log => ({
             timestamp: log.timestamp.toISOString(),
             level: log.level,
@@ -516,7 +538,7 @@ async function exportLogs() {
             message: log.message
         }));
 
-        const result = await tauriService.exportLogs(logsToExport);
+        const result = await tauriService.exportLogs(logsToExport, filePath);
         if (result.success) {
             addLog('info', `Logs exported successfully to ${result.data.path}`, null, 'frontend');
             return result.data;
@@ -540,14 +562,19 @@ function log(level, message, device = null) {
 
 // Initialize logging
 async function init() {
+    if (viewState.isSettingUp) return;
+    viewState.isSettingUp = true;
+
     try {
-        addLog('info', 'HyperStudy Bridge log viewer initialized', null, 'frontend');
-        await fetchHistoricalLogs();
+        // Load logs from database
+        await refreshLogsFromDatabase();
+        // Start listening for new logs
         await startListening();
     } catch (error) {
         console.error('Failed to initialize log viewer:', error);
         viewState.lastError = error?.message || 'Failed to initialize';
-        addLog('error', `Log viewer initialization failed: ${error?.message || 'Unknown error'}`, null, 'frontend');
+    } finally {
+        viewState.isSettingUp = false;
     }
 }
 
@@ -573,7 +600,6 @@ export const getSearchQuery = () => filterConfig.search;
 export const getIsQuerying = () => dbState.isQuerying;
 export const getDbTotalCount = () => dbState.totalCount;
 export const getDbHasMore = () => dbState.hasMore;
-export const getUseDatabase = () => dbState.useDatabase;
 
 // Derived state exports
 export { getFilteredLogs, getTotalCount, getDeviceList, getLogCounts };
@@ -592,8 +618,7 @@ export {
     loadMoreLogs,
     refreshLogsFromDatabase,
     getDatabaseStats,
-    getDbLogStats,
-    setDatabaseMode
+    getDbLogStats
 };
 
 // Filter setter exports - these trigger filter index rebuild

@@ -2,7 +2,7 @@ import { defineConfig } from 'vitest/config';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 
 export default defineConfig({
-  plugins: process.env.CI ? [] : [svelte({
+  plugins: [svelte({
     hot: false,  // Disable HMR for tests
     configFile: './svelte.config.js'
   })],

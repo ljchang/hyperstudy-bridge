@@ -61,6 +61,9 @@ base64 = "0.22"
 # Testing utilities
 rand = "0.9"
 
+# Plugins
+tauri-plugin-dialog = "2"
+
 [dev-dependencies]
 criterion = { version = "0.7", features = ["html_reports"] }
 tokio-test = "0.4"

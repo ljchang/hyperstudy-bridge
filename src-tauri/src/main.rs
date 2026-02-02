@@ -47,6 +47,7 @@ async fn main() {
     let state_clone = app_state.clone();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
             let state = state_clone.clone();
             let app_handle = app.handle().clone();

@@ -1,6 +1,7 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
+  import { onDestroy } from 'svelte';
   import * as logsStore from '../stores/logs.svelte.js';
+  import { clearAllLogs } from '../services/tauri.js';
   import VirtualLogList from './VirtualLogList.svelte';
 
   // Props
@@ -10,16 +11,15 @@
   const logs = $derived.by(() => logsStore.getFilteredLogs());
   const logCounts = $derived.by(() => logsStore.getLogCounts());
   const deviceList = $derived.by(() => logsStore.getDeviceList());
-  const isListening = $derived.by(() => logsStore.getIsListening());
   const autoScroll = $derived.by(() => logsStore.getAutoScroll());
   const isQuerying = $derived.by(() => logsStore.getIsQuerying());
   const dbTotalCount = $derived.by(() => logsStore.getDbTotalCount());
   const dbHasMore = $derived.by(() => logsStore.getDbHasMore());
-  const useDatabase = $derived.by(() => logsStore.getUseDatabase());
   const totalCount = $derived.by(() => logsStore.getTotalCount());
 
   // Local state
   let isExporting = $state(false);
+  let isClearing = $state(false);
   let showFilters = $state(false);
   let searchQuery = $state(logsStore.getSearchQuery());
   let levelFilter = $state(logsStore.getLevelFilter());
@@ -28,16 +28,12 @@
   // Effect to handle modal open/close
   $effect(() => {
     if (isOpen) {
-      // Start listening when opening if not already running
-      // Use requestAnimationFrame to defer init until after the modal renders
-      // This prevents UI freeze when opening the log viewer
-      if (!isListening) {
-        requestAnimationFrame(() => {
-          logsStore.init().catch(err => {
-            console.error('Failed to initialize log viewer:', err);
-          });
+      // Initialize log viewer when opening
+      requestAnimationFrame(() => {
+        logsStore.init().catch(err => {
+          console.error('Failed to initialize log viewer:', err);
         });
-      }
+      });
     } else {
       // Stop listening when closing to prevent memory leaks
       logsStore.stopListening();
@@ -86,42 +82,25 @@
     logsStore.setAutoScroll(!autoScroll);
   }
 
-  // Toggle listening for log events
-  function toggleListening() {
-    if (isListening) {
-      logsStore.stopListening();
-    } else {
-      logsStore.startListening();
-    }
-  }
-
-  // Clear logs (frontend buffer only)
-  function clearLogs() {
-    if (confirm('Clear the log viewer? (This only clears displayed logs, not the database)')) {
-      logsStore.clearLogs();
-    }
-  }
-
   // Clear ALL logs from database
-  async function clearDatabase() {
+  async function handleClearDatabase() {
     const confirmed = confirm('PERMANENTLY DELETE all logs from the database?\n\nThis cannot be undone.');
     if (!confirmed) return;
 
+    isClearing = true;
     try {
-      const { clearAllLogs } = await import('../services/tauri.js');
       const result = await clearAllLogs();
       if (result.success) {
-        alert(`Deleted ${result.data} log entries from database.`);
-        logsStore.clearLogs(); // Also clear frontend buffer
-        if (useDatabase) {
-          logsStore.refreshLogsFromDatabase();
-        }
+        logsStore.clearLogs(); // Clear frontend buffer
+        await logsStore.refreshLogsFromDatabase(); // Refresh from empty database
       } else {
         alert(`Failed to clear database: ${result.error}`);
       }
     } catch (error) {
-      console.error('Error in clearDatabase:', error);
+      console.error('Error clearing database:', error);
       alert(`Error: ${error.message}`);
+    } finally {
+      isClearing = false;
     }
   }
 
@@ -141,24 +120,15 @@
 
   // Handle scroll near bottom for lazy loading
   function handleScrollNearBottom() {
-    if (useDatabase && dbHasMore && !isQuerying) {
+    if (dbHasMore && !isQuerying) {
       logsStore.loadMoreLogs();
     }
-  }
-
-  // Toggle database mode
-  function toggleDatabaseMode() {
-    logsStore.setDatabaseMode(!useDatabase);
   }
 
   // Load more logs manually
   async function loadMore() {
     await logsStore.loadMoreLogs();
   }
-
-  onMount(() => {
-    // Component mounted, but let the effect handle initialization
-  });
 
   onDestroy(() => {
     // Always stop listening when component is destroyed
@@ -174,38 +144,18 @@
         <div class="log-title">
           <h2>Log Viewer</h2>
           <div class="log-stats">
-            {#if useDatabase}
-              <span class="stat db-mode">DB Mode</span>
-              <span class="stat">Total: {dbTotalCount}</span>
-              <span class="stat">Showing: {logs.length}</span>
-            {:else}
-              <span class="stat">Total: {logCounts.total}</span>
-              <span class="stat">Filtered: {totalCount}</span>
-              {#if logCounts.error > 0}
-                <span class="stat error">Errors: {logCounts.error}</span>
-              {/if}
-              {#if logCounts.warn > 0}
-                <span class="stat warn">Warnings: {logCounts.warn}</span>
-              {/if}
+            <span class="stat">Total: {dbTotalCount}</span>
+            <span class="stat">Showing: {logs.length}</span>
+            {#if logCounts.error > 0}
+              <span class="stat error">Errors: {logCounts.error}</span>
+            {/if}
+            {#if logCounts.warn > 0}
+              <span class="stat warn">Warnings: {logCounts.warn}</span>
             {/if}
           </div>
         </div>
 
         <div class="log-controls">
-          <button
-            class="control-btn"
-            class:active={useDatabase}
-            onclick={toggleDatabaseMode}
-            aria-label="Toggle database mode"
-            title={useDatabase ? "Switch to live mode" : "Query from database (for large history)"}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
-              <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
-              <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
-            </svg>
-          </button>
-
           <button
             class="control-btn"
             class:active={showFilters}
@@ -226,55 +176,29 @@
             title="Auto-scroll to bottom"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M7 13l3 3 7-7"></path>
-              <path d="M7 13l3 3 7-7"></path>
-            </svg>
-          </button>
-
-          <button
-            class="control-btn"
-            class:active={isListening}
-            onclick={toggleListening}
-            aria-label="{isListening ? 'Pause' : 'Resume'} log updates"
-            title="{isListening ? 'Pause' : 'Resume'} log updates"
-          >
-            {#if isListening}
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="6" y="4" width="4" height="16"></rect>
-                <rect x="14" y="4" width="4" height="16"></rect>
-              </svg>
-            {:else}
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polygon points="5,3 19,12 5,21"></polygon>
-              </svg>
-            {/if}
-          </button>
-
-          <button
-            class="control-btn"
-            onclick={clearLogs}
-            aria-label="Clear displayed logs"
-            title="Clear displayed logs (keeps database)"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="3,6 5,6 21,6"></polyline>
-              <path d="m19,6v14a2,2 0 0,1 -2,2H7a2,2 0 0,1 -2,-2V6m3,0V4a2,2 0 0,1 2,-2h4a2,2 0 0,1 2,2v2"></path>
+              <path d="M12 5v14M5 12l7 7 7-7"></path>
             </svg>
           </button>
 
           <button
             class="control-btn danger-btn"
-            onclick={clearDatabase}
+            onclick={handleClearDatabase}
+            disabled={isClearing}
             aria-label="Clear database"
             title="Delete ALL logs from database"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
-              <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
-              <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
-              <line x1="9" y1="10" x2="15" y2="16"></line>
-              <line x1="15" y1="10" x2="9" y2="16"></line>
-            </svg>
+            {#if isClearing}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin">
+                <circle cx="12" cy="12" r="10"></circle>
+              </svg>
+            {:else}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3,6 5,6 21,6"></polyline>
+                <path d="m19,6v14a2,2 0 0,1 -2,2H7a2,2 0 0,1 -2,-2V6m3,0V4a2,2 0 0,1 2,-2h4a2,2 0 0,1 2,2v2"></path>
+                <line x1="10" y1="11" x2="10" y2="17"></line>
+                <line x1="14" y1="11" x2="14" y2="17"></line>
+              </svg>
+            {/if}
           </button>
 
           <button
@@ -287,7 +211,6 @@
             {#if isExporting}
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin">
                 <circle cx="12" cy="12" r="10"></circle>
-                <path d="M16 12l-4 4-4-4"></path>
               </svg>
             {:else}
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -360,13 +283,7 @@
         {#if logs.length === 0}
           <div class="empty-logs">
             <p>No logs to display</p>
-            <p class="hint">
-              {#if !isListening}
-                Click the play button to start receiving logs
-              {:else}
-                Logs will appear here as they are generated
-              {/if}
-            </p>
+            <p class="hint">Logs will appear here as they are generated</p>
           </div>
         {:else}
           <VirtualLogList
@@ -377,8 +294,8 @@
             {getLevelBackground}
           />
 
-          <!-- Load more indicator for database mode -->
-          {#if useDatabase && (isQuerying || dbHasMore)}
+          <!-- Load more indicator -->
+          {#if isQuerying || dbHasMore}
             <div class="load-more-container">
               {#if isQuerying}
                 <div class="loading-indicator">
@@ -605,15 +522,6 @@
   @keyframes spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
-  }
-
-  /* Database mode indicator */
-  .stat.db-mode {
-    color: var(--color-primary);
-    font-weight: 600;
-    padding: 0.125rem 0.5rem;
-    background: rgba(76, 175, 80, 0.15);
-    border-radius: 4px;
   }
 
   /* Load more container */

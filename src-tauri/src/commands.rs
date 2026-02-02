@@ -868,35 +868,44 @@ pub async fn clear_all_logs() -> Result<CommandResult<u64>, ()> {
 #[tauri::command]
 pub async fn export_logs(
     logs_data: Vec<serde_json::Value>,
+    file_path: Option<String>,
     app_handle: AppHandle,
 ) -> Result<CommandResult<serde_json::Value>, ()> {
     use std::fs::File;
     use std::io::Write;
-    // Note: In Tauri v2, file dialog is handled differently
-    // For now, we'll write to a fixed location
 
     // Generate default filename with timestamp
     let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
     let default_filename = format!("hyperstudy_bridge_logs_{}.json", timestamp);
 
-    // For now, save to a default location (in production, use file dialog)
-    let app_data_dir = app_handle
-        .path()
-        .app_data_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let logs_dir = app_data_dir.join("logs");
+    // Use provided file path or fall back to app data directory
+    let final_path = if let Some(path) = file_path {
+        std::path::PathBuf::from(path)
+    } else {
+        let app_data_dir = app_handle
+            .path()
+            .app_data_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let logs_dir = app_data_dir.join("logs");
 
-    // Create logs directory if it doesn't exist
-    if let Err(e) = std::fs::create_dir_all(&logs_dir) {
-        return Ok(CommandResult::error(format!(
-            "Failed to create logs directory: {}",
-            e
-        )));
-    }
+        // Create logs directory if it doesn't exist
+        if let Err(e) = std::fs::create_dir_all(&logs_dir) {
+            return Ok(CommandResult::error(format!(
+                "Failed to create logs directory: {}",
+                e
+            )));
+        }
 
-    let file_path = logs_dir.join(&default_filename);
+        logs_dir.join(&default_filename)
+    };
 
-    match File::create(&file_path) {
+    // Get filename from path for response
+    let filename = final_path
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or(default_filename);
+
+    match File::create(&final_path) {
         Ok(mut file) => {
             let json_data = serde_json::to_string_pretty(&logs_data)
                 .map_err(|e| format!("Failed to serialize logs: {}", e));
@@ -910,8 +919,8 @@ pub async fn export_logs(
                         )))
                     } else {
                         Ok(CommandResult::success(json!({
-                            "path": file_path.to_string_lossy(),
-                            "filename": default_filename,
+                            "path": final_path.to_string_lossy(),
+                            "filename": filename,
                             "count": logs_data.len()
                         })))
                     }
