@@ -41,12 +41,13 @@ interface BridgeResponse {
   type: ResponseType;
   device: DeviceType;
   payload: any;
-  id?: string;  // Matches request ID if provided
+  id?: string;  // Matches request ID for correlation (single-message protocol)
+  status?: string;  // Device status for status messages
   timestamp: number;
   error?: string;  // Present if type is "error"
 }
 
-type ResponseType = "status" | "data" | "error" | "ack" | "device_list";
+type ResponseType = "status" | "data" | "error" | "device_list";
 ```
 
 ## Device-Specific APIs
@@ -93,12 +94,14 @@ type ResponseType = "status" | "data" | "error" | "ack" | "device_list";
 **Response:**
 ```json
 {
-  "type": "ack",
+  "type": "data",
   "device": "ttl",
+  "id": "req-123",
   "payload": {
     "success": true,
-    "latency": 0.5  // Command-to-pulse latency in ms
-  }
+    "latency": 0.5
+  },
+  "timestamp": 1634567890123
 }
 ```
 

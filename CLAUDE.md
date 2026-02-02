@@ -67,10 +67,11 @@ interface BridgeCommand {
 
 // Bridge → Client
 interface BridgeResponse {
-  type: "status" | "data" | "error" | "ack";
+  type: "status" | "data" | "error";
   device: "ttl" | "kernel" | "pupil" | "lsl";
   payload: any;
-  id?: string;  // Matches request ID if applicable
+  id?: string;  // Matches request ID for correlation (single-message protocol)
+  status?: string;  // Device status for status messages
   timestamp: number;
 }
 ```

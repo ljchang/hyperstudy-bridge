@@ -121,11 +121,12 @@ class MockDeviceServer {
     device.status = 'connected';
     device.connectedAt = Date.now();
 
-    // Send connection acknowledgment
+    // Send connection status response
     this.sendResponse(ws, {
-      type: 'ack',
+      type: 'status',
       device: deviceType,
-      payload: { deviceId: device.id, status: 'connected' },
+      status: 'connected',
+      payload: { deviceId: device.id },
       id,
       timestamp: Date.now()
     });
@@ -151,9 +152,10 @@ class MockDeviceServer {
     });
 
     this.sendResponse(ws, {
-      type: 'ack',
+      type: 'status',
       device: deviceType,
-      payload: { status: 'disconnected' },
+      status: 'disconnected',
+      payload: {},
       id,
       timestamp: Date.now()
     });
@@ -176,7 +178,7 @@ class MockDeviceServer {
       // Simulate sub-millisecond latency
       setTimeout(() => {
         this.sendResponse(ws, {
-          type: 'ack',
+          type: 'data',
           device: deviceType,
           payload: {
             command: 'PULSE',
@@ -189,9 +191,9 @@ class MockDeviceServer {
         });
       }, Math.random() * 0.8); // Random latency 0-0.8ms
     } else {
-      // Generic command acknowledgment
+      // Generic command response
       this.sendResponse(ws, {
-        type: 'ack',
+        type: 'data',
         device: deviceType,
         payload: { command: payload.command || 'unknown', executed: true },
         id,

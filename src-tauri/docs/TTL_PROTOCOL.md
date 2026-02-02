@@ -90,11 +90,11 @@ sequenceDiagram
     participant Bridge as Bridge Server
     participant TTL as TTL Device
 
-    App->>Bridge: WebSocket: {device: "ttl", action: "send", payload: {command: "PULSE"}}
+    App->>Bridge: WebSocket: {device: "ttl", action: "send", payload: {command: "PULSE"}, id: "req-123"}
     Bridge->>TTL: Serial: PULSE\n
     Note over TTL: Generate pulse (10ms)
     TTL->>Bridge: Serial: OK\n
-    Bridge->>App: WebSocket: {type: "ack", device: "ttl", latency: 0.8ms}
+    Bridge->>App: WebSocket: {type: "data", device: "ttl", id: "req-123", latency: 0.8ms}
 ```
 
 ### Performance Monitoring
@@ -220,14 +220,14 @@ void loop() {
 
 ```json
 {
-    "type": "ack",
+    "type": "data",
     "device": "ttl",
+    "id": "req-123",
     "payload": {
         "success": true,
-        "latency_ms": 0.8,
-        "timestamp": 1699123456789
+        "latency_ms": 0.8
     },
-    "id": "req-123"
+    "timestamp": 1699123456789
 }
 ```
 

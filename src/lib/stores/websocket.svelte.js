@@ -115,7 +115,7 @@ function connect() {
 }
 
 // Valid message types for validation
-const VALID_MESSAGE_TYPES = ['status', 'data', 'error', 'ack', 'query_result', 'event', 'stream_list', 'inlet_connected', 'inlet_disconnected', 'outlet_created', 'outlet_removed', 'sync_status'];
+const VALID_MESSAGE_TYPES = ['status', 'data', 'error', 'query_result', 'event', 'stream_list', 'inlet_connected', 'inlet_disconnected', 'outlet_created', 'outlet_removed', 'sync_status'];
 
 // Validate message structure
 function validateMessage(message) {
@@ -145,6 +145,21 @@ function handleMessage(message) {
         return;
     }
 
+    // Resolve callbacks for any message with an id (single-message protocol)
+    // The backend sends status/data/error messages with the request ID embedded,
+    // rather than separate ack messages
+    if (message.id) {
+        const callback = requestCallbacks.get(message.id);
+        if (callback) {
+            const isSuccess = message.type !== 'error';
+            const resultMessage = message.type === 'error'
+                ? (message.message || message.payload || 'Unknown error')
+                : (message.status || message.payload || 'OK');
+            callback(isSuccess, resultMessage);
+            requestCallbacks.delete(message.id);
+        }
+    }
+
     // Call all registered message handlers
     messageHandlers.forEach(handler => {
         try {
@@ -164,9 +179,6 @@ function handleMessage(message) {
             break;
         case 'error':
             handleError(message);
-            break;
-        case 'ack':
-            handleAck(message);
             break;
         case 'query_result':
             handleQueryResult(message);
@@ -214,14 +226,6 @@ function handleError(message) {
     lastError = message.payload || 'Unknown error';
     if (message.device) {
         updateDeviceStatus(message.device, 'Error');
-    }
-}
-
-function handleAck(message) {
-    const callback = requestCallbacks.get(message.id);
-    if (callback) {
-        callback(message.success, message.message);
-        requestCallbacks.delete(message.id);
     }
 }
 

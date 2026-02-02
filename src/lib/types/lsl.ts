@@ -76,7 +76,7 @@ export interface LslCommand {
 export interface LslResponse {
   type: 'stream_list' | 'inlet_connected' | 'inlet_disconnected' |
         'outlet_created' | 'outlet_removed' | 'sync_status' |
-        'stream_data' | 'error' | 'ack';
+        'stream_data' | 'error' | 'status';
   device: 'lsl';
   payload: unknown;
   id?: string;
