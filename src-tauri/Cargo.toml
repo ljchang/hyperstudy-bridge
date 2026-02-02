@@ -1,6 +1,6 @@
 [package]
 name = "hyperstudy-bridge"
-version = "0.8.10"
+version = "0.8.11"
 description = "HyperStudy Bridge - Hardware Device Integration"
 authors = ["Luke Chang <luke.j.chang@dartmouth.edu>"]
 license = "MIT"
