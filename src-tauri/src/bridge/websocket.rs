@@ -73,6 +73,38 @@ async fn handle_connection<R: Runtime>(
     let state_clone = state.clone();
     let connection_id_clone = connection_id.clone();
 
+    // Subscribe to device status broadcasts
+    let mut status_rx = state.subscribe_device_status();
+    let tx_for_status = tx.clone();
+
+    // Task to forward device status broadcasts to this WebSocket client
+    let status_task = tokio::spawn(async move {
+        loop {
+            match status_rx.recv().await {
+                Ok(event) => {
+                    // Convert DeviceStatusEvent to BridgeResponse
+                    let response = BridgeResponse::status(
+                        event.device_id,
+                        event.status,
+                        None, // No request ID for broadcast events
+                    );
+                    if tx_for_status.send(response).await.is_err() {
+                        // Channel closed, client disconnected
+                        break;
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    // Broadcast channel closed, exit
+                    break;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    // We missed some messages due to slow processing
+                    warn!("WebSocket client lagged behind, missed {} status events", n);
+                }
+            }
+        }
+    });
+
     let send_task = tokio::spawn(async move {
         while let Some(response) = rx.recv().await {
             if let Ok(msg) = MessageHandler::serialize_response(&response) {
@@ -129,19 +161,27 @@ async fn handle_connection<R: Runtime>(
         }
     });
 
-    // Wait for either task to complete, then abort the other to prevent resource leaks
+    // Wait for either task to complete, then abort all others to prevent resource leaks
     // Pin the tasks so we can use references in select!
     tokio::pin!(send_task);
     tokio::pin!(receive_task);
+    tokio::pin!(status_task);
 
     tokio::select! {
         result = &mut send_task => {
             debug!("Send task completed: {:?}", result);
             receive_task.abort();
+            status_task.abort();
         },
         result = &mut receive_task => {
             debug!("Receive task completed: {:?}", result);
             send_task.abort();
+            status_task.abort();
+        },
+        result = &mut status_task => {
+            debug!("Status task completed: {:?}", result);
+            send_task.abort();
+            receive_task.abort();
         },
     }
 

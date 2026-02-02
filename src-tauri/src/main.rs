@@ -9,9 +9,10 @@ mod devices;
 mod logging;
 mod performance;
 mod storage;
+mod usb_monitor;
 
 use std::sync::Arc;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tracing::{error, info, warn};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
@@ -93,10 +94,46 @@ async fn main() {
 
             // Start WebSocket server
             let app_handle_for_ws = app_handle.clone();
+            let state_for_ws = state.clone();
             tokio::spawn(async move {
-                let mut server = BridgeServer::new(state, app_handle_for_ws);
+                let mut server = BridgeServer::new(state_for_ws, app_handle_for_ws);
                 if let Err(e) = server.start().await {
                     error!("Failed to start WebSocket server: {}", e);
+                }
+            });
+
+            // Start USB device monitoring for TTL disconnect detection
+            let state_for_usb = state.clone();
+            let app_handle_for_usb = app_handle.clone();
+            tokio::spawn(async move {
+                let mut usb_rx = usb_monitor::start_usb_monitor();
+                info!("USB device monitoring started");
+
+                while let Some(event) = usb_rx.recv().await {
+                    if event.is_ttl_device() && event.is_disconnect() {
+                        let port = event.port_name();
+                        let serial = event.serial_number();
+                        info!(
+                            "TTL USB disconnect detected on port {} (S/N: {:?}), updating device status",
+                            port, serial
+                        );
+
+                        // Handle the disconnect
+                        let updated = state_for_usb.handle_ttl_usb_disconnect().await;
+
+                        if updated {
+                            // Emit Tauri event to notify frontend
+                            if let Err(e) = app_handle_for_usb.emit("device_status_changed", serde_json::json!({
+                                "device": "ttl",
+                                "status": "Disconnected",
+                                "reason": "USB device unplugged",
+                                "port": port,
+                                "serial_number": serial
+                            })) {
+                                warn!("Failed to emit device_status_changed event: {}", e);
+                            }
+                        }
+                    }
                 }
             });
 

@@ -1,4 +1,5 @@
 use super::{Device, DeviceConfig, DeviceError, DeviceInfo, DeviceStatus, DeviceType};
+use crate::usb_monitor::{TTL_USB_PID, TTL_USB_VID};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serialport::{self, SerialPort};
@@ -75,6 +76,38 @@ impl TtlDevice {
         }
     }
 
+    /// Check if an error message indicates the device has been physically disconnected.
+    ///
+    /// This is used as a passive fallback to detect device disconnection when USB
+    /// monitoring is not available or misses the event.
+    fn is_connection_lost_error(error_msg: &str) -> bool {
+        // Common error messages indicating physical disconnection across platforms
+        error_msg.contains("Broken pipe")
+            || error_msg.contains("Resource busy")
+            || error_msg.contains("No such device")
+            || error_msg.contains("No such file or directory")
+            || error_msg.contains("Input/output error")
+            || error_msg.contains("Device not configured")
+            || error_msg.contains("Operation not supported")
+            || error_msg.contains("Bad file descriptor")
+            || error_msg.contains("Access is denied")
+            || error_msg.contains("The device is not connected")
+            || error_msg.contains("The system cannot find the file specified")
+    }
+
+    /// Mark the device as disconnected due to a communication error.
+    ///
+    /// This is called when we detect an I/O error that indicates the physical
+    /// device is no longer present.
+    fn mark_disconnected(&mut self, reason: &str) {
+        warn!(
+            device = "ttl",
+            "TTL device disconnected: {} - marking as Error status", reason
+        );
+        self.port = None;
+        self.status = DeviceStatus::Error;
+    }
+
     /// Set performance callback for metrics recording
     pub fn set_performance_callback<F>(&mut self, callback: F)
     where
@@ -82,10 +115,6 @@ impl TtlDevice {
     {
         self.performance_callback = Some(Box::new(callback));
     }
-
-    // Adafruit RP2040 USB VID/PID
-    const TTL_USB_VID: u16 = 0x239A;
-    const TTL_USB_PID: u16 = 0x80F1;
 
     pub fn list_ports() -> Result<Vec<String>, DeviceError> {
         let ports =
@@ -152,8 +181,8 @@ impl TtlDevice {
             if let serialport::SerialPortType::UsbPort(usb_info) = &port.port_type {
                 // Check if this is an Adafruit RP2040 (our TTL device)
                 // On macOS, skip /dev/tty.* ports (duplicates of /dev/cu.*)
-                if usb_info.vid == Self::TTL_USB_VID
-                    && usb_info.pid == Self::TTL_USB_PID
+                if usb_info.vid == TTL_USB_VID
+                    && usb_info.pid == TTL_USB_PID
                     && !port.port_name.starts_with("/dev/tty.")
                 {
                     let device_info = serde_json::json!({
@@ -182,8 +211,8 @@ impl TtlDevice {
             info!(
                 device = "ttl",
                 "No TTL devices found (VID: 0x{:04X}, PID: 0x{:04X})",
-                Self::TTL_USB_VID,
-                Self::TTL_USB_PID
+                TTL_USB_VID,
+                TTL_USB_PID
             );
             serde_json::json!({
                 "devices": ttl_devices,
@@ -222,7 +251,7 @@ impl TtlDevice {
         for port in ports {
             if let serialport::SerialPortType::UsbPort(usb_info) = &port.port_type {
                 // Only check devices with matching VID/PID
-                if usb_info.vid == Self::TTL_USB_VID && usb_info.pid == Self::TTL_USB_PID {
+                if usb_info.vid == TTL_USB_VID && usb_info.pid == TTL_USB_PID {
                     if let Some(ref sn) = usb_info.serial_number {
                         if sn == serial_number {
                             info!(
@@ -308,6 +337,15 @@ impl TtlDevice {
                 );
             } else if latency > Duration::from_micros(500) {
                 warn!(device = "ttl", "TTL pulse latency approaching limit: {:?}", latency);
+            }
+
+            // Check if the error indicates a physical disconnection
+            if let Err(ref e) = result {
+                if let DeviceError::CommunicationError(msg) = e {
+                    if Self::is_connection_lost_error(msg) {
+                        self.mark_disconnected(msg);
+                    }
+                }
             }
 
             result?;
@@ -494,6 +532,15 @@ impl Device for TtlDevice {
                 callback(&device_id, latency, data_len as u64, 0);
             }
 
+            // Check if the error indicates a physical disconnection
+            if let Err(ref e) = result {
+                if let DeviceError::CommunicationError(msg) = e {
+                    if Self::is_connection_lost_error(msg) {
+                        self.mark_disconnected(msg);
+                    }
+                }
+            }
+
             result
         } else {
             Err(DeviceError::NotConnected)
@@ -554,6 +601,15 @@ impl Device for TtlDevice {
             if let Ok(ref data) = result {
                 if let Some(ref callback) = self.performance_callback {
                     callback(&device_id, latency, 0, data.len() as u64);
+                }
+            }
+
+            // Check if the error indicates a physical disconnection
+            if let Err(ref e) = result {
+                if let DeviceError::CommunicationError(msg) = e {
+                    if Self::is_connection_lost_error(msg) {
+                        self.mark_disconnected(msg);
+                    }
                 }
             }
 

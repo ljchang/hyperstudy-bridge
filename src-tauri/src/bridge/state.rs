@@ -1,5 +1,5 @@
 use crate::devices::lsl::{InletManager, NeonLslManager, StreamResolver, TimeSync};
-use crate::devices::{BoxedDevice, DeviceInfo, DeviceStatus};
+use crate::devices::{BoxedDevice, DeviceInfo, DeviceStatus, DeviceType};
 use crate::performance::PerformanceMonitor;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
@@ -7,9 +7,10 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
+use tracing::{info, warn};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AppState {
     pub devices: Arc<RwLock<HashMap<String, Arc<RwLock<BoxedDevice>>>>>,
     pub connections: Arc<DashMap<String, ConnectionInfo>>,
@@ -20,6 +21,9 @@ pub struct AppState {
     pub last_error: Arc<RwLock<Option<String>>>,
     /// Neon LSL Manager for Pupil Labs Neon eye tracking via LSL
     pub neon_manager: Arc<NeonLslManager>,
+    /// Broadcast channel for device status change events
+    /// WebSocket connections can subscribe to receive status updates
+    device_status_tx: broadcast::Sender<DeviceStatusEvent>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +53,45 @@ pub struct DeviceMetrics {
     pub last_latency_ms: f64,
 }
 
+/// Event broadcast when a device's status changes
+#[derive(Debug, Clone, Serialize)]
+pub struct DeviceStatusEvent {
+    pub device_id: String,
+    pub device_type: DeviceType,
+    pub status: DeviceStatus,
+    pub reason: String,
+    pub timestamp: u64,
+}
+
+impl DeviceStatusEvent {
+    pub fn disconnected(device_id: String, device_type: DeviceType, reason: &str) -> Self {
+        Self {
+            device_id,
+            device_type,
+            status: DeviceStatus::Disconnected,
+            reason: reason.to_string(),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+        }
+    }
+}
+
+impl std::fmt::Debug for AppState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppState")
+            .field("devices", &self.devices)
+            .field("connections", &self.connections)
+            .field("metrics", &self.metrics)
+            .field("start_time", &self.start_time)
+            .field("message_count", &self.message_count)
+            .field("last_error", &self.last_error)
+            .field("device_status_subscribers", &self.device_status_tx.receiver_count())
+            .finish()
+    }
+}
+
 impl Default for AppState {
     fn default() -> Self {
         Self::new()
@@ -56,12 +99,18 @@ impl Default for AppState {
 }
 
 impl AppState {
+    /// Capacity for device status broadcast channel
+    const STATUS_BROADCAST_CAPACITY: usize = 16;
+
     pub fn new() -> Self {
         // Create shared LSL infrastructure for Neon manager
         let time_sync = Arc::new(TimeSync::new(true));
         let resolver = Arc::new(StreamResolver::new(5.0));
         let inlet_manager = Arc::new(InletManager::new(time_sync));
         let neon_manager = Arc::new(NeonLslManager::new(resolver, inlet_manager));
+
+        // Create broadcast channel for device status events
+        let (device_status_tx, _) = broadcast::channel(Self::STATUS_BROADCAST_CAPACITY);
 
         Self {
             devices: Arc::new(RwLock::new(HashMap::new())),
@@ -72,7 +121,24 @@ impl AppState {
             message_count: Arc::new(AtomicU64::new(0)),
             last_error: Arc::new(RwLock::new(None)),
             neon_manager,
+            device_status_tx,
         }
+    }
+
+    /// Subscribe to device status change events.
+    ///
+    /// Returns a receiver that will receive `DeviceStatusEvent` notifications
+    /// when devices connect, disconnect, or change status.
+    pub fn subscribe_device_status(&self) -> broadcast::Receiver<DeviceStatusEvent> {
+        self.device_status_tx.subscribe()
+    }
+
+    /// Broadcast a device status change event to all subscribers.
+    ///
+    /// This is used to notify WebSocket clients when device status changes.
+    pub fn broadcast_device_status(&self, event: DeviceStatusEvent) {
+        // It's OK if there are no subscribers - send returns error but we ignore it
+        let _ = self.device_status_tx.send(event);
     }
 
     pub async fn add_device(&self, id: String, device: BoxedDevice) {
@@ -273,5 +339,86 @@ impl AppState {
         self.performance_monitor
             .check_ttl_latency_compliance(device_id)
             .await
+    }
+
+    /// Handle USB disconnect event for TTL device.
+    ///
+    /// This is called by the USB monitor when it detects that a TTL device
+    /// has been physically unplugged. It updates the device status to Disconnected
+    /// and removes the device from the active devices map.
+    ///
+    /// Returns true if a TTL device was found and updated, false otherwise.
+    pub async fn handle_ttl_usb_disconnect(&self) -> bool {
+        let devices = self.devices.read().await;
+
+        // Find all TTL devices
+        let ttl_device_ids: Vec<String> = {
+            let mut ids = Vec::new();
+            for (id, device_lock) in devices.iter() {
+                let device = device_lock.read().await;
+                if device.get_info().device_type == DeviceType::TTL {
+                    ids.push(id.clone());
+                }
+            }
+            ids
+        };
+        drop(devices);
+
+        if ttl_device_ids.is_empty() {
+            return false;
+        }
+
+        let mut any_updated = false;
+
+        // Disconnect each TTL device
+        for device_id in ttl_device_ids {
+            // Re-verify device exists and is still TTL type (avoid race condition)
+            let should_disconnect = if let Some(device_lock) = self.get_device(&device_id).await {
+                let device = device_lock.read().await;
+                device.get_info().device_type == DeviceType::TTL
+            } else {
+                // Device was already removed by another task
+                false
+            };
+
+            if !should_disconnect {
+                continue;
+            }
+
+            info!(
+                device = "ttl",
+                "USB disconnect detected, marking device {} as disconnected", device_id
+            );
+
+            // Try to call disconnect on the device (best effort - the hardware is gone)
+            if let Some(device_lock) = self.get_device(&device_id).await {
+                let mut device = device_lock.write().await;
+                // The disconnect call may fail since the device is gone, but we try anyway
+                let _ = device.disconnect().await;
+            }
+
+            // Remove the device from the registry
+            self.remove_device(&device_id).await;
+
+            // Record the error
+            self.record_device_error(&device_id, "Device physically disconnected (USB unplug detected)")
+                .await;
+
+            // Broadcast status change to WebSocket clients
+            self.broadcast_device_status(DeviceStatusEvent::disconnected(
+                device_id.clone(),
+                DeviceType::TTL,
+                "USB device unplugged",
+            ));
+
+            warn!(
+                device = "ttl",
+                "TTL device {} removed due to USB disconnect", device_id
+            );
+
+            any_updated = true;
+        }
+
+        any_updated
     }
 }
