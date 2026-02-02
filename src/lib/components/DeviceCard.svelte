@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import * as bridgeStore from '../stores/websocket.svelte.js';
-  import { sendTtlPulse, listTtlDevices, resetDevice } from '../services/tauri.js';
+  import { sendTtlPulse, listTtlDevices } from '../services/tauri.js';
   import DeviceConfigModal from './DeviceConfigModal.svelte';
 
   let { device, onConfigUpdate = () => {}, onRemove = () => {} } = $props();
@@ -12,7 +12,6 @@
   // TTL device list for dropdown
   let detectedTtlDevices = $state([]);
   let isLoadingDevices = $state(false);
-  let isResetting = $state(false);
 
   // Load TTL devices on mount if this is a TTL device
   onMount(() => {
@@ -43,25 +42,6 @@
 
   function updateTtlPort(port) {
     device.config = { ...device.config, port };
-  }
-
-  async function resetDeviceState() {
-    isResetting = true;
-    try {
-      const result = await resetDevice(device.id);
-      if (result.success) {
-        // Update local device status
-        device.status = 'disconnected';
-        console.log(`Device ${device.id} reset successfully`);
-      } else {
-        alert(`Failed to reset: ${result.error}`);
-      }
-    } catch (error) {
-      console.error('Error resetting device:', error);
-      alert(`Error: ${error.message || error}`);
-    } finally {
-      isResetting = false;
-    }
   }
 
   function getStatusColor(status) {
@@ -273,15 +253,6 @@
   </div>
   
   <div class="device-actions">
-    {#if device.status === 'error'}
-      <button
-        class="action-btn reset-btn"
-        onclick={resetDeviceState}
-        disabled={isResetting}
-      >
-        {isResetting ? 'Resetting...' : 'Reset'}
-      </button>
-    {/if}
     <button
       class="action-btn connect-btn"
       onclick={toggleConnection}
@@ -478,15 +449,6 @@
     background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
     transform: translateY(-1px);
     box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-  }
-
-  .reset-btn {
-    background: var(--color-warning);
-    color: white;
-  }
-
-  .reset-btn:hover:not(:disabled) {
-    background: #e67e00;
   }
 
   .port-selector {
