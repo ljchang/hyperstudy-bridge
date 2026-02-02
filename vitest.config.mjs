@@ -6,6 +6,10 @@ export default defineConfig({
     hot: false,  // Disable HMR for tests
     configFile: './svelte.config.js'
   })],
+  resolve: {
+    // Ensure browser exports are used for Svelte 5
+    conditions: ['browser', 'import', 'module', 'default']
+  },
   test: {
     globals: true,
     environment: 'jsdom',

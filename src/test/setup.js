@@ -75,11 +75,23 @@ class MockWebSocket {
 }
 MockWebSocket.instances = [];
 
-// Reset instances before each test
+// Expose MockWebSocket globally for tests to access instances
+global.MockWebSocket = MockWebSocket;
+
+// Helper to get the most recent WebSocket instance
+MockWebSocket.getLastInstance = () => {
+  return MockWebSocket.instances[MockWebSocket.instances.length - 1] || null;
+};
+
+// Reset instances before each test, but keep a reference to any existing ones
+// so that module-level connections can still be tested
 beforeEach(() => {
-  MockWebSocket.instances = [];
+  // Don't clear instances - this allows testing of module-level connections
+  // Individual tests should track their own instance indices if needed
+  // Tests that need a fresh state should use disconnect() + connect()
 });
 
+// Create WebSocket mock that tracks instances
 global.WebSocket = vi.fn((url) => new MockWebSocket(url));
 
 // Mock console methods for cleaner test output
