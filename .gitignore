@@ -33,8 +33,6 @@ coverage/
 .nyc_output
 test-*.js
 test-*.ts
-*.test.js
-*.test.ts
 
 # Environment files
 .env
