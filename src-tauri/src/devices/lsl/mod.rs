@@ -196,7 +196,7 @@ impl LslDevice {
             return Ok(());
         }
 
-        info!("Creating automatic outlets for bridge devices");
+        info!(device = "lsl", "Creating automatic outlets for bridge devices");
 
         let device_types = ["ttl", "kernel", "pupil"];
         let mut outlets = self.bridge_outlets.write().await;
@@ -216,10 +216,10 @@ impl LslDevice {
                 .await
                 .map_err(|e| DeviceError::ConfigurationError(e.to_string()))?;
 
-            debug!("Created outlet for {}: {}", device_type, outlet_id);
+            debug!(device = "lsl", "Created outlet for {}: {}", device_type, outlet_id);
         }
 
-        info!("Created {} bridge outlets", outlets.len());
+        info!(device = "lsl", "Created {} bridge outlets", outlets.len());
         Ok(())
     }
 
@@ -228,7 +228,7 @@ impl LslDevice {
         &self,
         filters: Vec<StreamFilter>,
     ) -> Result<Vec<DiscoveredStream>, LslError> {
-        info!("Discovering LSL streams with {} filters", filters.len());
+        info!(device = "lsl", "Discovering LSL streams with {} filters", filters.len());
 
         // Create temporary resolver with filters
         let resolver = StreamResolver::with_filters(self.lsl_config.discovery_timeout, filters);
@@ -423,17 +423,17 @@ impl LslDevice {
         let device_id = self.device_id.clone();
 
         tokio::spawn(async move {
-            info!("Starting LSL command processing for device: {}", device_id);
+            info!(device = "lsl", "Starting LSL command processing for device: {}", device_id);
 
             while let Some(command) = receiver.recv().await {
-                debug!("Processing LSL command: {:?}", command);
+                debug!(device = "lsl", "Processing LSL command: {:?}", command);
 
                 // In a real implementation, we would process commands here
                 // For now, we'll just log them
-                debug!("Command processed: {:?}", command);
+                debug!(device = "lsl", "Command processed: {:?}", command);
             }
 
-            info!("LSL command processing stopped for device: {}", device_id);
+            info!(device = "lsl", "LSL command processing stopped for device: {}", device_id);
         });
 
         Ok(())
@@ -469,7 +469,7 @@ impl LslDevice {
 #[async_trait]
 impl Device for LslDevice {
     async fn connect(&mut self) -> Result<(), DeviceError> {
-        info!("Connecting LSL device: {}", self.device_id);
+        info!(device = "lsl", "Connecting LSL device: {}", self.device_id);
 
         self.status = DeviceStatus::Connecting;
 
@@ -495,10 +495,10 @@ impl Device for LslDevice {
         if self.lsl_config.auto_discover_inlets {
             match self.discover_streams(vec![]).await {
                 Ok(streams) => {
-                    info!("Discovered {} LSL streams", streams.len());
+                    info!(device = "lsl", "Discovered {} LSL streams", streams.len());
                 }
                 Err(e) => {
-                    warn!("Failed to discover streams during connection: {}", e);
+                    warn!(device = "lsl", "Failed to discover streams during connection: {}", e);
                     // Don't fail connection due to discovery issues
                 }
             }
@@ -513,6 +513,7 @@ impl Device for LslDevice {
 
         self.status = DeviceStatus::Connected;
         info!(
+            device = "lsl",
             "LSL device connected successfully in {:?}",
             connection_latency
         );
@@ -521,7 +522,7 @@ impl Device for LslDevice {
     }
 
     async fn disconnect(&mut self) -> Result<(), DeviceError> {
-        info!("Disconnecting LSL device: {}", self.device_id);
+        info!(device = "lsl", "Disconnecting LSL device: {}", self.device_id);
 
         // Stop all outlets and inlets
         self.outlet_manager
@@ -535,7 +536,7 @@ impl Device for LslDevice {
             .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
 
         self.status = DeviceStatus::Disconnected;
-        info!("LSL device disconnected");
+        info!(device = "lsl", "LSL device disconnected");
 
         Ok(())
     }

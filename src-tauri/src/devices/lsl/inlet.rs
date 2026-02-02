@@ -169,6 +169,7 @@ impl StreamInlet {
         time_sync: Arc<TimeSync>,
     ) -> Result<Self, LslError> {
         info!(
+            device = "lsl",
             "Creating LSL inlet: {} (UID: {})",
             discovered_stream.info.name, discovered_stream.uid
         );
@@ -194,13 +195,13 @@ impl StreamInlet {
             let lsl_streams = match lsl::resolve_bypred(&resolve_pred, 1, 5.0) {
                 Ok(streams) => streams,
                 Err(e) => {
-                    error!("Failed to resolve stream by UID {}: {:?}", thread_uid, e);
+                    error!(device = "lsl", "Failed to resolve stream by UID {}: {:?}", thread_uid, e);
                     return;
                 }
             };
 
             if lsl_streams.is_empty() {
-                error!("No stream found with UID: {}", thread_uid);
+                error!(device = "lsl", "No stream found with UID: {}", thread_uid);
                 return;
             }
 
@@ -211,12 +212,12 @@ impl StreamInlet {
             {
                 Ok(inlet) => inlet,
                 Err(e) => {
-                    error!("Failed to create LSL StreamInlet: {:?}", e);
+                    error!(device = "lsl", "Failed to create LSL StreamInlet: {:?}", e);
                     return;
                 }
             };
 
-            info!("LSL inlet thread started for: {}", thread_info.name);
+            info!(device = "lsl", "LSL inlet thread started for: {}", thread_info.name);
 
             // Get channel format for pulling the right type
             let channel_format = thread_info.channel_format;
@@ -227,7 +228,7 @@ impl StreamInlet {
             loop {
                 // Check shutdown flag first
                 if thread_shutdown_flag.load(Ordering::Relaxed) {
-                    info!("LSL inlet thread shutdown flag set: {}", thread_info.name);
+                    info!(device = "lsl", "LSL inlet thread shutdown flag set: {}", thread_info.name);
                     lsl_inlet.close_stream();
                     break;
                 }
@@ -259,7 +260,7 @@ impl StreamInlet {
                         let _ = response.send(result);
                     }
                     Ok(InletCommand::Shutdown) => {
-                        info!("LSL inlet thread shutting down: {}", thread_info.name);
+                        info!(device = "lsl", "LSL inlet thread shutting down: {}", thread_info.name);
                         lsl_inlet.close_stream();
                         break;
                     }
@@ -268,7 +269,7 @@ impl StreamInlet {
                         continue;
                     }
                     Err(std_mpsc::RecvTimeoutError::Disconnected) => {
-                        info!("LSL inlet command channel closed: {}", thread_info.name);
+                        info!(device = "lsl", "LSL inlet command channel closed: {}", thread_info.name);
                         lsl_inlet.close_stream();
                         break;
                     }
@@ -293,7 +294,7 @@ impl StreamInlet {
             _thread_handle: Some(thread_handle),
         };
 
-        debug!("LSL inlet created successfully");
+        debug!(device = "lsl", "LSL inlet created successfully");
         Ok(inlet)
     }
 
@@ -395,11 +396,12 @@ impl StreamInlet {
     /// Open the inlet connection
     pub async fn open(&self, timeout: Duration) -> Result<(), LslError> {
         if self.active.load(Ordering::Relaxed) {
-            warn!("Inlet already open");
+            warn!(device = "lsl", "Inlet already open");
             return Ok(());
         }
 
         info!(
+            device = "lsl",
             "Opening LSL inlet: {} (timeout: {:?})",
             self.info.name, timeout
         );
@@ -455,7 +457,7 @@ impl StreamInlet {
             *time_correction = correction;
         }
 
-        info!("LSL inlet opened successfully");
+        info!(device = "lsl", "LSL inlet opened successfully");
         Ok(())
     }
 
@@ -465,7 +467,7 @@ impl StreamInlet {
             return Ok(());
         }
 
-        info!("Closing LSL inlet: {}", self.info.name);
+        info!(device = "lsl", "Closing LSL inlet: {}", self.info.name);
 
         // Set shutdown flag and send close command
         self.shutdown_flag.store(true, Ordering::Relaxed);
@@ -476,7 +478,7 @@ impl StreamInlet {
         let mut status = self.status.write().await;
         status.active = false;
 
-        info!("LSL inlet closed");
+        info!(device = "lsl", "LSL inlet closed");
         Ok(())
     }
 
@@ -588,7 +590,7 @@ impl StreamInlet {
             return Err(LslError::LslLibraryError("Inlet not open".to_string()));
         }
 
-        info!("Starting continuous collection for: {}", self.info.name);
+        info!(device = "lsl", "Starting continuous collection for: {}", self.info.name);
 
         Ok(receiver)
     }
@@ -750,7 +752,7 @@ impl InletManager {
         let mut inlets = self.inlets.write().await;
         inlets.insert(inlet_id.clone(), inlet);
 
-        info!("Created inlet: {}", inlet_id);
+        info!(device = "lsl", "Created inlet: {}", inlet_id);
         Ok(inlet_id)
     }
 
@@ -790,7 +792,7 @@ impl InletManager {
         let mut inlets = self.inlets.write().await;
         inlets.remove(inlet_id);
 
-        info!("Removed inlet: {}", inlet_id);
+        info!(device = "lsl", "Removed inlet: {}", inlet_id);
         Ok(())
     }
 

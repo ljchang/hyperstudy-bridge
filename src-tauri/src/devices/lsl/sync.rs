@@ -172,6 +172,7 @@ impl TimeSync {
         quality.status = SyncStatus::Synced;
 
         debug!(
+            device = "lsl",
             "Time synchronization completed: offset = {:.3}ms, accuracy = {:.3}μs",
             median_offset * 1000.0,
             accuracy_ns / 1000.0
@@ -235,7 +236,7 @@ impl TimeSync {
             quality.drift_ppm = 10.0; // 10 ppm drift
             quality.status = SyncStatus::Drifting;
 
-            warn!("Clock drift detected: {} ppm", quality.drift_ppm);
+            warn!(device = "lsl", "Clock drift detected: {} ppm", quality.drift_ppm);
 
             // Trigger re-synchronization
             drop(quality); // Release the lock

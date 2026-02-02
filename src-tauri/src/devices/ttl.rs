@@ -136,7 +136,7 @@ impl TtlDevice {
             all_ports.push(port_info);
         }
 
-        info!("Found {} serial ports total", all_ports.len());
+        info!(device = "ttl", "Found {} serial ports total", all_ports.len());
         Ok(all_ports)
     }
 
@@ -166,6 +166,7 @@ impl TtlDevice {
                     });
                     ttl_devices.push(device_info);
                     info!(
+                        device = "ttl",
                         "Found TTL device: {} (S/N: {})",
                         port.port_name,
                         usb_info
@@ -179,6 +180,7 @@ impl TtlDevice {
 
         let result = if ttl_devices.is_empty() {
             info!(
+                device = "ttl",
                 "No TTL devices found (VID: 0x{:04X}, PID: 0x{:04X})",
                 Self::TTL_USB_VID,
                 Self::TTL_USB_PID
@@ -190,7 +192,7 @@ impl TtlDevice {
             })
         } else if ttl_devices.len() == 1 {
             let auto_port = ttl_devices[0]["port"].as_str().unwrap_or("");
-            info!("Auto-selecting single TTL device: {}", auto_port);
+            info!(device = "ttl", "Auto-selecting single TTL device: {}", auto_port);
             serde_json::json!({
                 "devices": ttl_devices,
                 "autoSelected": auto_port,
@@ -198,6 +200,7 @@ impl TtlDevice {
             })
         } else {
             info!(
+                device = "ttl",
                 "Found {} TTL devices - manual selection required",
                 ttl_devices.len()
             );
@@ -223,6 +226,7 @@ impl TtlDevice {
                     if let Some(ref sn) = usb_info.serial_number {
                         if sn == serial_number {
                             info!(
+                                device = "ttl",
                                 "Found TTL device with serial number {} at port {}",
                                 serial_number, port.port_name
                             );
@@ -233,7 +237,7 @@ impl TtlDevice {
             }
         }
 
-        info!("No TTL device found with serial number: {}", serial_number);
+        info!(device = "ttl", "No TTL device found with serial number: {}", serial_number);
         Ok(None)
     }
 
@@ -253,7 +257,7 @@ impl TtlDevice {
                 // Wrap in catch_unwind to prevent mutex poisoning on panic
                 let panic_result = catch_unwind(AssertUnwindSafe(|| {
                     let mut port = port_clone.lock().map_err(|e| {
-                        error!("Mutex poisoned in send_pulse: {}", e);
+                        error!(device = "ttl", "Mutex poisoned in send_pulse: {}", e);
                         DeviceError::CommunicationError(
                             "Mutex poisoned - device needs reset".to_string(),
                         )
@@ -275,7 +279,7 @@ impl TtlDevice {
                         } else {
                             "Unknown panic in serial operation".to_string()
                         };
-                        error!("Panic caught in send_pulse: {}", msg);
+                        error!(device = "ttl", "Panic caught in send_pulse: {}", msg);
                         Err(DeviceError::CommunicationError(format!(
                             "Serial operation panicked: {}",
                             msg
@@ -293,16 +297,17 @@ impl TtlDevice {
                 callback(&device_id, latency, PULSE_COMMAND.len() as u64, 0);
             }
 
-            info!("TTL pulse sent with latency: {:?}", latency);
+            info!(device = "ttl", "TTL pulse sent with latency: {:?}", latency);
 
             // Check for compliance with <1ms requirement
             if latency > Duration::from_millis(1) {
                 warn!(
+                    device = "ttl",
                     "TTL pulse latency exceeded 1ms: {:?} - Performance requirement not met!",
                     latency
                 );
             } else if latency > Duration::from_micros(500) {
-                warn!("TTL pulse latency approaching limit: {:?}", latency);
+                warn!(device = "ttl", "TTL pulse latency approaching limit: {:?}", latency);
             }
 
             result?;
@@ -319,7 +324,7 @@ impl TtlDevice {
 #[async_trait]
 impl Device for TtlDevice {
     async fn connect(&mut self) -> Result<(), DeviceError> {
-        info!("Connecting to TTL device on port: {}", self.port_name);
+        info!(device = "ttl", "Connecting to TTL device on port: {}", self.port_name);
 
         self.status = DeviceStatus::Connecting;
 
@@ -360,7 +365,7 @@ impl Device for TtlDevice {
                                     .to_string(),
                             ));
                         }
-                        info!("TTL device validated. Response: {}", response);
+                        info!(device = "ttl", "TTL device validated. Response: {}", response);
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
                         return Err(DeviceError::ConnectionFailed(
@@ -394,7 +399,7 @@ impl Device for TtlDevice {
                     } else {
                         "Unknown panic during connection".to_string()
                     };
-                    error!("Panic caught in connect: {}", msg);
+                    error!(device = "ttl", "Panic caught in connect: {}", msg);
                     Err(DeviceError::ConnectionFailed(format!("Connection panicked: {}", msg)))
                 }
             }
@@ -406,7 +411,7 @@ impl Device for TtlDevice {
             Ok(port) => {
                 self.port = Some(Arc::new(Mutex::new(port)));
                 self.status = DeviceStatus::Connected;
-                info!("Successfully connected to TTL device");
+                info!(device = "ttl", "Successfully connected to TTL device");
                 Ok(())
             }
             Err(e) => {
@@ -417,7 +422,7 @@ impl Device for TtlDevice {
     }
 
     async fn disconnect(&mut self) -> Result<(), DeviceError> {
-        info!("Disconnecting TTL device");
+        info!(device = "ttl", "Disconnecting TTL device");
 
         if let Some(port_arc) = self.port.take() {
             // Run blocking flush on blocking thread pool
@@ -449,7 +454,7 @@ impl Device for TtlDevice {
             let result = tokio::task::spawn_blocking(move || {
                 let panic_result = catch_unwind(AssertUnwindSafe(|| {
                     let mut port = port_clone.lock().map_err(|e| {
-                        error!("Mutex poisoned in send: {}", e);
+                        error!(device = "ttl", "Mutex poisoned in send: {}", e);
                         DeviceError::CommunicationError(
                             "Mutex poisoned - device needs reset".to_string(),
                         )
@@ -471,7 +476,7 @@ impl Device for TtlDevice {
                         } else {
                             "Unknown panic in send operation".to_string()
                         };
-                        error!("Panic caught in send: {}", msg);
+                        error!(device = "ttl", "Panic caught in send: {}", msg);
                         Err(DeviceError::CommunicationError(format!(
                             "Send operation panicked: {}",
                             msg
@@ -507,7 +512,7 @@ impl Device for TtlDevice {
                 let panic_result = catch_unwind(AssertUnwindSafe(|| {
                     let mut buffer = vec![0u8; 256];
                     let mut port = port_clone.lock().map_err(|e| {
-                        error!("Mutex poisoned in receive: {}", e);
+                        error!(device = "ttl", "Mutex poisoned in receive: {}", e);
                         DeviceError::CommunicationError(
                             "Mutex poisoned - device needs reset".to_string(),
                         )
@@ -532,7 +537,7 @@ impl Device for TtlDevice {
                         } else {
                             "Unknown panic in receive operation".to_string()
                         };
-                        error!("Panic caught in receive: {}", msg);
+                        error!(device = "ttl", "Panic caught in receive: {}", msg);
                         Err(DeviceError::CommunicationError(format!(
                             "Receive operation panicked: {}",
                             msg

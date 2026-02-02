@@ -184,7 +184,7 @@ impl PupilDevice {
             "127.0.0.1".to_string(),
         ];
 
-        info!("Device discovery not yet implemented, returning common IPs");
+        info!(device = "pupil", "Device discovery not yet implemented, returning common IPs");
         Ok(common_ips)
     }
 
@@ -230,7 +230,7 @@ impl PupilDevice {
 
         self.send(json_str.as_bytes()).await?;
         self.streaming_config.gaze = true;
-        info!("Started gaze data streaming");
+        info!(device = "pupil", "Started gaze data streaming");
         Ok(())
     }
 
@@ -252,7 +252,7 @@ impl PupilDevice {
 
         self.send(json_str.as_bytes()).await?;
         self.streaming_config.gaze = false;
-        info!("Stopped gaze data streaming");
+        info!(device = "pupil", "Stopped gaze data streaming");
         Ok(())
     }
 
@@ -274,7 +274,7 @@ impl PupilDevice {
 
         self.send(json_str.as_bytes()).await?;
         self.recording = true;
-        info!("Started recording with template: {:?}", template);
+        info!(device = "pupil", "Started recording with template: {:?}", template);
         Ok(())
     }
 
@@ -291,7 +291,7 @@ impl PupilDevice {
 
         self.send(json_str.as_bytes()).await?;
         self.recording = false;
-        info!("Stopped recording");
+        info!(device = "pupil", "Stopped recording");
         Ok(())
     }
 
@@ -310,7 +310,7 @@ impl PupilDevice {
             serde_json::to_string(&message).map_err(|e| DeviceError::InvalidData(e.to_string()))?;
 
         self.send(json_str.as_bytes()).await?;
-        debug!("Sent event annotation: {}", event.label);
+        debug!(device = "pupil", "Sent event annotation: {}", event.label);
         Ok(())
     }
 
@@ -326,7 +326,7 @@ impl PupilDevice {
             serde_json::to_string(&message).map_err(|e| DeviceError::InvalidData(e.to_string()))?;
 
         self.send(json_str.as_bytes()).await?;
-        debug!("Requested device information");
+        debug!(device = "pupil", "Requested device information");
         Ok(())
     }
 
@@ -334,19 +334,19 @@ impl PupilDevice {
     fn process_message(&mut self, message_text: &str) -> Result<(), DeviceError> {
         match serde_json::from_str::<PupilMessage>(message_text) {
             Ok(msg) => {
-                debug!("Received message type: {}", msg.msg_type);
+                debug!(device = "pupil", "Received message type: {}", msg.msg_type);
 
                 match msg.msg_type.as_str() {
                     "gaze" => {
                         if let Ok(gaze_data) = serde_json::from_value::<GazeData>(msg.payload) {
                             self.last_gaze_data = Some(gaze_data);
-                            debug!("Updated gaze data");
+                            debug!(device = "pupil", "Updated gaze data");
                         }
                     }
                     "pupil" => {
                         if let Ok(pupil_data) = serde_json::from_value::<PupilData>(msg.payload) {
                             self.last_pupil_data = Some(pupil_data);
-                            debug!("Updated pupil data");
+                            debug!(device = "pupil", "Updated pupil data");
                         }
                     }
                     "device.info" => {
@@ -354,28 +354,28 @@ impl PupilDevice {
                             serde_json::from_value::<PupilDeviceInfo>(msg.payload)
                         {
                             self.device_info = Some(device_info);
-                            info!("Updated device information");
+                            info!(device = "pupil", "Updated device information");
                         }
                     }
                     "recording.started" => {
                         self.recording = true;
-                        info!("Recording started confirmation received");
+                        info!(device = "pupil", "Recording started confirmation received");
                     }
                     "recording.stopped" => {
                         self.recording = false;
-                        info!("Recording stopped confirmation received");
+                        info!(device = "pupil", "Recording stopped confirmation received");
                     }
                     "error" => {
-                        warn!("Received error from device: {:?}", msg.payload);
+                        warn!(device = "pupil", "Received error from device: {:?}", msg.payload);
                     }
                     _ => {
-                        debug!("Unknown message type: {}", msg.msg_type);
+                        debug!(device = "pupil", "Unknown message type: {}", msg.msg_type);
                     }
                 }
                 Ok(())
             }
             Err(e) => {
-                debug!("Failed to parse message as PupilMessage: {}", e);
+                debug!(device = "pupil", "Failed to parse message as PupilMessage: {}", e);
                 // Message might be raw data or different format, not necessarily an error
                 Ok(())
             }
@@ -411,7 +411,7 @@ impl PupilDevice {
 #[async_trait]
 impl Device for PupilDevice {
     async fn connect(&mut self) -> Result<(), DeviceError> {
-        info!("Connecting to Pupil Labs Neon at {}", self.device_url);
+        info!(device = "pupil", "Connecting to Pupil Labs Neon at {}", self.device_url);
         self.status = DeviceStatus::Connecting;
         self.connection_retry_count = 0;
 
@@ -434,13 +434,14 @@ impl Device for PupilDevice {
                     self.connection_retry_count = 0;
 
                     info!(
+                        device = "pupil",
                         "Successfully connected to Pupil Labs Neon. Status: {}",
                         response.status()
                     );
 
                     // Request device information after successful connection
                     if let Err(e) = self.request_device_info().await {
-                        warn!("Failed to request device info: {}", e);
+                        warn!(device = "pupil", "Failed to request device info: {}", e);
                     }
 
                     return Ok(());
@@ -448,12 +449,13 @@ impl Device for PupilDevice {
                 Ok(Err(e)) => {
                     self.status = DeviceStatus::Error;
                     self.connection_retry_count += 1;
-                    error!("Failed to connect to Pupil Labs Neon: {}", e);
+                    error!(device = "pupil", "Failed to connect to Pupil Labs Neon: {}", e);
 
                     // Auto-retry if enabled and under retry limit
                     if self.config.auto_reconnect && self.connection_retry_count < self.max_retries
                     {
                         warn!(
+                            device = "pupil",
                             "Retrying connection ({}/{})",
                             self.connection_retry_count, self.max_retries
                         );
@@ -469,11 +471,12 @@ impl Device for PupilDevice {
                 Err(_) => {
                     self.status = DeviceStatus::Error;
                     self.connection_retry_count += 1;
-                    error!("Connection timeout to Pupil Labs Neon");
+                    error!(device = "pupil", "Connection timeout to Pupil Labs Neon");
 
                     if self.config.auto_reconnect && self.connection_retry_count < self.max_retries
                     {
                         warn!(
+                            device = "pupil",
                             "Retrying connection after timeout ({}/{})",
                             self.connection_retry_count, self.max_retries
                         );
@@ -491,7 +494,7 @@ impl Device for PupilDevice {
     }
 
     async fn disconnect(&mut self) -> Result<(), DeviceError> {
-        info!("Disconnecting from Pupil Labs Neon");
+        info!(device = "pupil", "Disconnecting from Pupil Labs Neon");
 
         // Stop any active streaming before disconnecting
         if self.streaming_config.gaze {
@@ -507,9 +510,9 @@ impl Device for PupilDevice {
             // Close WebSocket with timeout to prevent hanging
             let close_timeout = Duration::from_secs(2);
             match timeout(close_timeout, ws.close(None)).await {
-                Ok(Ok(_)) => debug!("WebSocket closed gracefully"),
-                Ok(Err(e)) => warn!("Error closing WebSocket connection: {}", e),
-                Err(_) => warn!("WebSocket close timed out after {:?}", close_timeout),
+                Ok(Ok(_)) => debug!(device = "pupil", "WebSocket closed gracefully"),
+                Ok(Err(e)) => warn!(device = "pupil", "Error closing WebSocket connection: {}", e),
+                Err(_) => warn!(device = "pupil", "WebSocket close timed out after {:?}", close_timeout),
             }
         }
 
@@ -521,7 +524,7 @@ impl Device for PupilDevice {
         self.last_pupil_data = None;
         self.connection_retry_count = 0;
 
-        info!("Successfully disconnected from Pupil Labs Neon");
+        info!(device = "pupil", "Successfully disconnected from Pupil Labs Neon");
         Ok(())
     }
 
@@ -539,16 +542,16 @@ impl Device for PupilDevice {
             .await
             {
                 Ok(Ok(())) => {
-                    debug!("Sent message to Pupil: {}", message);
+                    debug!(device = "pupil", "Sent message to Pupil: {}", message);
                     Ok(())
                 }
                 Ok(Err(e)) => {
-                    error!("WebSocket send error: {}", e);
+                    error!(device = "pupil", "WebSocket send error: {}", e);
                     self.status = DeviceStatus::Error;
                     Err(DeviceError::WebSocketError(e.to_string()))
                 }
                 Err(_) => {
-                    error!("Send timeout to Pupil Labs Neon");
+                    error!(device = "pupil", "Send timeout to Pupil Labs Neon");
                     self.status = DeviceStatus::Error;
                     Err(DeviceError::Timeout)
                 }
@@ -565,21 +568,21 @@ impl Device for PupilDevice {
 
             match tokio::time::timeout(receive_timeout, ws.next()).await {
                 Ok(Some(Ok(Message::Text(text)))) => {
-                    debug!("Received text from Pupil: {}", text);
+                    debug!(device = "pupil", "Received text from Pupil: {}", text);
 
                     // Process the message to update internal state
                     if let Err(e) = self.process_message(&text) {
-                        warn!("Failed to process received message: {}", e);
+                        warn!(device = "pupil", "Failed to process received message: {}", e);
                     }
 
                     Ok(text.as_bytes().to_vec())
                 }
                 Ok(Some(Ok(Message::Binary(data)))) => {
-                    debug!("Received {} bytes from Pupil", data.len());
+                    debug!(device = "pupil", "Received {} bytes from Pupil", data.len());
                     Ok(data.to_vec())
                 }
                 Ok(Some(Ok(Message::Close(frame)))) => {
-                    info!("WebSocket closed by remote: {:?}", frame);
+                    info!(device = "pupil", "WebSocket closed by remote: {:?}", frame);
                     self.status = DeviceStatus::Disconnected;
                     self.ws_client = None;
                     self.recording = false;
@@ -591,12 +594,12 @@ impl Device for PupilDevice {
                 Ok(Some(Ok(Message::Ping(data)))) => {
                     // Respond to ping with pong
                     if let Err(e) = ws.send(Message::Pong(data)).await {
-                        warn!("Failed to send pong response: {}", e);
+                        warn!(device = "pupil", "Failed to send pong response: {}", e);
                     }
                     Ok(Vec::new())
                 }
                 Ok(Some(Ok(Message::Pong(_)))) => {
-                    debug!("Received pong from Pupil");
+                    debug!(device = "pupil", "Received pong from Pupil");
                     Ok(Vec::new())
                 }
                 Ok(Some(Ok(Message::Frame(_)))) => {
@@ -604,12 +607,12 @@ impl Device for PupilDevice {
                     Ok(Vec::new())
                 }
                 Ok(Some(Err(e))) => {
-                    error!("WebSocket receive error: {}", e);
+                    error!(device = "pupil", "WebSocket receive error: {}", e);
                     self.status = DeviceStatus::Error;
                     Err(DeviceError::WebSocketError(e.to_string()))
                 }
                 Ok(None) => {
-                    info!("WebSocket stream ended");
+                    info!(device = "pupil", "WebSocket stream ended");
                     self.status = DeviceStatus::Disconnected;
                     self.ws_client = None;
                     self.recording = false;
@@ -620,7 +623,7 @@ impl Device for PupilDevice {
                 }
                 Err(_) => {
                     // Timeout occurred, this is not necessarily an error for receive operations
-                    debug!("Receive timeout (no data available)");
+                    debug!(device = "pupil", "Receive timeout (no data available)");
                     Ok(Vec::new())
                 }
             }
@@ -667,7 +670,7 @@ impl Device for PupilDevice {
     }
 
     fn configure(&mut self, config: DeviceConfig) -> Result<(), DeviceError> {
-        info!("Configuring Pupil device with new settings");
+        info!(device = "pupil", "Configuring Pupil device with new settings");
         self.config = config;
 
         if let Some(custom) = self.config.custom_settings.as_object() {
@@ -701,6 +704,7 @@ impl Device for PupilDevice {
                 {
                     self.streaming_config = stream_config;
                     debug!(
+                        device = "pupil",
                         "Updated streaming configuration: {:?}",
                         self.streaming_config
                     );
@@ -708,7 +712,7 @@ impl Device for PupilDevice {
             }
         }
 
-        info!("Pupil device configuration updated successfully");
+        info!(device = "pupil", "Pupil device configuration updated successfully");
         Ok(())
     }
 
@@ -720,16 +724,16 @@ impl Device for PupilDevice {
                 .await
             {
                 Ok(Ok(())) => {
-                    debug!("Heartbeat ping sent successfully");
+                    debug!(device = "pupil", "Heartbeat ping sent successfully");
                     Ok(())
                 }
                 Ok(Err(e)) => {
-                    error!("Heartbeat ping failed: {}", e);
+                    error!(device = "pupil", "Heartbeat ping failed: {}", e);
                     self.status = DeviceStatus::Error;
                     Err(DeviceError::WebSocketError(e.to_string()))
                 }
                 Err(_) => {
-                    error!("Heartbeat ping timeout");
+                    error!(device = "pupil", "Heartbeat ping timeout");
                     self.status = DeviceStatus::Error;
                     Err(DeviceError::Timeout)
                 }

@@ -199,12 +199,12 @@ impl StreamResolver {
         // Note: In a real implementation, this would be handled differently
         // as we can't modify self here due to the async context
 
-        info!("Starting LSL stream discovery");
+        info!(device = "lsl", "Starting LSL stream discovery");
 
         // Start discovery task
         // Note: This is a simplified implementation
         // In a real implementation, we would use proper async patterns
-        info!("Discovery task started (placeholder)");
+        info!(device = "lsl", "Discovery task started (placeholder)");
 
         Ok(receiver)
     }
@@ -213,12 +213,13 @@ impl StreamResolver {
     pub async fn stop_discovery(&self) {
         let mut is_discovering = self.is_discovering.write().await;
         *is_discovering = false;
-        info!("Stopping LSL stream discovery");
+        info!(device = "lsl", "Stopping LSL stream discovery");
     }
 
     /// Perform one-time stream discovery using real LSL library
     pub async fn discover_streams(&self) -> Result<Vec<DiscoveredStream>, LslError> {
         info!(
+            device = "lsl",
             "Performing one-time stream discovery (timeout: {:?})",
             self.timeout_duration
         );
@@ -319,6 +320,7 @@ impl StreamResolver {
 
         let discovery_time = discovery_start.elapsed();
         info!(
+            device = "lsl",
             "Discovery completed in {:?}, found {} streams",
             discovery_time,
             discovered.len()
@@ -342,10 +344,11 @@ impl StreamResolver {
             let to_remove = cache.len() - MAX_DISCOVERED_STREAMS;
             for (uid, _) in entries.into_iter().take(to_remove) {
                 cache.remove(&uid);
-                debug!("Evicted old stream from cache: {}", uid);
+                debug!(device = "lsl", "Evicted old stream from cache: {}", uid);
             }
 
             warn!(
+                device = "lsl",
                 "Stream cache exceeded limit, evicted {} oldest entries",
                 to_remove
             );
@@ -418,7 +421,7 @@ impl StreamResolver {
 
         for uid in stale_uids {
             cache.remove(&uid);
-            debug!("Removed stale stream: {}", uid);
+            debug!(device = "lsl", "Removed stale stream: {}", uid);
         }
     }
 
@@ -453,18 +456,18 @@ impl StreamResolver {
                         match sender.try_send(DiscoveryEvent::StreamFound(stream)) {
                             Ok(()) => {}
                             Err(mpsc::error::TrySendError::Full(_)) => {
-                                warn!("Discovery event channel full, dropping event (receiver too slow)");
+                                warn!(device = "lsl", "Discovery event channel full, dropping event (receiver too slow)");
                                 // Continue - don't block on slow receivers
                             }
                             Err(mpsc::error::TrySendError::Closed(_)) => {
-                                error!("Discovery event receiver dropped, stopping discovery");
+                                error!(device = "lsl", "Discovery event receiver dropped, stopping discovery");
                                 return;
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    warn!("Discovery error: {}", e);
+                    warn!(device = "lsl", "Discovery error: {}", e);
                     if sender
                         .try_send(DiscoveryEvent::DiscoveryError(e.to_string()))
                         .is_err()

@@ -58,18 +58,18 @@ impl MockDevice {
 #[async_trait]
 impl Device for MockDevice {
     async fn connect(&mut self) -> Result<(), DeviceError> {
-        info!("Connecting mock device: {}", self.name);
+        info!(device = "mock", "Connecting mock device: {}", self.name);
         self.status = DeviceStatus::Connecting;
 
         self.simulate_operation().await;
 
         self.status = DeviceStatus::Connected;
-        info!("Mock device connected successfully");
+        info!(device = "mock", "Mock device connected successfully");
         Ok(())
     }
 
     async fn disconnect(&mut self) -> Result<(), DeviceError> {
-        info!("Disconnecting mock device: {}", self.name);
+        info!(device = "mock", "Disconnecting mock device: {}", self.name);
 
         self.simulate_operation().await;
 
@@ -84,7 +84,7 @@ impl Device for MockDevice {
             return Err(DeviceError::NotConnected);
         }
 
-        debug!("Mock device sending {} bytes", data.len());
+        debug!(device = "mock", "Mock device sending {} bytes", data.len());
 
         self.simulate_operation().await;
 
