@@ -1,0 +1,83 @@
+name: Build Linux Release
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., v1.0.0)'
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build Linux AppImage
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libgtk-3-dev \
+            libssl-dev \
+            pkg-config \
+            libudev-dev \
+            cmake \
+            build-essential
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: linux-release
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Tauri app
+        run: npm run tauri:build -- --bundles appimage
+
+      - name: Prepare artifacts
+        id: artifacts
+        run: |
+          # Find the AppImage
+          APPIMAGE_PATH=$(find src-tauri/target/release/bundle/appimage -name "*.AppImage" -type f | head -1)
+          echo "Found AppImage: $APPIMAGE_PATH"
+
+          # Get just the filename
+          APPIMAGE_NAME=$(basename "$APPIMAGE_PATH")
+
+          # Rename for clarity with version
+          NEW_NAME="HyperStudy-Bridge-${{ inputs.version }}-x86_64-linux.AppImage"
+          cp "$APPIMAGE_PATH" "$NEW_NAME"
+
+          echo "appimage_path=$NEW_NAME" >> $GITHUB_OUTPUT
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: ${{ steps.artifacts.outputs.appimage_path }}
+          retention-days: 7

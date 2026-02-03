@@ -66,13 +66,22 @@ jobs:
 
           Open the DMG and drag HyperStudy Bridge to your Applications folder.
 
-          ### Verification
-          All macOS builds are:
-          - ✅ Signed with Apple Developer ID certificate
-          - ✅ Notarized by Apple for Gatekeeper approval
-          - ✅ Ready for distribution without security warnings
+          All macOS builds are signed and notarized by Apple.
 
-          To verify: `spctl -a -t execute -vv "/Applications/HyperStudy Bridge.app"`
+          ### Windows
+          - Download `HyperStudy-Bridge-${{ steps.get_version.outputs.version }}-x86_64-windows.msi`
+
+          > **Note**: Windows may show a SmartScreen warning on first run.
+          > Click "More info" → "Run anyway" to proceed.
+
+          ### Linux
+          - Download `HyperStudy-Bridge-${{ steps.get_version.outputs.version }}-x86_64-linux.AppImage`
+
+          Make executable and run:
+          \`\`\`bash
+          chmod +x HyperStudy-Bridge-*.AppImage
+          ./HyperStudy-Bridge-*.AppImage
+          \`\`\`
           EOF
 
       - name: Create Release
@@ -93,22 +102,41 @@ jobs:
       version: ${{ needs.create-release.outputs.version }}
     secrets: inherit
 
+  build-linux:
+    name: Build Linux Release
+    needs: create-release
+    uses: ./.github/workflows/release-linux.yml
+    with:
+      version: ${{ needs.create-release.outputs.version }}
+
+  build-windows:
+    name: Build Windows Release
+    needs: create-release
+    uses: ./.github/workflows/release-windows.yml
+    with:
+      version: ${{ needs.create-release.outputs.version }}
+
   upload-assets:
     name: Upload Release Assets
-    needs: [create-release, build-macos]
+    needs: [create-release, build-macos, build-linux, build-windows]
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        arch: [x86_64-apple-darwin, aarch64-apple-darwin]
     steps:
-      - name: Download DMG
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          name: dmg-${{ matrix.arch }}
+          merge-multiple: true
 
-      - name: Upload to Release
+      - name: List downloaded files
+        run: |
+          echo "Downloaded artifacts:"
+          ls -la
+
+      - name: Upload all assets to Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.create-release.outputs.version }}
-          files: '*.dmg'
+          files: |
+            *.dmg
+            *.AppImage
+            *.msi
           fail_on_unmatched_files: false

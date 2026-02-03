@@ -12,10 +12,12 @@ A unified, high-performance desktop application for bridging HyperStudy web expe
 
 | Platform | Download |
 |----------|----------|
-| **macOS (Apple Silicon)** | [![Download ARM](https://img.shields.io/badge/Download-Apple%20Silicon-blue?style=flat-square&logo=apple)](https://github.com/ljchang/hyperstudy-bridge/releases/latest) |
-| **macOS (Intel)** | [![Download Intel](https://img.shields.io/badge/Download-Intel-blue?style=flat-square&logo=apple)](https://github.com/ljchang/hyperstudy-bridge/releases/latest) |
+| **macOS (Apple Silicon)** | [Apple Silicon](https://github.com/ljchang/hyperstudy-bridge/releases/latest) |
+| **macOS (Intel)** | [Intel](https://github.com/ljchang/hyperstudy-bridge/releases/latest) |
+| **Windows** | [Windows Installer](https://github.com/ljchang/hyperstudy-bridge/releases/latest) |
+| **Linux** | [Linux AppImage](https://github.com/ljchang/hyperstudy-bridge/releases/latest) |
 
-_All macOS builds are signed and notarized by Apple for security._
+_macOS builds are signed and notarized by Apple. Windows builds are unsigned (see note below)._
 
 </div>
 
@@ -50,11 +52,21 @@ HyperStudy Bridge provides a reliable, low-latency communication layer between t
 2. Open the DMG and drag HyperStudy Bridge to Applications
 3. Launch from Applications folder
 
-#### Windows (Coming Soon)
-1. Windows installer will be available in future releases
+#### Windows
+1. Download the `.msi` installer from the [Download section above](#download-latest-release)
+2. Run the installer and follow the prompts
+3. Launch from the Start Menu
 
-#### Linux (Coming Soon)
-1. Linux AppImage will be available in future releases
+> **Note**: Windows may show a SmartScreen warning on first run since the app is not signed.
+> Click "More info" → "Run anyway" to proceed.
+
+#### Linux
+1. Download the `.AppImage` from the [Download section above](#download-latest-release)
+2. Make it executable and run:
+   ```bash
+   chmod +x HyperStudy-Bridge-*.AppImage
+   ./HyperStudy-Bridge-*.AppImage
+   ```
 
 ### Usage
 

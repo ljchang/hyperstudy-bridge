@@ -31,11 +31,17 @@ jobs:
               a.name.includes('x86_64-apple-darwin'));
             const armAsset = release.data.assets.find(a =>
               a.name.includes('aarch64-apple-darwin'));
+            const linuxAsset = release.data.assets.find(a =>
+              a.name.endsWith('.AppImage'));
+            const windowsAsset = release.data.assets.find(a =>
+              a.name.endsWith('.msi'));
 
             return {
               version: release.data.tag_name,
               intelUrl: intelAsset?.browser_download_url || '#',
               armUrl: armAsset?.browser_download_url || '#',
+              linuxUrl: linuxAsset?.browser_download_url || '#',
+              windowsUrl: windowsAsset?.browser_download_url || '#',
               releaseUrl: release.data.html_url
             };
 
@@ -45,15 +51,23 @@ jobs:
           VERSION=$(echo "$RELEASE_INFO" | jq -r '.version')
           INTEL_URL=$(echo "$RELEASE_INFO" | jq -r '.intelUrl')
           ARM_URL=$(echo "$RELEASE_INFO" | jq -r '.armUrl')
+          LINUX_URL=$(echo "$RELEASE_INFO" | jq -r '.linuxUrl')
+          WINDOWS_URL=$(echo "$RELEASE_INFO" | jq -r '.windowsUrl')
 
-          # Update download links in README
-          sed -i "s|\[Intel\](https://github.com/ljchang/hyperstudy-bridge/releases/latest/download/[^)]*)|[Intel]($INTEL_URL)|g" README.md
-          sed -i "s|\[Apple Silicon\](https://github.com/ljchang/hyperstudy-bridge/releases/latest/download/[^)]*)|[Apple Silicon]($ARM_URL)|g" README.md
+          # Update macOS download links in README
+          sed -i "s|\[Intel\](https://github.com/ljchang/hyperstudy-bridge/releases/[^)]*)|[Intel]($INTEL_URL)|g" README.md
+          sed -i "s|\[Apple Silicon\](https://github.com/ljchang/hyperstudy-bridge/releases/[^)]*)|[Apple Silicon]($ARM_URL)|g" README.md
+
+          # Update Linux download link
+          sed -i "s|\[Linux AppImage\](https://github.com/ljchang/hyperstudy-bridge/releases/[^)]*)|[Linux AppImage]($LINUX_URL)|g" README.md
+
+          # Update Windows download link
+          sed -i "s|\[Windows Installer\](https://github.com/ljchang/hyperstudy-bridge/releases/[^)]*)|[Windows Installer]($WINDOWS_URL)|g" README.md
 
       - name: Commit changes
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add README.md
-          git diff --staged --quiet || git commit -m "docs: Update README download links for ${{ steps.release.outputs.result.version }}"
+          git diff --staged --quiet || git commit -m "docs: Update README download links for ${{ fromJSON(steps.release.outputs.result).version }}"
           git push

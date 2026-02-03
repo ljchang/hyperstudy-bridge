@@ -1,0 +1,72 @@
+name: Build Windows Release
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., v1.0.0)'
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build Windows MSI
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: windows-release
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Tauri app
+        run: npm run tauri:build -- --bundles msi
+
+      - name: Prepare artifacts
+        id: artifacts
+        shell: pwsh
+        run: |
+          # Find the MSI file
+          $msiPath = Get-ChildItem -Path "src-tauri/target/release/bundle/msi" -Filter "*.msi" -Recurse | Select-Object -First 1
+
+          if ($null -eq $msiPath) {
+            Write-Error "No MSI file found!"
+            exit 1
+          }
+
+          Write-Host "Found MSI: $($msiPath.FullName)"
+
+          # Rename for clarity with version
+          $newName = "HyperStudy-Bridge-${{ inputs.version }}-x86_64-windows.msi"
+          Copy-Item $msiPath.FullName -Destination $newName
+
+          echo "msi_path=$newName" >> $env:GITHUB_OUTPUT
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-msi
+          path: ${{ steps.artifacts.outputs.msi_path }}
+          retention-days: 7
