@@ -714,39 +714,54 @@ impl Device for KernelDevice {
 
     /// Send a formatted event to the Kernel device using the Kernel Tasks SDK protocol.
     ///
-    /// The protocol requires a length-prefixed binary format:
-    /// - First 4 bytes: Big-endian u32 representing the JSON payload length
-    /// - Remaining bytes: JSON-encoded event payload
+    /// Extracts `timestamp`, `event`, and `value` from the incoming JSON and builds
+    /// a proper [`KernelEvent`]. If the JSON is missing `id`, one is auto-assigned
+    /// from [`next_event_id`] (with a warning log). If `id` is present, it is preserved.
     ///
-    /// If the provided JSON value contains `id`, `timestamp`, `event`, and `value` fields,
-    /// it will be sent as-is. Otherwise, this method will attempt to wrap it in a
-    /// KernelEvent structure.
-    ///
-    /// For best results, use `send_kernel_event()` with a proper `KernelEvent` struct.
+    /// For the typed Rust API, prefer [`send_kernel_event()`] or [`send_event_simple()`].
     async fn send_event(&mut self, event: serde_json::Value) -> Result<(), DeviceError> {
-        // Serialize the event to JSON bytes
-        let json_bytes = serde_json::to_vec(&event).map_err(|e| {
-            DeviceError::CommunicationError(format!("JSON serialization failed: {}", e))
-        })?;
+        // Extract fields from the incoming JSON and build a proper KernelEvent.
+        // The Kernel Tasks SDK requires {id, timestamp, event, value} — if the
+        // caller omits `id` (e.g. the frontend), we auto-assign one from
+        // next_event_id so events are not silently dropped by the Kernel device.
 
-        // Create length-prefixed wire format
-        let length = json_bytes.len() as u32;
-        let length_bytes = length.to_be_bytes();
+        let id = if let Some(id_val) = event.get("id") {
+            id_val.as_i64().unwrap_or_else(|| {
+                warn!(device = "kernel", "Event has non-integer 'id' field, auto-assigning id={}", self.next_event_id);
+                let id = self.next_event_id;
+                self.next_event_id += 1;
+                id
+            })
+        } else {
+            warn!(device = "kernel", "Event missing 'id' field, auto-assigning id={}", self.next_event_id);
+            let id = self.next_event_id;
+            self.next_event_id += 1;
+            id
+        };
 
-        // Combine length prefix and JSON payload
-        let mut wire_data = Vec::with_capacity(4 + json_bytes.len());
-        wire_data.extend_from_slice(&length_bytes);
-        wire_data.extend_from_slice(&json_bytes);
+        let timestamp = event
+            .get("timestamp")
+            .and_then(|v| v.as_i64())
+            .unwrap_or_else(|| {
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_micros() as i64)
+                    .unwrap_or(0)
+            });
 
-        debug!(
-            device = "kernel",
-            "Sending Kernel event: {} bytes (4-byte prefix + {} bytes JSON)",
-            wire_data.len(),
-            json_bytes.len()
-        );
+        let event_name = event
+            .get("event")
+            .and_then(|v| v.as_str())
+            .unwrap_or("event_unknown")
+            .to_string();
 
-        // Use the regular send method which handles connection state
-        self.send(&wire_data).await
+        let value = event
+            .get("value")
+            .cloned()
+            .unwrap_or(serde_json::Value::String(String::new()));
+
+        let kernel_event = KernelEvent::with_timestamp(id, timestamp, event_name, value);
+        self.send_kernel_event(&kernel_event).await
     }
 }
 

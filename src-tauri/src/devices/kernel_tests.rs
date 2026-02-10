@@ -787,6 +787,181 @@ mod mock_server_tests {
         server_handle.abort();
     }
 
+    /// Test that send_event injects id when the incoming JSON is missing it
+    #[tokio::test]
+    async fn test_send_event_injects_id_when_missing() {
+        let received_data = Arc::new(Mutex::new(Vec::new()));
+        let received_data_clone = received_data.clone();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server_handle = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = vec![0u8; 1024];
+            if let Ok(n) = socket.read(&mut buffer).await {
+                let mut data = received_data_clone.lock().await;
+                data.extend_from_slice(&buffer[..n]);
+            }
+        });
+
+        let mut device = KernelDevice::new(addr.ip().to_string());
+        device.update_kernel_config(crate::devices::kernel::KernelConfig {
+            ip_address: addr.ip().to_string(),
+            port: addr.port(),
+            ..Default::default()
+        });
+        device.connect().await.unwrap();
+
+        // Send event WITHOUT id field (simulates what the frontend sends)
+        let event_without_id = serde_json::json!({
+            "timestamp": 1700000000000000_i64,
+            "event": "start_experiment",
+            "value": "1"
+        });
+        device.send_event(event_without_id).await.unwrap();
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let data = received_data.lock().await;
+        assert!(data.len() > 4, "Should receive length prefix + JSON");
+
+        let json_payload = &data[4..];
+        let parsed: serde_json::Value = serde_json::from_slice(json_payload).unwrap();
+
+        // id should have been auto-injected as 1
+        assert_eq!(parsed["id"], 1, "send_event should inject id=1 when missing");
+        assert_eq!(parsed["timestamp"], 1700000000000000_i64);
+        assert_eq!(parsed["event"], "start_experiment");
+        assert_eq!(parsed["value"], "1");
+
+        device.disconnect().await.unwrap();
+        server_handle.abort();
+    }
+
+    /// Test that send_event preserves id when already present in the JSON
+    #[tokio::test]
+    async fn test_send_event_preserves_existing_id() {
+        let received_data = Arc::new(Mutex::new(Vec::new()));
+        let received_data_clone = received_data.clone();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server_handle = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = vec![0u8; 1024];
+            if let Ok(n) = socket.read(&mut buffer).await {
+                let mut data = received_data_clone.lock().await;
+                data.extend_from_slice(&buffer[..n]);
+            }
+        });
+
+        let mut device = KernelDevice::new(addr.ip().to_string());
+        device.update_kernel_config(crate::devices::kernel::KernelConfig {
+            ip_address: addr.ip().to_string(),
+            port: addr.port(),
+            ..Default::default()
+        });
+        device.connect().await.unwrap();
+
+        // Send event WITH id field already present
+        let event_with_id = serde_json::json!({
+            "id": 42,
+            "timestamp": 1700000000000000_i64,
+            "event": "end_experiment",
+            "value": "1"
+        });
+        device.send_event(event_with_id).await.unwrap();
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let data = received_data.lock().await;
+        assert!(data.len() > 4);
+
+        let json_payload = &data[4..];
+        let parsed: serde_json::Value = serde_json::from_slice(json_payload).unwrap();
+
+        // id should be preserved as 42
+        assert_eq!(parsed["id"], 42, "send_event should preserve existing id");
+        assert_eq!(parsed["event"], "end_experiment");
+
+        device.disconnect().await.unwrap();
+        server_handle.abort();
+    }
+
+    /// Test that send_event auto-assigns incrementing ids for multiple events without id
+    #[tokio::test]
+    async fn test_send_event_increments_auto_id() {
+        let received_data = Arc::new(Mutex::new(Vec::new()));
+        let received_data_clone = received_data.clone();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server_handle = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = vec![0u8; 4096];
+            loop {
+                match socket.read(&mut buffer).await {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let mut data = received_data_clone.lock().await;
+                        data.extend_from_slice(&buffer[..n]);
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        let mut device = KernelDevice::new(addr.ip().to_string());
+        device.update_kernel_config(crate::devices::kernel::KernelConfig {
+            ip_address: addr.ip().to_string(),
+            port: addr.port(),
+            ..Default::default()
+        });
+        device.connect().await.unwrap();
+
+        // Send two events without id
+        for event_name in &["start_experiment", "event_marker"] {
+            let event = serde_json::json!({
+                "timestamp": 1700000000000000_i64,
+                "event": event_name,
+                "value": "1"
+            });
+            device.send_event(event).await.unwrap();
+        }
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Parse the two events from the received data
+        let data = received_data.lock().await;
+        let mut offset = 0;
+        let mut ids = Vec::new();
+
+        while offset + 4 < data.len() {
+            let length = u32::from_be_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]) as usize;
+            offset += 4;
+            if offset + length > data.len() {
+                break;
+            }
+            let parsed: serde_json::Value =
+                serde_json::from_slice(&data[offset..offset + length]).unwrap();
+            ids.push(parsed["id"].as_i64().unwrap());
+            offset += length;
+        }
+
+        assert_eq!(ids, vec![1, 2], "Auto-assigned ids should increment: 1, 2");
+
+        device.disconnect().await.unwrap();
+        server_handle.abort();
+    }
+
     /// Test helper methods produce correct event names
     #[tokio::test]
     async fn test_helper_methods_event_names() {
