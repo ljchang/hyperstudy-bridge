@@ -20,8 +20,8 @@ describe('DeviceConfigModal', () => {
     name: 'TTL Pulse Generator',
     type: 'Adafruit RP2040',
     config: {
-      port: '/dev/ttyUSB0'
-    }
+      port: '/dev/ttyUSB0',
+    },
   };
 
   const mockKernelDevice = {
@@ -31,8 +31,8 @@ describe('DeviceConfigModal', () => {
     config: {
       ip: '127.0.0.1',
       port: 6767,
-      samplingRate: 10
-    }
+      samplingRate: 10,
+    },
   };
 
   const mockPupilDevice = {
@@ -43,8 +43,8 @@ describe('DeviceConfigModal', () => {
       url: 'localhost:8081',
       streamGaze: true,
       streamVideo: false,
-      gazeFormat: 'normalized'
-    }
+      gazeFormat: 'normalized',
+    },
   };
 
   const mockProps = {
@@ -241,7 +241,7 @@ describe('DeviceConfigModal', () => {
       const invalidDevice = {
         id: 'unknown',
         name: 'Unknown Device',
-        config: {}
+        config: {},
       };
 
       render(DeviceConfigModal, { ...mockProps, device: invalidDevice });
@@ -253,7 +253,7 @@ describe('DeviceConfigModal', () => {
     it('handles missing device configuration fields', () => {
       const deviceWithoutConfig = {
         ...mockTtlDevice,
-        config: {}
+        config: {},
       };
 
       render(DeviceConfigModal, { ...mockProps, device: deviceWithoutConfig });

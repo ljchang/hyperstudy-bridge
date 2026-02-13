@@ -64,9 +64,10 @@
   // Handle adding devices from modal
   function handleAddDevices(devicesToAdd) {
     console.log('Adding devices:', devicesToAdd);
-    selectedDevices = [...selectedDevices, ...devicesToAdd.filter(d =>
-      !selectedDevices.some(existing => existing.id === d.id)
-    )];
+    selectedDevices = [
+      ...selectedDevices,
+      ...devicesToAdd.filter(d => !selectedDevices.some(existing => existing.id === d.id)),
+    ];
     showAddDeviceModal = false;
   }
 
@@ -77,7 +78,7 @@
         return {
           ...device,
           config: { ...device.config, ...newConfig },
-          ...(newLslConfig && { lslConfig: { ...device.lslConfig, ...newLslConfig } })
+          ...(newLslConfig && { lslConfig: { ...device.lslConfig, ...newLslConfig } }),
         };
       }
       return device;
@@ -124,7 +125,7 @@
     <div class="header-actions">
       <button
         class="header-btn"
-        onclick={(e) => {
+        onclick={e => {
           e.preventDefault();
           e.stopPropagation();
           showPerformancePanel = true;
@@ -132,7 +133,14 @@
         title="Performance Monitor"
         type="button"
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
           <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
         </svg>
         Perf
@@ -140,7 +148,7 @@
 
       <button
         class="header-btn"
-        onclick={(e) => {
+        onclick={e => {
           e.preventDefault();
           e.stopPropagation();
           showLslPanel = true;
@@ -148,7 +156,14 @@
         title="LSL Streams"
         type="button"
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
           <path d="M3 12l2-2 4 4 8-8 2 2"></path>
           <circle cx="12" cy="12" r="10"></circle>
         </svg>
@@ -157,7 +172,7 @@
 
       <button
         class="header-btn"
-        onclick={(e) => {
+        onclick={e => {
           e.preventDefault();
           e.stopPropagation();
           showLogViewer = true;
@@ -165,7 +180,14 @@
         title="View Logs"
         type="button"
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
           <polyline points="14,2 14,8 20,8"></polyline>
           <line x1="16" y1="13" x2="8" y2="13"></line>
@@ -177,7 +199,7 @@
 
       <button
         class="header-btn"
-        onclick={(e) => {
+        onclick={e => {
           e.preventDefault();
           e.stopPropagation();
           showSettingsPanel = true;
@@ -185,9 +207,18 @@
         title="Settings"
         type="button"
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
           <circle cx="12" cy="12" r="3"></circle>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          <path
+            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+          ></path>
         </svg>
         Settings
       </button>
@@ -195,13 +226,10 @@
       <StatusIndicator status={bridgeStatus} />
     </div>
   </header>
-  
+
   <main>
     <div class="controls">
-      <button
-        class="add-device-btn"
-        onclick={() => showAddDeviceModal = true}
-      >
+      <button class="add-device-btn" onclick={() => (showAddDeviceModal = true)}>
         Add Device
       </button>
       <button
@@ -212,7 +240,7 @@
         Disconnect All
       </button>
     </div>
-    
+
     <div class="devices">
       {#if selectedDevices.length === 0}
         <div class="empty-state">
@@ -230,24 +258,16 @@
   <AddDeviceModal
     bind:isOpen={showAddDeviceModal}
     onAdd={handleAddDevices}
-    onClose={() => showAddDeviceModal = false}
+    onClose={() => (showAddDeviceModal = false)}
   />
 
-  <LslConfigPanel
-    bind:isOpen={showLslPanel}
-  />
+  <LslConfigPanel bind:isOpen={showLslPanel} />
 
-  <LogViewer
-    bind:isOpen={showLogViewer}
-  />
+  <LogViewer bind:isOpen={showLogViewer} />
 
-  <SettingsPanel
-    bind:isOpen={showSettingsPanel}
-  />
+  <SettingsPanel bind:isOpen={showSettingsPanel} />
 
-  <PerformancePanel
-    bind:isOpen={showPerformancePanel}
-  />
+  <PerformancePanel bind:isOpen={showPerformancePanel} />
 
   <footer>
     <p>WebSocket: ws://localhost:9000</p>
@@ -262,7 +282,7 @@
     height: 100vh;
     background: var(--color-background);
   }
-  
+
   header {
     display: flex;
     justify-content: space-between;
@@ -290,27 +310,27 @@
     width: auto;
     object-fit: contain;
   }
-  
+
   h1 {
     margin: 0;
     font-size: 1.5rem;
     font-weight: 600;
     color: var(--color-primary);
   }
-  
+
   main {
     flex: 1;
     padding: 2rem;
     overflow-y: auto;
     background: var(--color-background);
   }
-  
+
   .controls {
     display: flex;
     gap: 1rem;
     margin-bottom: 2rem;
   }
-  
+
   button {
     padding: 0.75rem 1.5rem;
     border: none;
@@ -320,7 +340,7 @@
     cursor: pointer;
     transition: all 0.2s;
   }
-  
+
   button:disabled {
     opacity: 0.5;
     cursor: not-allowed;
@@ -343,7 +363,7 @@
     background: var(--color-error);
     color: white;
   }
-  
+
   .disconnect-btn:hover:not(:disabled) {
     background: #dc2626;
     transform: translateY(-1px);
@@ -376,7 +396,7 @@
   .header-btn svg {
     flex-shrink: 0;
   }
-  
+
   .devices {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -399,7 +419,7 @@
     font-size: 0.9rem;
     opacity: 0.8;
   }
-  
+
   footer {
     display: flex;
     justify-content: space-between;

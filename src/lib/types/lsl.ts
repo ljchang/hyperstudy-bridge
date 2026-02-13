@@ -66,17 +66,31 @@ export interface LslConfiguration {
 export interface LslCommand {
   type: 'command';
   device: 'lsl';
-  action: 'discover' | 'connect_inlet' | 'disconnect_inlet' |
-          'create_outlet' | 'remove_outlet' | 'get_sync_status' |
-          'configure_outlet' | 'get_stream_info' | 'set_buffer_size';
+  action:
+    | 'discover'
+    | 'connect_inlet'
+    | 'disconnect_inlet'
+    | 'create_outlet'
+    | 'remove_outlet'
+    | 'get_sync_status'
+    | 'configure_outlet'
+    | 'get_stream_info'
+    | 'set_buffer_size';
   payload: unknown;
   id?: string;
 }
 
 export interface LslResponse {
-  type: 'stream_list' | 'inlet_connected' | 'inlet_disconnected' |
-        'outlet_created' | 'outlet_removed' | 'sync_status' |
-        'stream_data' | 'error' | 'status';
+  type:
+    | 'stream_list'
+    | 'inlet_connected'
+    | 'inlet_disconnected'
+    | 'outlet_created'
+    | 'outlet_removed'
+    | 'sync_status'
+    | 'stream_data'
+    | 'error'
+    | 'status';
   device: 'lsl';
   payload: unknown;
   id?: string;
@@ -202,7 +216,7 @@ export const LSL_ERROR_CODES = {
   NETWORK_ERROR: 1007,
   PROTOCOL_ERROR: 1008,
   RESOURCE_BUSY: 1009,
-  PERMISSION_DENIED: 1010
+  PERMISSION_DENIED: 1010,
 } as const;
 
-export type LslErrorCode = typeof LSL_ERROR_CODES[keyof typeof LSL_ERROR_CODES];
+export type LslErrorCode = (typeof LSL_ERROR_CODES)[keyof typeof LSL_ERROR_CODES];

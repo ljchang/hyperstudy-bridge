@@ -17,31 +17,36 @@ The LSL module follows a modular design with the following components:
 ## Key Features
 
 ### 1. Device Integration
+
 - **TTL Pulse Generator**: Publishes pulse markers as string streams
 - **Kernel fNIRS**: Streams optical density data as float32 multi-channel streams
 - **Pupil Labs Neon**: Publishes gaze data (x, y, confidence) as float32 streams
 
 ### 2. Time Synchronization
+
 - Sub-millisecond precision time alignment across devices
 - Automatic drift detection and correction
 - LSL local clock integration for network-wide synchronization
 - Configurable synchronization intervals and accuracy thresholds
 
 ### 3. Stream Management
+
 - Automatic outlet creation for bridge devices
 - Dynamic stream discovery with filtering capabilities
 - Configurable buffering and flow control
 - Real-time performance monitoring and statistics
 
 ### 4. Performance Optimization
+
 - <1ms latency for TTL pulse generation (when used with LSL)
-- >10,000 samples/sec aggregate throughput capability
+- > 10,000 samples/sec aggregate throughput capability
 - Efficient memory management with circular buffers
 - Minimal CPU overhead (<5% target)
 
 ## Configuration
 
 ### LslConfig Structure
+
 ```rust
 pub struct LslConfig {
     pub auto_create_outlets: bool,      // Auto-create outlets for bridge devices
@@ -56,6 +61,7 @@ pub struct LslConfig {
 ```
 
 ### Device Configuration Examples
+
 ```json
 {
   "auto_create_outlets": true,
@@ -70,6 +76,7 @@ pub struct LslConfig {
 ## Stream Types and Mappings
 
 ### TTL → LSL Markers Stream
+
 - **Type**: Markers
 - **Format**: String
 - **Channels**: 1
@@ -77,6 +84,7 @@ pub struct LslConfig {
 - **Data**: Pulse markers ("PULSE", custom strings)
 
 ### Kernel fNIRS → LSL Stream
+
 - **Type**: fNIRS
 - **Format**: Float32
 - **Channels**: 8-32 (configurable)
@@ -85,6 +93,7 @@ pub struct LslConfig {
 - **Units**: Optical density (OD)
 
 ### Pupil → LSL Gaze Stream
+
 - **Type**: Gaze
 - **Format**: Float32
 - **Channels**: 3 (x, y, confidence)
@@ -95,6 +104,7 @@ pub struct LslConfig {
 ## Usage Examples
 
 ### Creating an LSL Device
+
 ```rust
 use crate::devices::lsl::{LslDevice, LslConfig};
 
@@ -112,6 +122,7 @@ let mut lsl_device = LslDevice::new("bridge_lsl".to_string(), Some(config));
 ```
 
 ### Connecting and Using the Device
+
 ```rust
 // Connect the device (creates outlets, starts time sync)
 lsl_device.connect().await?;
@@ -131,6 +142,7 @@ println!("LSL Stats: {}", serde_json::to_string_pretty(&stats)?);
 ```
 
 ### Stream Discovery
+
 ```rust
 use crate::devices::lsl::{StreamFilter, StreamType};
 
@@ -186,6 +198,7 @@ pub enum LslError {
 ## Testing
 
 The module includes comprehensive tests covering:
+
 - Device lifecycle (connect/disconnect)
 - Data transmission for all device types
 - Stream discovery and filtering
@@ -194,6 +207,7 @@ The module includes comprehensive tests covering:
 - Performance characteristics
 
 Run tests with:
+
 ```bash
 cargo test devices::lsl --bin hyperstudy-bridge
 ```
@@ -201,15 +215,18 @@ cargo test devices::lsl --bin hyperstudy-bridge
 ## Implementation Notes
 
 ### Current Status
+
 This implementation provides a complete framework for LSL integration with placeholder implementations for actual LSL library calls. The structure is designed to easily integrate with the real LSL Rust bindings (`lsl` crate) when available.
 
 ### Production Readiness
+
 - **Framework**: Production-ready architecture and APIs
 - **LSL Integration**: Requires actual LSL library integration
 - **Performance**: Optimized for high-throughput, low-latency requirements
 - **Testing**: Comprehensive test coverage with real-world scenarios
 
 ### Future Enhancements
+
 1. **Real LSL Integration**: Replace placeholder implementations with actual LSL calls
 2. **Advanced Filtering**: Enhanced stream discovery with regex and complex filters
 3. **Compression**: Optional data compression for high-bandwidth streams
@@ -226,6 +243,7 @@ This implementation provides a complete framework for LSL integration with place
 ## Compliance and Requirements
 
 ### Performance Requirements
+
 - ✅ Sub-millisecond latency for time-critical operations
 - ✅ >10,000 samples/sec aggregate throughput
 - ✅ <100MB memory usage
@@ -233,6 +251,7 @@ This implementation provides a complete framework for LSL integration with place
 - ✅ <2 second startup time
 
 ### Integration Requirements
+
 - ✅ Device trait compliance
 - ✅ Performance monitoring integration
 - ✅ WebSocket bridge compatibility
@@ -240,6 +259,7 @@ This implementation provides a complete framework for LSL integration with place
 - ✅ Error handling and recovery
 
 ### Quality Requirements
+
 - ✅ Comprehensive test coverage
 - ✅ Async/await throughout
 - ✅ Memory safety (no unsafe code in core logic)

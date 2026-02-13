@@ -22,7 +22,8 @@
   // Filtered streams based on search and type filter
   const filteredStreams = $derived(
     availableStreams.filter(stream => {
-      const matchesSearch = !streamFilter ||
+      const matchesSearch =
+        !streamFilter ||
         stream.name.toLowerCase().includes(streamFilter.toLowerCase()) ||
         stream.source_id.toLowerCase().includes(streamFilter.toLowerCase());
 
@@ -57,20 +58,28 @@
   // Get stream status icon
   function getStreamStatusIcon(stream) {
     switch (stream.status) {
-      case 'connected': return '●';
-      case 'connecting': return '◐';
-      case 'error': return '✕';
-      default: return '○';
+      case 'connected':
+        return '●';
+      case 'connecting':
+        return '◐';
+      case 'error':
+        return '✕';
+      default:
+        return '○';
     }
   }
 
   // Get stream status color
   function getStreamStatusColor(stream) {
     switch (stream.status) {
-      case 'connected': return 'var(--color-success)';
-      case 'connecting': return 'var(--color-warning)';
-      case 'error': return 'var(--color-error)';
-      default: return 'var(--color-text-secondary)';
+      case 'connected':
+        return 'var(--color-success)';
+      case 'connecting':
+        return 'var(--color-warning)';
+      case 'error':
+        return 'var(--color-error)';
+      default:
+        return 'var(--color-text-secondary)';
     }
   }
 
@@ -83,7 +92,7 @@
         device: 'lsl',
         action: 'discover',
         payload: {},
-        id: `discover_${Date.now()}`
+        id: `discover_${Date.now()}`,
       };
 
       bridgeStore.sendMessage(command);
@@ -110,9 +119,9 @@
           stream_id: stream.uid,
           name: stream.name,
           type: stream.type,
-          source_id: stream.source_id
+          source_id: stream.source_id,
         },
-        id: `connect_inlet_${Date.now()}`
+        id: `connect_inlet_${Date.now()}`,
       };
 
       bridgeStore.sendMessage(command);
@@ -131,7 +140,7 @@
         device: 'lsl',
         action: 'disconnect_inlet',
         payload: { inlet_id: inletId },
-        id: `disconnect_inlet_${Date.now()}`
+        id: `disconnect_inlet_${Date.now()}`,
       };
 
       bridgeStore.sendMessage(command);
@@ -139,7 +148,6 @@
       console.error('Failed to disconnect inlet:', error);
     }
   }
-
 
   // Get sync status
   async function getSyncStatus() {
@@ -149,7 +157,7 @@
         device: 'lsl',
         action: 'get_sync_status',
         payload: {},
-        id: `sync_status_${Date.now()}`
+        id: `sync_status_${Date.now()}`,
       };
 
       bridgeStore.sendMessage(command);
@@ -204,7 +212,7 @@
   // Setup WebSocket message listener (one-time setup only)
   onMount(() => {
     // Listen for LSL messages
-    unsubscribe = bridgeStore.subscribe((message) => {
+    unsubscribe = bridgeStore.subscribe(message => {
       if (message) {
         handleLslMessage(message);
       }
@@ -249,8 +257,22 @@
 
 <!-- LSL Configuration Panel -->
 {#if isOpen}
-  <div class="lsl-modal-overlay" role="presentation" onclick={() => isOpen = false} onkeydown={(e) => { if (e.key === 'Escape') isOpen = false; }}>
-    <div class="lsl-modal" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === 'Escape' && (isOpen = false)}>
+  <div
+    class="lsl-modal-overlay"
+    role="presentation"
+    onclick={() => (isOpen = false)}
+    onkeydown={e => {
+      if (e.key === 'Escape') isOpen = false;
+    }}
+  >
+    <div
+      class="lsl-modal"
+      role="dialog"
+      aria-modal="true"
+      tabindex="-1"
+      onclick={e => e.stopPropagation()}
+      onkeydown={e => e.key === 'Escape' && (isOpen = false)}
+    >
       <div class="lsl-header">
         <div class="lsl-title">
           <h2>LSL Stream Management</h2>
@@ -275,7 +297,15 @@
             disabled={isRefreshing}
             title="Refresh stream list"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class:spin={isRefreshing}>
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              class:spin={isRefreshing}
+            >
               <polyline points="23 4 23 10 17 10"></polyline>
               <polyline points="1 20 1 14 7 14"></polyline>
               <path d="m20.49 9A9 9 0 0 0 5.64 5.64l1.27 1.27a7 7 0 0 1 11.85 1.09"></path>
@@ -284,8 +314,15 @@
             Refresh
           </button>
 
-          <button class="close-btn" aria-label="Close LSL panel" onclick={() => isOpen = false}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <button class="close-btn" aria-label="Close LSL panel" onclick={() => (isOpen = false)}>
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
               <line x1="18" y1="6" x2="6" y2="18"></line>
               <line x1="6" y1="6" x2="18" y2="18"></line>
             </svg>
@@ -333,10 +370,7 @@
                 <div class="stream-item">
                   <div class="stream-info">
                     <div class="stream-header">
-                      <span
-                        class="stream-status"
-                        style="color: {getStreamStatusColor(stream)}"
-                      >
+                      <span class="stream-status" style="color: {getStreamStatusColor(stream)}">
                         {getStreamStatusIcon(stream)}
                       </span>
                       <span class="stream-name">{stream.name}</span>
@@ -352,9 +386,12 @@
                     <button
                       class="connect-btn small"
                       onclick={() => connectInlet(stream)}
-                      disabled={isConnecting || activeInlets.some(inlet => inlet.stream_uid === stream.uid)}
+                      disabled={isConnecting ||
+                        activeInlets.some(inlet => inlet.stream_uid === stream.uid)}
                     >
-                      {activeInlets.some(inlet => inlet.stream_uid === stream.uid) ? 'Connected' : 'Connect'}
+                      {activeInlets.some(inlet => inlet.stream_uid === stream.uid)
+                        ? 'Connected'
+                        : 'Connect'}
                     </button>
                   </div>
                 </div>
@@ -375,10 +412,7 @@
                     <span class="inlet-type">({inlet.type})</span>
                     <span class="inlet-rate">{formatDataRate(inlet.sample_rate)}</span>
                   </div>
-                  <button
-                    class="disconnect-btn small"
-                    onclick={() => disconnectInlet(inlet.id)}
-                  >
+                  <button class="disconnect-btn small" onclick={() => disconnectInlet(inlet.id)}>
                     Disconnect
                   </button>
                 </div>
@@ -445,7 +479,9 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+    box-shadow:
+      0 20px 25px -5px rgba(0, 0, 0, 0.1),
+      0 10px 10px -5px rgba(0, 0, 0, 0.04);
   }
 
   .lsl-header {
@@ -486,7 +522,9 @@
 
   .sync-progress {
     height: 100%;
-    transition: width 0.3s ease, background-color 0.3s ease;
+    transition:
+      width 0.3s ease,
+      background-color 0.3s ease;
   }
 
   .sync-text {
@@ -764,8 +802,12 @@
   }
 
   @keyframes spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   /* Scrollbar styling */

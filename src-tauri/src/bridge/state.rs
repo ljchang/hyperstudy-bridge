@@ -87,7 +87,10 @@ impl std::fmt::Debug for AppState {
             .field("start_time", &self.start_time)
             .field("message_count", &self.message_count)
             .field("last_error", &self.last_error)
-            .field("device_status_subscribers", &self.device_status_tx.receiver_count())
+            .field(
+                "device_status_subscribers",
+                &self.device_status_tx.receiver_count(),
+            )
             .finish()
     }
 }
@@ -401,8 +404,11 @@ impl AppState {
             self.remove_device(&device_id).await;
 
             // Record the error
-            self.record_device_error(&device_id, "Device physically disconnected (USB unplug detected)")
-                .await;
+            self.record_device_error(
+                &device_id,
+                "Device physically disconnected (USB unplug detected)",
+            )
+            .await;
 
             // Broadcast status change to WebSocket clients
             self.broadcast_device_status(DeviceStatusEvent::disconnected(

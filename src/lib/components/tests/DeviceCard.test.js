@@ -16,7 +16,7 @@ vi.mock('../DeviceConfigModal.svelte', () => ({
   default: vi.fn(() => ({
     component: 'div',
     props: {},
-  }))
+  })),
 }));
 
 describe('DeviceCard', () => {
@@ -29,8 +29,8 @@ describe('DeviceCard', () => {
     connection: 'USB Serial',
     status: 'disconnected',
     config: {
-      port: '/dev/ttyUSB0'
-    }
+      port: '/dev/ttyUSB0',
+    },
   };
 
   const mockKernelDevice = {
@@ -41,8 +41,8 @@ describe('DeviceCard', () => {
     status: 'connected',
     config: {
       ip: '127.0.0.1',
-      port: 6767
-    }
+      port: 6767,
+    },
   };
 
   const mockPupilDevice = {
@@ -52,8 +52,8 @@ describe('DeviceCard', () => {
     connection: 'WebSocket',
     status: 'error',
     config: {
-      url: 'localhost:8081'
-    }
+      url: 'localhost:8081',
+    },
   };
 
   beforeEach(() => {
@@ -100,7 +100,7 @@ describe('DeviceCard', () => {
     it('displays auto-discover for Pupil device without URL', () => {
       const pupilWithoutUrl = {
         ...mockPupilDevice,
-        config: {}
+        config: {},
       };
       render(DeviceCard, { device: pupilWithoutUrl });
 
@@ -112,7 +112,7 @@ describe('DeviceCard', () => {
       // Test kernel device without IP (shows "Not configured")
       const unconfiguredKernel = {
         ...mockKernelDevice,
-        config: { port: 6767 }  // IP missing
+        config: { port: 6767 }, // IP missing
       };
       render(DeviceCard, { device: unconfiguredKernel });
 
@@ -198,10 +198,7 @@ describe('DeviceCard', () => {
       const connectButton = screen.getByText('Connect');
       await user.click(connectButton);
 
-      expect(bridgeStore.connectDevice).toHaveBeenCalledWith(
-        mockDevice.id,
-        mockDevice.config
-      );
+      expect(bridgeStore.connectDevice).toHaveBeenCalledWith(mockDevice.id, mockDevice.config);
       expect(console.log).toHaveBeenCalledWith('Connecting TTL Pulse Generator...');
     });
 
@@ -282,7 +279,7 @@ describe('DeviceCard', () => {
       // This test verifies that the configure button works for a connected device
       // The actual reconnection logic is internal to the component
       render(DeviceCard, {
-        device: { ...mockDevice, status: 'connected' }
+        device: { ...mockDevice, status: 'connected' },
       });
 
       const configButton = screen.getByText('Configure');

@@ -42,23 +42,33 @@
 
   // Log level colors
   function getLevelColor(level) {
-    switch(level) {
-      case 'debug': return 'var(--color-text-secondary)';
-      case 'info': return 'var(--color-info)';
-      case 'warn': return 'var(--color-warning)';
-      case 'error': return 'var(--color-error)';
-      default: return 'var(--color-text-primary)';
+    switch (level) {
+      case 'debug':
+        return 'var(--color-text-secondary)';
+      case 'info':
+        return 'var(--color-info)';
+      case 'warn':
+        return 'var(--color-warning)';
+      case 'error':
+        return 'var(--color-error)';
+      default:
+        return 'var(--color-text-primary)';
     }
   }
 
   // Log level backgrounds
   function getLevelBackground(level) {
-    switch(level) {
-      case 'debug': return 'rgba(156, 163, 175, 0.1)';
-      case 'info': return 'rgba(59, 130, 246, 0.1)';
-      case 'warn': return 'rgba(245, 158, 11, 0.1)';
-      case 'error': return 'rgba(239, 68, 68, 0.1)';
-      default: return 'rgba(255, 255, 255, 0.05)';
+    switch (level) {
+      case 'debug':
+        return 'rgba(156, 163, 175, 0.1)';
+      case 'info':
+        return 'rgba(59, 130, 246, 0.1)';
+      case 'warn':
+        return 'rgba(245, 158, 11, 0.1)';
+      case 'error':
+        return 'rgba(239, 68, 68, 0.1)';
+      default:
+        return 'rgba(255, 255, 255, 0.05)';
     }
   }
 
@@ -73,7 +83,7 @@
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
-      fractionalSecondDigits: 3
+      fractionalSecondDigits: 3,
     });
   }
 
@@ -84,7 +94,9 @@
 
   // Clear ALL logs from database
   async function handleClearDatabase() {
-    const confirmed = confirm('PERMANENTLY DELETE all logs from the database?\n\nThis cannot be undone.');
+    const confirmed = confirm(
+      'PERMANENTLY DELETE all logs from the database?\n\nThis cannot be undone.'
+    );
     if (!confirmed) return;
 
     isClearing = true;
@@ -138,8 +150,23 @@
 
 <!-- Log Viewer Modal -->
 {#if isOpen}
-  <div class="log-modal-overlay" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) isOpen = false; }} onkeydown={(e) => { if (e.key === 'Escape') isOpen = false; }}>
-    <div class="log-modal" role="dialog" aria-modal="true" tabindex="-1" onkeydown={(e) => e.key === 'Escape' && (isOpen = false)}>
+  <div
+    class="log-modal-overlay"
+    role="presentation"
+    onclick={e => {
+      if (e.target === e.currentTarget) isOpen = false;
+    }}
+    onkeydown={e => {
+      if (e.key === 'Escape') isOpen = false;
+    }}
+  >
+    <div
+      class="log-modal"
+      role="dialog"
+      aria-modal="true"
+      tabindex="-1"
+      onkeydown={e => e.key === 'Escape' && (isOpen = false)}
+    >
       <div class="log-header">
         <div class="log-title">
           <h2>Log Viewer</h2>
@@ -159,11 +186,18 @@
           <button
             class="control-btn"
             class:active={showFilters}
-            onclick={() => showFilters = !showFilters}
+            onclick={() => (showFilters = !showFilters)}
             aria-label="Toggle filters"
             title="Toggle filters"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
               <polygon points="22,3 2,3 10,12.46 10,19 14,21 14,12.46 22,3"></polygon>
             </svg>
           </button>
@@ -175,7 +209,14 @@
             aria-label="Auto-scroll to bottom"
             title="Auto-scroll to bottom"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
               <path d="M12 5v14M5 12l7 7 7-7"></path>
             </svg>
           </button>
@@ -188,13 +229,30 @@
             title="Delete ALL logs from database"
           >
             {#if isClearing}
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin">
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                class="spin"
+              >
                 <circle cx="12" cy="12" r="10"></circle>
               </svg>
             {:else}
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
                 <polyline points="3,6 5,6 21,6"></polyline>
-                <path d="m19,6v14a2,2 0 0,1 -2,2H7a2,2 0 0,1 -2,-2V6m3,0V4a2,2 0 0,1 2,-2h4a2,2 0 0,1 2,2v2"></path>
+                <path
+                  d="m19,6v14a2,2 0 0,1 -2,2H7a2,2 0 0,1 -2,-2V6m3,0V4a2,2 0 0,1 2,-2h4a2,2 0 0,1 2,2v2"
+                ></path>
                 <line x1="10" y1="11" x2="10" y2="17"></line>
                 <line x1="14" y1="11" x2="14" y2="17"></line>
               </svg>
@@ -209,11 +267,26 @@
             title="Export logs"
           >
             {#if isExporting}
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin">
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                class="spin"
+              >
                 <circle cx="12" cy="12" r="10"></circle>
               </svg>
             {:else}
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                 <polyline points="7,10 12,15 17,10"></polyline>
                 <line x1="12" y1="15" x2="12" y2="3"></line>
@@ -221,8 +294,15 @@
             {/if}
           </button>
 
-          <button class="close-btn" aria-label="Close log viewer" onclick={() => isOpen = false}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <button class="close-btn" aria-label="Close log viewer" onclick={() => (isOpen = false)}>
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
               <line x1="18" y1="6" x2="6" y2="18"></line>
               <line x1="6" y1="6" x2="18" y2="18"></line>
             </svg>
@@ -239,7 +319,7 @@
               id="log-search"
               type="text"
               bind:value={searchQuery}
-              oninput={(e) => logsStore.setSearchQuery(e.target.value)}
+              oninput={e => logsStore.setSearchQuery(e.target.value)}
               placeholder="Search logs..."
               class="search-input"
             />
@@ -250,7 +330,7 @@
             <select
               id="log-level"
               bind:value={levelFilter}
-              onchange={(e) => logsStore.setLevelFilter(e.target.value)}
+              onchange={e => logsStore.setLevelFilter(e.target.value)}
               class="filter-select"
             >
               <option value="all">All Levels</option>
@@ -266,7 +346,7 @@
             <select
               id="log-device"
               bind:value={deviceFilter}
-              onchange={(e) => logsStore.setDeviceFilter(e.target.value)}
+              onchange={e => logsStore.setDeviceFilter(e.target.value)}
               class="filter-select"
             >
               <option value="all">All Devices</option>
@@ -299,7 +379,15 @@
             <div class="load-more-container">
               {#if isQuerying}
                 <div class="loading-indicator">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin">
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    class="spin"
+                  >
                     <circle cx="12" cy="12" r="10"></circle>
                   </svg>
                   <span>Loading...</span>
@@ -343,7 +431,9 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+    box-shadow:
+      0 20px 25px -5px rgba(0, 0, 0, 0.1),
+      0 10px 10px -5px rgba(0, 0, 0, 0.04);
   }
 
   .log-header {
@@ -520,8 +610,12 @@
   }
 
   @keyframes spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   /* Load more container */

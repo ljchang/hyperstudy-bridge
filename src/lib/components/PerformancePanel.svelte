@@ -41,7 +41,7 @@
       avgLatencyMs: dev.avg_latency_ns / 1_000_000,
       p95LatencyMs: dev.p95_latency_ns / 1_000_000,
       p99LatencyMs: dev.p99_latency_ns / 1_000_000,
-      successRatePercent: (dev.connection_success_rate * 100).toFixed(1)
+      successRatePercent: (dev.connection_success_rate * 100).toFixed(1),
     }));
   });
 
@@ -147,8 +147,22 @@
 
 <!-- Performance Panel Modal -->
 {#if isOpen}
-  <div class="perf-modal-overlay" role="presentation" onclick={() => isOpen = false} onkeydown={(e) => { if (e.key === 'Escape') isOpen = false; }}>
-    <div class="perf-modal" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === 'Escape' && (isOpen = false)}>
+  <div
+    class="perf-modal-overlay"
+    role="presentation"
+    onclick={() => (isOpen = false)}
+    onkeydown={e => {
+      if (e.key === 'Escape') isOpen = false;
+    }}
+  >
+    <div
+      class="perf-modal"
+      role="dialog"
+      aria-modal="true"
+      tabindex="-1"
+      onclick={e => e.stopPropagation()}
+      onkeydown={e => e.key === 'Escape' && (isOpen = false)}
+    >
       <div class="perf-header">
         <div class="perf-title">
           <h2>Performance Monitor</h2>
@@ -165,7 +179,15 @@
             title="Refresh metrics"
             aria-label="Refresh metrics"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class:spin={isLoading}>
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              class:spin={isLoading}
+            >
               <polyline points="23 4 23 10 17 10"></polyline>
               <polyline points="1 20 1 14 7 14"></polyline>
               <path d="m20.49 9A9 9 0 0 0 5.64 5.64l1.27 1.27a7 7 0 0 1 11.85 1.09"></path>
@@ -179,14 +201,34 @@
             title="Reset all metrics"
             aria-label="Reset all metrics"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
               <polyline points="3,6 5,6 21,6"></polyline>
-              <path d="m19,6v14a2,2 0 0,1 -2,2H7a2,2 0 0,1 -2,-2V6m3,0V4a2,2 0 0,1 2,-2h4a2,2 0 0,1 2,2v2"></path>
+              <path
+                d="m19,6v14a2,2 0 0,1 -2,2H7a2,2 0 0,1 -2,-2V6m3,0V4a2,2 0 0,1 2,-2h4a2,2 0 0,1 2,2v2"
+              ></path>
             </svg>
           </button>
 
-          <button class="close-btn" aria-label="Close performance panel" onclick={() => isOpen = false}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <button
+            class="close-btn"
+            aria-label="Close performance panel"
+            onclick={() => (isOpen = false)}
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
               <line x1="18" y1="6" x2="6" y2="18"></line>
               <line x1="6" y1="6" x2="18" y2="18"></line>
             </svg>
@@ -309,7 +351,9 @@
                         </div>
                         <div class="metric-row">
                           <span class="label">Errors:</span>
-                          <span class="value" class:error-value={device.errors > 0}>{device.errors}</span>
+                          <span class="value" class:error-value={device.errors > 0}
+                            >{device.errors}</span
+                          >
                         </div>
                       </div>
 
@@ -374,7 +418,9 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+    box-shadow:
+      0 20px 25px -5px rgba(0, 0, 0, 0.1),
+      0 10px 10px -5px rgba(0, 0, 0, 0.04);
   }
 
   .perf-header {
@@ -486,7 +532,8 @@
     color: white;
   }
 
-  .loading, .empty-state {
+  .loading,
+  .empty-state {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -674,8 +721,12 @@
   }
 
   @keyframes spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   /* Scrollbar styling */

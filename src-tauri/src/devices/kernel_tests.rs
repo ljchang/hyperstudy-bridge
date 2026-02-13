@@ -830,7 +830,10 @@ mod mock_server_tests {
         let parsed: serde_json::Value = serde_json::from_slice(json_payload).unwrap();
 
         // id should have been auto-injected as 1
-        assert_eq!(parsed["id"], 1, "send_event should inject id=1 when missing");
+        assert_eq!(
+            parsed["id"], 1,
+            "send_event should inject id=1 when missing"
+        );
         assert_eq!(parsed["timestamp"], 1700000000000000_i64);
         assert_eq!(parsed["event"], "start_experiment");
         assert_eq!(parsed["value"], "1");

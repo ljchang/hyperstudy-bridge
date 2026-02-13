@@ -7,7 +7,7 @@ vi.mock('../../services/tauri.js', () => ({
     sendTtlPulse: vi.fn(),
     setupEventListeners: vi.fn(),
     cleanupEventListeners: vi.fn(),
-  }
+  },
 }));
 
 // Helper to get the latest WebSocket instance
@@ -117,7 +117,7 @@ describe('WebSocket Store', () => {
       const message = {
         type: 'status',
         device: 'ttl',
-        status: 'connected'
+        status: 'connected',
       };
 
       wsInstance.onmessage({ data: JSON.stringify(message) });
@@ -131,17 +131,14 @@ describe('WebSocket Store', () => {
       wsInstance.onmessage({ data: 'invalid json' });
 
       // Should not crash and should log error
-      expect(console.error).toHaveBeenCalledWith(
-        'Failed to parse message:',
-        expect.any(Error)
-      );
+      expect(console.error).toHaveBeenCalledWith('Failed to parse message:', expect.any(Error));
     });
 
     it('processes status messages', () => {
       const message = {
         type: 'status',
         device: 'kernel',
-        status: 'connecting'
+        status: 'connecting',
       };
 
       wsInstance.onmessage({ data: JSON.stringify(message) });
@@ -157,7 +154,7 @@ describe('WebSocket Store', () => {
       const message = {
         type: 'error',
         device: 'pupil',
-        payload: 'Device not found'
+        payload: 'Device not found',
       };
 
       wsInstance.onmessage({ data: JSON.stringify(message) });
@@ -170,12 +167,12 @@ describe('WebSocket Store', () => {
     it('processes query result messages', () => {
       const deviceList = [
         { id: 'ttl', name: 'TTL Generator', status: 'connected' },
-        { id: 'kernel', name: 'Kernel Flow2', status: 'disconnected' }
+        { id: 'kernel', name: 'Kernel Flow2', status: 'disconnected' },
       ];
 
       const message = {
         type: 'query_result',
-        payload: deviceList
+        payload: deviceList,
       };
 
       wsInstance.onmessage({ data: JSON.stringify(message) });
@@ -193,7 +190,7 @@ describe('WebSocket Store', () => {
         device: 'ttl',
         id: 'test-id',
         status: 'connected',
-        timestamp: Date.now()
+        timestamp: Date.now(),
       };
 
       // Manually add callback to simulate pending request
@@ -208,7 +205,7 @@ describe('WebSocket Store', () => {
     it('logs unknown message types', () => {
       const message = {
         type: 'unknown',
-        payload: 'test'
+        payload: 'test',
       };
 
       wsInstance.onmessage({ data: JSON.stringify(message) });
@@ -239,15 +236,9 @@ describe('WebSocket Store', () => {
         // Don't await to avoid timeout in test
         websocketStore.connectDevice(deviceId, config).catch(() => {});
 
-        expect(wsInstance.send).toHaveBeenCalledWith(
-          expect.stringContaining('"type":"command"')
-        );
-        expect(wsInstance.send).toHaveBeenCalledWith(
-          expect.stringContaining('"device":"ttl"')
-        );
-        expect(wsInstance.send).toHaveBeenCalledWith(
-          expect.stringContaining('"action":"connect"')
-        );
+        expect(wsInstance.send).toHaveBeenCalledWith(expect.stringContaining('"type":"command"'));
+        expect(wsInstance.send).toHaveBeenCalledWith(expect.stringContaining('"device":"ttl"'));
+        expect(wsInstance.send).toHaveBeenCalledWith(expect.stringContaining('"action":"connect"'));
       });
 
       it('resolves promise on successful acknowledgment', async () => {
@@ -261,7 +252,7 @@ describe('WebSocket Store', () => {
           device: 'ttl',
           id: sentMessage.id,
           status: 'connected',
-          timestamp: Date.now()
+          timestamp: Date.now(),
         };
 
         wsInstance.onmessage({ data: JSON.stringify(statusMessage) });
@@ -280,7 +271,7 @@ describe('WebSocket Store', () => {
           device: 'ttl',
           id: sentMessage.id,
           message: 'Connection failed',
-          timestamp: Date.now()
+          timestamp: Date.now(),
         };
 
         wsInstance.onmessage({ data: JSON.stringify(errorMessage) });
@@ -304,8 +295,9 @@ describe('WebSocket Store', () => {
       it('rejects when WebSocket is not connected', async () => {
         wsInstance.readyState = WebSocket.CLOSED;
 
-        await expect(websocketStore.connectDevice('ttl', {}))
-          .rejects.toThrow('Failed to send command');
+        await expect(websocketStore.connectDevice('ttl', {})).rejects.toThrow(
+          'Failed to send command'
+        );
       });
     });
 
@@ -328,7 +320,7 @@ describe('WebSocket Store', () => {
           device: 'ttl',
           id: sentMessage.id,
           status: 'disconnected',
-          timestamp: Date.now()
+          timestamp: Date.now(),
         };
 
         wsInstance.onmessage({ data: JSON.stringify(statusMessage) });
@@ -342,7 +334,7 @@ describe('WebSocket Store', () => {
         const { tauriService } = await import('../../services/tauri.js');
         tauriService.sendTtlPulse.mockResolvedValue({
           success: true,
-          latency: 0.5
+          latency: 0.5,
         });
 
         const result = await websocketStore.sendCommand('ttl', 'PULSE');
@@ -354,9 +346,7 @@ describe('WebSocket Store', () => {
       it('uses WebSocket for other device commands', async () => {
         websocketStore.sendCommand('kernel', 'START_RECORDING').catch(() => {});
 
-        expect(wsInstance.send).toHaveBeenCalledWith(
-          expect.stringContaining('"action":"send"')
-        );
+        expect(wsInstance.send).toHaveBeenCalledWith(expect.stringContaining('"action":"send"'));
         expect(wsInstance.send).toHaveBeenCalledWith(
           expect.stringContaining('"command":"START_RECORDING"')
         );
@@ -372,7 +362,7 @@ describe('WebSocket Store', () => {
           device: 'kernel',
           id: sentMessage.id,
           message: 'Unknown command',
-          timestamp: Date.now()
+          timestamp: Date.now(),
         };
 
         wsInstance.onmessage({ data: JSON.stringify(errorMessage) });
@@ -393,7 +383,7 @@ describe('WebSocket Store', () => {
       const message = {
         type: 'status',
         device: 'kernel',
-        status: 'connected'
+        status: 'connected',
       };
 
       const wsInstance = getWebSocketInstance(0);
@@ -410,7 +400,7 @@ describe('WebSocket Store', () => {
       const message = {
         type: 'status',
         device: 'unknown-device',
-        status: 'connected'
+        status: 'connected',
       };
 
       const wsInstance = getWebSocketInstance(0);
@@ -439,7 +429,7 @@ describe('WebSocket Store', () => {
       const message = {
         type: 'status',
         device: 'ttl',
-        status: 'connected'
+        status: 'connected',
       };
 
       wsInstance.onmessage({ data: JSON.stringify(message) });
@@ -457,7 +447,7 @@ describe('WebSocket Store', () => {
       const message = {
         type: 'status',
         device: 'ttl',
-        status: 'CONNECTED' // Uppercase
+        status: 'CONNECTED', // Uppercase
       };
 
       wsInstance.onmessage({ data: JSON.stringify(message) });
@@ -475,7 +465,7 @@ describe('WebSocket Store', () => {
       const message = {
         type: 'status',
         device: 'ttl',
-        status: 'connected'
+        status: 'connected',
       };
       wsInstance.onmessage({ data: JSON.stringify(message) });
 
@@ -496,7 +486,7 @@ describe('WebSocket Store', () => {
       const message = {
         type: 'status',
         device: 'ttl',
-        status: 'connected'
+        status: 'connected',
       };
       wsInstance.onmessage({ data: JSON.stringify(message) });
 
@@ -577,7 +567,7 @@ describe('WebSocket Store', () => {
       const message = {
         type: 'data',
         device: 'nonexistent',
-        payload: 'test data'
+        payload: 'test data',
       };
 
       // Should not crash when no handlers are registered
@@ -605,7 +595,7 @@ describe('WebSocket Store', () => {
         const message = {
           type: 'status',
           device: `device-${i}`,
-          status: 'connected'
+          status: 'connected',
         };
         wsInstance.onmessage({ data: JSON.stringify(message) });
       }

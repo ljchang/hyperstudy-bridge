@@ -258,9 +258,7 @@ describe('AddDeviceModal', () => {
       // 3. Modal closes (isOpen = false)
       // Since the modal closes, we verify through the onAdd callback instead
       expect(mockProps.onAdd).toHaveBeenCalledWith(
-        expect.arrayContaining([
-          expect.objectContaining({ id: 'ttl' })
-        ])
+        expect.arrayContaining([expect.objectContaining({ id: 'ttl' })])
       );
     });
 

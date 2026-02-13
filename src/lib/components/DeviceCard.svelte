@@ -45,22 +45,32 @@
   }
 
   function getStatusColor(status) {
-    switch(status) {
-      case 'connected': return 'var(--color-success)';
-      case 'connecting': return 'var(--color-warning)';
-      case 'disconnected': return 'var(--color-text-disabled)';
-      case 'error': return 'var(--color-error)';
-      default: return 'var(--color-text-disabled)';
+    switch (status) {
+      case 'connected':
+        return 'var(--color-success)';
+      case 'connecting':
+        return 'var(--color-warning)';
+      case 'disconnected':
+        return 'var(--color-text-disabled)';
+      case 'error':
+        return 'var(--color-error)';
+      default:
+        return 'var(--color-text-disabled)';
     }
   }
 
   function getStatusLabel(status) {
-    switch(status) {
-      case 'connected': return 'Connected';
-      case 'connecting': return 'Connecting...';
-      case 'disconnected': return 'Disconnected';
-      case 'error': return 'Error';
-      default: return 'Unknown';
+    switch (status) {
+      case 'connected':
+        return 'Connected';
+      case 'connecting':
+        return 'Connecting...';
+      case 'disconnected':
+        return 'Disconnected';
+      case 'error':
+        return 'Error';
+      default:
+        return 'Unknown';
     }
   }
 
@@ -184,14 +194,21 @@
         title="Remove device"
         aria-label="Remove device"
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
           <line x1="18" y1="6" x2="6" y2="18"></line>
           <line x1="6" y1="6" x2="18" y2="18"></line>
         </svg>
       </button>
     </div>
   </div>
-  
+
   <div class="device-info">
     <div class="info-row">
       <span class="label">Type:</span>
@@ -206,7 +223,7 @@
       <span class="value status-text">{getStatusLabel(device.status)}</span>
     </div>
   </div>
-  
+
   <div class="device-config">
     {#if device.id === 'ttl'}
       <div class="config-row port-selector">
@@ -215,13 +232,14 @@
           <select
             class="port-select"
             value={device.config.port || ''}
-            onchange={(e) => updateTtlPort(e.target.value)}
+            onchange={e => updateTtlPort(e.target.value)}
             disabled={device.status === 'connected' || device.status === 'connecting'}
           >
             <option value="">Select device...</option>
             {#each detectedTtlDevices as ttlDevice}
               <option value={ttlDevice.port}>
-                {ttlDevice.port} {ttlDevice.serial_number !== 'Unknown' ? `(S/N: ${ttlDevice.serial_number})` : ''}
+                {ttlDevice.port}
+                {ttlDevice.serial_number !== 'Unknown' ? `(S/N: ${ttlDevice.serial_number})` : ''}
               </option>
             {/each}
           </select>
@@ -251,7 +269,7 @@
       </div>
     {/if}
   </div>
-  
+
   <div class="device-actions">
     <button
       class="action-btn connect-btn"
@@ -261,19 +279,9 @@
       {device.status === 'connected' ? 'Disconnect' : 'Connect'}
     </button>
     {#if device.id === 'ttl' && device.status === 'connected'}
-      <button
-        class="action-btn pulse-btn"
-        onclick={sendTestPulse}
-      >
-        Send Pulse
-      </button>
+      <button class="action-btn pulse-btn" onclick={sendTestPulse}> Send Pulse </button>
     {/if}
-    <button
-      class="action-btn config-btn"
-      onclick={configureDevice}
-    >
-      Configure
-    </button>
+    <button class="action-btn config-btn" onclick={configureDevice}> Configure </button>
   </div>
 </div>
 
@@ -281,7 +289,7 @@
   bind:isOpen={showConfigModal}
   {device}
   onSave={handleConfigSave}
-  onClose={() => showConfigModal = false}
+  onClose={() => (showConfigModal = false)}
 />
 
 <style>
@@ -292,13 +300,13 @@
     border: 1px solid var(--color-border);
     transition: all 0.2s;
   }
-  
+
   .device-card:hover {
     background: var(--color-surface-elevated);
     border-color: var(--color-border-hover);
     transform: translateY(-2px);
   }
-  
+
   .device-header {
     display: flex;
     justify-content: space-between;
@@ -307,14 +315,14 @@
     padding-bottom: 0.75rem;
     border-bottom: 1px solid var(--color-border);
   }
-  
+
   h3 {
     margin: 0;
     font-size: 1.125rem;
     font-weight: 600;
     color: var(--color-text-primary);
   }
-  
+
   .header-actions {
     display: flex;
     align-items: center;
@@ -354,40 +362,43 @@
   }
 
   @keyframes pulse {
-    0%, 100% {
+    0%,
+    100% {
       opacity: 1;
     }
     50% {
       opacity: 0.5;
     }
   }
-  
-  .device-info, .device-config {
+
+  .device-info,
+  .device-config {
     margin-bottom: 1rem;
   }
-  
-  .info-row, .config-row {
+
+  .info-row,
+  .config-row {
     display: flex;
     justify-content: space-between;
     padding: 0.25rem 0;
     font-size: 0.875rem;
   }
-  
+
   .label {
     color: var(--color-text-secondary);
     font-weight: 500;
   }
-  
+
   .value {
     color: var(--color-text-primary);
     font-family: 'SF Mono', Monaco, monospace;
     font-size: 0.813rem;
   }
-  
+
   .status-text {
     font-weight: 500;
   }
-  
+
   .device-config {
     padding: 0.75rem;
     background: var(--color-background);
@@ -396,12 +407,12 @@
     border: 1px solid var(--color-border);
     overflow: hidden;
   }
-  
+
   .device-actions {
     display: flex;
     gap: 0.75rem;
   }
-  
+
   .action-btn {
     flex: 1;
     padding: 0.5rem;
@@ -412,27 +423,27 @@
     cursor: pointer;
     transition: all 0.2s;
   }
-  
+
   .action-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
-  
+
   .connect-btn {
     background: var(--color-primary);
     color: white;
   }
-  
+
   .connect-btn:hover:not(:disabled) {
     background: var(--color-primary-hover);
   }
-  
+
   .config-btn {
     background: var(--color-surface-elevated);
     color: var(--color-text-secondary);
     border: 1px solid var(--color-border);
   }
-  
+
   .config-btn:hover {
     background: rgba(255, 255, 255, 0.1);
     color: var(--color-text-primary);

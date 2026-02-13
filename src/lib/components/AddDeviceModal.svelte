@@ -12,22 +12,22 @@
       name: 'TTL Pulse Generator',
       type: 'Adafruit RP2040',
       connection: 'USB Serial',
-      config: { port: '/dev/cu.usbmodem101' } // Fallback default
+      config: { port: '/dev/cu.usbmodem101' }, // Fallback default
     },
     {
       id: 'kernel',
       name: 'Kernel Flow2',
       type: 'fNIRS',
       connection: 'TCP Socket',
-      config: { ip: '127.0.0.1', port: 6767 }
+      config: { ip: '127.0.0.1', port: 6767 },
     },
     {
       id: 'pupil',
       name: 'Pupil Labs Neon',
       type: 'Eye Tracker',
       connection: 'WebSocket',
-      config: { url: 'localhost:8081' }
-    }
+      config: { url: 'localhost:8081' },
+    },
   ]);
 
   let selectedDevices = $state(new Set());
@@ -101,7 +101,14 @@
 
 {#if isOpen}
   <div class="modal-overlay" role="presentation" onclick={handleClose} onkeydown={handleKeydown}>
-    <div class="modal" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === 'Escape' && handleClose()}>
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      tabindex="-1"
+      onclick={e => e.stopPropagation()}
+      onkeydown={e => e.key === 'Escape' && handleClose()}
+    >
       <div class="modal-header">
         <h2>Add Devices</h2>
         <button class="close-btn" onclick={handleClose}>×</button>
@@ -109,7 +116,8 @@
 
       <div class="modal-body">
         <p class="instructions">
-          Click to select a device. Use <kbd>Cmd+Click</kbd> (Mac) or <kbd>Ctrl+Click</kbd> (Windows/Linux) to select multiple devices.
+          Click to select a device. Use <kbd>Cmd+Click</kbd> (Mac) or <kbd>Ctrl+Click</kbd> (Windows/Linux)
+          to select multiple devices.
         </p>
 
         <div class="device-list">
@@ -120,8 +128,8 @@
               role="button"
               tabindex="0"
               aria-pressed={selectedDevices.has(device.id)}
-              onclick={(e) => toggleDevice(device.id, e)}
-              onkeydown={(e) => {
+              onclick={e => toggleDevice(device.id, e)}
+              onkeydown={e => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
                   toggleDevice(device.id, e);
@@ -138,7 +146,13 @@
               <div class="device-check">
                 {#if selectedDevices.has(device.id)}
                   <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                    <path d="M7 10L9 12L13 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path
+                      d="M7 10L9 12L13 8"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
                   </svg>
                 {/if}
               </div>
@@ -149,11 +163,7 @@
 
       <div class="modal-footer">
         <button class="cancel-btn" onclick={handleClose}>Cancel</button>
-        <button
-          class="add-btn"
-          onclick={handleAdd}
-          disabled={selectedDevices.size === 0}
-        >
+        <button class="add-btn" onclick={handleAdd} disabled={selectedDevices.size === 0}>
           Add {selectedDevices.size > 0 ? `(${selectedDevices.size})` : ''}
         </button>
       </div>
@@ -177,8 +187,12 @@
   }
 
   @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
   }
 
   .modal {

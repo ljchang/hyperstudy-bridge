@@ -6,13 +6,13 @@
     connecting: { color: 'var(--color-warning)', label: 'Connecting...' },
     disconnected: { color: 'var(--color-text-disabled)', label: 'Disconnected' },
     error: { color: 'var(--color-error)', label: 'Error' },
-    ready: { color: 'var(--color-primary)', label: 'Ready' }
+    ready: { color: 'var(--color-primary)', label: 'Ready' },
   };
 
   const sizeMap = {
     small: 8,
     medium: 10,
-    large: 12
+    large: 12,
   };
 
   let config = $derived(statusConfig[status] || statusConfig.disconnected);
@@ -40,7 +40,7 @@
     backdrop-filter: blur(10px);
     border: 1px solid var(--color-border);
   }
-  
+
   .status-light {
     border-radius: 50%;
     transition: all 0.3s ease;
@@ -51,7 +51,8 @@
   }
 
   @keyframes pulse {
-    0%, 100% {
+    0%,
+    100% {
       opacity: 1;
       transform: scale(1);
     }
@@ -60,7 +61,7 @@
       transform: scale(0.9);
     }
   }
-  
+
   .status-label {
     font-size: 0.875rem;
     font-weight: 500;

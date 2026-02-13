@@ -212,19 +212,24 @@ impl KernelDevice {
         let addr = format!("{}:{}", self.config.ip_address, self.config.port);
         let connection_timeout = Duration::from_millis(self.config.connection_timeout_ms);
 
-        debug!(device = "kernel", "Attempting to connect to Kernel Flow2 at {}", addr);
+        debug!(
+            device = "kernel",
+            "Attempting to connect to Kernel Flow2 at {}", addr
+        );
 
         match timeout(connection_timeout, TcpStream::connect(&addr)).await {
             Ok(Ok(socket)) => {
                 info!(
                     device = "kernel",
-                    "Successfully established connection to Kernel Flow2 at {}",
-                    addr
+                    "Successfully established connection to Kernel Flow2 at {}", addr
                 );
                 Ok(socket)
             }
             Ok(Err(e)) => {
-                error!(device = "kernel", "TCP connection failed to {}: {}", addr, e);
+                error!(
+                    device = "kernel",
+                    "TCP connection failed to {}: {}", addr, e
+                );
                 Err(DeviceError::ConnectionFailed(format!(
                     "TCP connection failed: {}",
                     e
@@ -233,8 +238,7 @@ impl KernelDevice {
             Err(_) => {
                 error!(
                     device = "kernel",
-                    "Connection attempt to {} timed out after {:?}",
-                    addr, connection_timeout
+                    "Connection attempt to {} timed out after {:?}", addr, connection_timeout
                 );
                 Err(DeviceError::Timeout)
             }
@@ -261,7 +265,9 @@ impl KernelDevice {
         warn!(
             device = "kernel",
             "Reconnection attempt {} of {} for Kernel Flow2, waiting {:?}",
-            self.reconnect_attempts, self.config.max_reconnect_attempts, backoff_delay
+            self.reconnect_attempts,
+            self.config.max_reconnect_attempts,
+            backoff_delay
         );
 
         sleep(backoff_delay).await;
@@ -279,8 +285,7 @@ impl KernelDevice {
             Err(e) => {
                 warn!(
                     device = "kernel",
-                    "Reconnection attempt {} failed: {}",
-                    self.reconnect_attempts, e
+                    "Reconnection attempt {} failed: {}", self.reconnect_attempts, e
                 );
                 Err(e)
             }
@@ -364,8 +369,7 @@ impl Device for KernelDevice {
     async fn connect(&mut self) -> Result<(), DeviceError> {
         info!(
             device = "kernel",
-            "Connecting to Kernel Flow2 at {}:{}",
-            self.config.ip_address, self.config.port
+            "Connecting to Kernel Flow2 at {}:{}", self.config.ip_address, self.config.port
         );
         self.status = DeviceStatus::Connecting;
         self.reconnect_attempts = 0; // Reset reconnection attempts on new connection
@@ -382,7 +386,10 @@ impl Device for KernelDevice {
             }
             Err(e) => {
                 self.status = DeviceStatus::Error;
-                error!(device = "kernel", "Failed to connect to Kernel Flow2: {}", e);
+                error!(
+                    device = "kernel",
+                    "Failed to connect to Kernel Flow2: {}", e
+                );
                 Err(e)
             }
         }
@@ -397,7 +404,10 @@ impl Device for KernelDevice {
             match timeout(shutdown_timeout, socket.shutdown()).await {
                 Ok(Ok(_)) => debug!(device = "kernel", "Socket shutdown completed gracefully"),
                 Ok(Err(e)) => warn!(device = "kernel", "Error during graceful shutdown: {}", e),
-                Err(_) => warn!(device = "kernel", "Socket shutdown timed out after {:?}", shutdown_timeout),
+                Err(_) => warn!(
+                    device = "kernel",
+                    "Socket shutdown timed out after {:?}", shutdown_timeout
+                ),
             }
         }
 
@@ -414,7 +424,10 @@ impl Device for KernelDevice {
     async fn send(&mut self, data: &[u8]) -> Result<(), DeviceError> {
         // Check connection health before sending
         if !self.is_connection_healthy() {
-            warn!(device = "kernel", "Connection unhealthy, attempting reconnection before send");
+            warn!(
+                device = "kernel",
+                "Connection unhealthy, attempting reconnection before send"
+            );
             if self.device_config.auto_reconnect {
                 self.attempt_reconnect().await?;
             } else {
@@ -510,7 +523,10 @@ impl Device for KernelDevice {
     async fn receive(&mut self) -> Result<Vec<u8>, DeviceError> {
         // Check connection health before receiving
         if !self.is_connection_healthy() {
-            warn!(device = "kernel", "Connection unhealthy, attempting reconnection before receive");
+            warn!(
+                device = "kernel",
+                "Connection unhealthy, attempting reconnection before receive"
+            );
             if self.device_config.auto_reconnect {
                 self.attempt_reconnect().await?;
             } else {
@@ -536,7 +552,10 @@ impl Device for KernelDevice {
             match read_result {
                 Ok(Ok(0)) => {
                     // Connection closed by remote
-                    warn!(device = "kernel", "Kernel Flow2 connection closed by remote");
+                    warn!(
+                        device = "kernel",
+                        "Kernel Flow2 connection closed by remote"
+                    );
                     self.status = DeviceStatus::Error;
                     self.socket = None;
                     Err(DeviceError::ConnectionFailed(
@@ -667,8 +686,7 @@ impl Device for KernelDevice {
 
         info!(
             device = "kernel",
-            "Kernel Flow2 device configured: {}:{}",
-            self.config.ip_address, self.config.port
+            "Kernel Flow2 device configured: {}:{}", self.config.ip_address, self.config.port
         );
         Ok(())
     }
@@ -680,7 +698,10 @@ impl Device for KernelDevice {
         if self.socket.is_some() {
             // If auto-reconnect is enabled and connection is unhealthy, try to reconnect
             if !self.is_connection_healthy() && self.device_config.auto_reconnect {
-                warn!(device = "kernel", "Connection health check failed, attempting automatic reconnection");
+                warn!(
+                    device = "kernel",
+                    "Connection health check failed, attempting automatic reconnection"
+                );
                 self.attempt_reconnect().await?;
             }
 
@@ -694,8 +715,7 @@ impl Device for KernelDevice {
     async fn test_connection(&mut self) -> Result<bool, DeviceError> {
         info!(
             device = "kernel",
-            "Testing connection to Kernel Flow2 at {}:{}",
-            self.config.ip_address, self.config.port
+            "Testing connection to Kernel Flow2 at {}:{}", self.config.ip_address, self.config.port
         );
 
         match self.establish_connection().await {
@@ -706,7 +726,10 @@ impl Device for KernelDevice {
                 Ok(true)
             }
             Err(e) => {
-                warn!(device = "kernel", "Kernel Flow2 connection test failed: {}", e);
+                warn!(
+                    device = "kernel",
+                    "Kernel Flow2 connection test failed: {}", e
+                );
                 Ok(false)
             }
         }
@@ -727,13 +750,19 @@ impl Device for KernelDevice {
 
         let id = if let Some(id_val) = event.get("id") {
             id_val.as_i64().unwrap_or_else(|| {
-                warn!(device = "kernel", "Event has non-integer 'id' field, auto-assigning id={}", self.next_event_id);
+                warn!(
+                    device = "kernel",
+                    "Event has non-integer 'id' field, auto-assigning id={}", self.next_event_id
+                );
                 let id = self.next_event_id;
                 self.next_event_id += 1;
                 id
             })
         } else {
-            warn!(device = "kernel", "Event missing 'id' field, auto-assigning id={}", self.next_event_id);
+            warn!(
+                device = "kernel",
+                "Event missing 'id' field, auto-assigning id={}", self.next_event_id
+            );
             let id = self.next_event_id;
             self.next_event_id += 1;
             id

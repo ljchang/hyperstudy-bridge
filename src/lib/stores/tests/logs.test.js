@@ -24,7 +24,7 @@ import {
   setDeviceFilter,
   setSearchQuery,
   setAutoScroll,
-  setMaxLogs
+  setMaxLogs,
 } from '../logs.svelte.js';
 
 // Mock Tauri service
@@ -365,7 +365,7 @@ describe('Logs Store', () => {
         message: 'Unknown level',
         timestamp: new Date(),
         device: null,
-        source: 'test'
+        source: 'test',
       });
 
       const counts = getLogCounts();
@@ -384,20 +384,20 @@ describe('Logs Store', () => {
           message: 'Backend message 1',
           timestamp: new Date().toISOString(),
           device: 'ttl',
-          source: 'backend'
+          source: 'backend',
         },
         {
           level: 'error',
           message: 'Backend error',
           timestamp: new Date().toISOString(),
           device: null,
-          source: 'backend'
-        }
+          source: 'backend',
+        },
       ];
 
       tauriService.getLogs.mockResolvedValue({
         success: true,
-        data: mockBackendLogs
+        data: mockBackendLogs,
       });
 
       await fetchHistoricalLogs();
@@ -430,12 +430,12 @@ describe('Logs Store', () => {
         level: 'info',
         message: 'Duplicate message',
         timestamp: timestamp,
-        device: 'ttl'
+        device: 'ttl',
       };
 
       tauriService.getLogs.mockResolvedValue({
         success: true,
-        data: [mockLog, mockLog] // Same log twice
+        data: [mockLog, mockLog], // Same log twice
       });
 
       await fetchHistoricalLogs();
@@ -452,12 +452,12 @@ describe('Logs Store', () => {
         level: 'info',
         message: `Backend message ${i}`,
         timestamp: new Date(Date.now() + i).toISOString(),
-        device: null
+        device: null,
       }));
 
       tauriService.getLogs.mockResolvedValue({
         success: true,
-        data: mockLogs
+        data: mockLogs,
       });
 
       await fetchHistoricalLogs();
@@ -533,7 +533,7 @@ describe('Logs Store', () => {
       mockSave.mockResolvedValue('/tmp/logs.json');
       mockTauriService.exportLogs.mockResolvedValue({
         success: true,
-        data: { path: '/tmp/logs.json' }
+        data: { path: '/tmp/logs.json' },
       });
 
       setLevelFilter('info');
@@ -544,8 +544,8 @@ describe('Logs Store', () => {
         expect.arrayContaining([
           expect.objectContaining({
             level: 'info',
-            message: 'Export message 1'
-          })
+            message: 'Export message 1',
+          }),
         ]),
         '/tmp/logs.json'
       );
@@ -555,7 +555,7 @@ describe('Logs Store', () => {
       mockSave.mockResolvedValue('/tmp/logs.json');
       mockTauriService.exportLogs.mockResolvedValue({
         success: true,
-        data: { path: '/tmp/logs.json' }
+        data: { path: '/tmp/logs.json' },
       });
 
       await exportLogs();
@@ -563,7 +563,7 @@ describe('Logs Store', () => {
       expect(mockSave).toHaveBeenCalledWith(
         expect.objectContaining({
           filters: [{ name: 'JSON Files', extensions: ['json'] }],
-          title: 'Export Logs'
+          title: 'Export Logs',
         })
       );
     });
@@ -581,7 +581,7 @@ describe('Logs Store', () => {
       mockSave.mockResolvedValue('/tmp/logs.json');
       mockTauriService.exportLogs.mockResolvedValue({
         success: true,
-        data: { path: '/tmp/logs.json' }
+        data: { path: '/tmp/logs.json' },
       });
 
       await exportLogs();
@@ -604,8 +604,8 @@ describe('Logs Store', () => {
       await expect(exportLogs()).rejects.toThrow('Export failed');
 
       const logs = getLogs();
-      const errorLog = logs.find(log =>
-        log.message.includes('Failed to export logs') && log.level === 'error'
+      const errorLog = logs.find(
+        log => log.message.includes('Failed to export logs') && log.level === 'error'
       );
       expect(errorLog).toBeDefined();
     });
@@ -614,14 +614,14 @@ describe('Logs Store', () => {
       mockSave.mockResolvedValue('/tmp/logs.json');
       mockTauriService.exportLogs.mockResolvedValue({
         success: true,
-        data: { path: '/tmp/logs.json' }
+        data: { path: '/tmp/logs.json' },
       });
 
       await exportLogs();
 
       const logs = getLogs();
-      const successLog = logs.find(log =>
-        log.message.includes('Logs exported successfully') && log.level === 'info'
+      const successLog = logs.find(
+        log => log.message.includes('Logs exported successfully') && log.level === 'info'
       );
       expect(successLog).toBeDefined();
     });
@@ -630,7 +630,7 @@ describe('Logs Store', () => {
       mockSave.mockResolvedValue('/tmp/logs.json');
       mockTauriService.exportLogs.mockResolvedValue({
         success: false,
-        error: 'Permission denied'
+        error: 'Permission denied',
       });
 
       await expect(exportLogs()).rejects.toThrow('Permission denied');
@@ -641,7 +641,7 @@ describe('Logs Store', () => {
       mockSave.mockResolvedValue('/tmp/logs.json');
       mockTauriService.exportLogs.mockResolvedValue({
         success: true,
-        data: { path: '/tmp/logs.json' }
+        data: { path: '/tmp/logs.json' },
       });
 
       // Should not throw, should fallback to filename only

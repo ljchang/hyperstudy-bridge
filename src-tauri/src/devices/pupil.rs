@@ -184,7 +184,10 @@ impl PupilDevice {
             "127.0.0.1".to_string(),
         ];
 
-        info!(device = "pupil", "Device discovery not yet implemented, returning common IPs");
+        info!(
+            device = "pupil",
+            "Device discovery not yet implemented, returning common IPs"
+        );
         Ok(common_ips)
     }
 
@@ -274,7 +277,10 @@ impl PupilDevice {
 
         self.send(json_str.as_bytes()).await?;
         self.recording = true;
-        info!(device = "pupil", "Started recording with template: {:?}", template);
+        info!(
+            device = "pupil",
+            "Started recording with template: {:?}", template
+        );
         Ok(())
     }
 
@@ -366,7 +372,10 @@ impl PupilDevice {
                         info!(device = "pupil", "Recording stopped confirmation received");
                     }
                     "error" => {
-                        warn!(device = "pupil", "Received error from device: {:?}", msg.payload);
+                        warn!(
+                            device = "pupil",
+                            "Received error from device: {:?}", msg.payload
+                        );
                     }
                     _ => {
                         debug!(device = "pupil", "Unknown message type: {}", msg.msg_type);
@@ -375,7 +384,10 @@ impl PupilDevice {
                 Ok(())
             }
             Err(e) => {
-                debug!(device = "pupil", "Failed to parse message as PupilMessage: {}", e);
+                debug!(
+                    device = "pupil",
+                    "Failed to parse message as PupilMessage: {}", e
+                );
                 // Message might be raw data or different format, not necessarily an error
                 Ok(())
             }
@@ -411,7 +423,10 @@ impl PupilDevice {
 #[async_trait]
 impl Device for PupilDevice {
     async fn connect(&mut self) -> Result<(), DeviceError> {
-        info!(device = "pupil", "Connecting to Pupil Labs Neon at {}", self.device_url);
+        info!(
+            device = "pupil",
+            "Connecting to Pupil Labs Neon at {}", self.device_url
+        );
         self.status = DeviceStatus::Connecting;
         self.connection_retry_count = 0;
 
@@ -449,7 +464,10 @@ impl Device for PupilDevice {
                 Ok(Err(e)) => {
                     self.status = DeviceStatus::Error;
                     self.connection_retry_count += 1;
-                    error!(device = "pupil", "Failed to connect to Pupil Labs Neon: {}", e);
+                    error!(
+                        device = "pupil",
+                        "Failed to connect to Pupil Labs Neon: {}", e
+                    );
 
                     // Auto-retry if enabled and under retry limit
                     if self.config.auto_reconnect && self.connection_retry_count < self.max_retries
@@ -457,7 +475,8 @@ impl Device for PupilDevice {
                         warn!(
                             device = "pupil",
                             "Retrying connection ({}/{})",
-                            self.connection_retry_count, self.max_retries
+                            self.connection_retry_count,
+                            self.max_retries
                         );
                         tokio::time::sleep(tokio::time::Duration::from_millis(
                             self.config.reconnect_interval_ms,
@@ -478,7 +497,8 @@ impl Device for PupilDevice {
                         warn!(
                             device = "pupil",
                             "Retrying connection after timeout ({}/{})",
-                            self.connection_retry_count, self.max_retries
+                            self.connection_retry_count,
+                            self.max_retries
                         );
                         tokio::time::sleep(tokio::time::Duration::from_millis(
                             self.config.reconnect_interval_ms,
@@ -511,8 +531,14 @@ impl Device for PupilDevice {
             let close_timeout = Duration::from_secs(2);
             match timeout(close_timeout, ws.close(None)).await {
                 Ok(Ok(_)) => debug!(device = "pupil", "WebSocket closed gracefully"),
-                Ok(Err(e)) => warn!(device = "pupil", "Error closing WebSocket connection: {}", e),
-                Err(_) => warn!(device = "pupil", "WebSocket close timed out after {:?}", close_timeout),
+                Ok(Err(e)) => warn!(
+                    device = "pupil",
+                    "Error closing WebSocket connection: {}", e
+                ),
+                Err(_) => warn!(
+                    device = "pupil",
+                    "WebSocket close timed out after {:?}", close_timeout
+                ),
             }
         }
 
@@ -524,7 +550,10 @@ impl Device for PupilDevice {
         self.last_pupil_data = None;
         self.connection_retry_count = 0;
 
-        info!(device = "pupil", "Successfully disconnected from Pupil Labs Neon");
+        info!(
+            device = "pupil",
+            "Successfully disconnected from Pupil Labs Neon"
+        );
         Ok(())
     }
 
@@ -572,7 +601,10 @@ impl Device for PupilDevice {
 
                     // Process the message to update internal state
                     if let Err(e) = self.process_message(&text) {
-                        warn!(device = "pupil", "Failed to process received message: {}", e);
+                        warn!(
+                            device = "pupil",
+                            "Failed to process received message: {}", e
+                        );
                     }
 
                     Ok(text.as_bytes().to_vec())
@@ -670,7 +702,10 @@ impl Device for PupilDevice {
     }
 
     fn configure(&mut self, config: DeviceConfig) -> Result<(), DeviceError> {
-        info!(device = "pupil", "Configuring Pupil device with new settings");
+        info!(
+            device = "pupil",
+            "Configuring Pupil device with new settings"
+        );
         self.config = config;
 
         if let Some(custom) = self.config.custom_settings.as_object() {
@@ -705,14 +740,16 @@ impl Device for PupilDevice {
                     self.streaming_config = stream_config;
                     debug!(
                         device = "pupil",
-                        "Updated streaming configuration: {:?}",
-                        self.streaming_config
+                        "Updated streaming configuration: {:?}", self.streaming_config
                     );
                 }
             }
         }
 
-        info!(device = "pupil", "Pupil device configuration updated successfully");
+        info!(
+            device = "pupil",
+            "Pupil device configuration updated successfully"
+        );
         Ok(())
     }
 

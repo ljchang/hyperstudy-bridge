@@ -196,7 +196,10 @@ impl LslDevice {
             return Ok(());
         }
 
-        info!(device = "lsl", "Creating automatic outlets for bridge devices");
+        info!(
+            device = "lsl",
+            "Creating automatic outlets for bridge devices"
+        );
 
         let device_types = ["ttl", "kernel", "pupil"];
         let mut outlets = self.bridge_outlets.write().await;
@@ -216,7 +219,10 @@ impl LslDevice {
                 .await
                 .map_err(|e| DeviceError::ConfigurationError(e.to_string()))?;
 
-            debug!(device = "lsl", "Created outlet for {}: {}", device_type, outlet_id);
+            debug!(
+                device = "lsl",
+                "Created outlet for {}: {}", device_type, outlet_id
+            );
         }
 
         info!(device = "lsl", "Created {} bridge outlets", outlets.len());
@@ -228,7 +234,11 @@ impl LslDevice {
         &self,
         filters: Vec<StreamFilter>,
     ) -> Result<Vec<DiscoveredStream>, LslError> {
-        info!(device = "lsl", "Discovering LSL streams with {} filters", filters.len());
+        info!(
+            device = "lsl",
+            "Discovering LSL streams with {} filters",
+            filters.len()
+        );
 
         // Create temporary resolver with filters
         let resolver = StreamResolver::with_filters(self.lsl_config.discovery_timeout, filters);
@@ -423,7 +433,10 @@ impl LslDevice {
         let device_id = self.device_id.clone();
 
         tokio::spawn(async move {
-            info!(device = "lsl", "Starting LSL command processing for device: {}", device_id);
+            info!(
+                device = "lsl",
+                "Starting LSL command processing for device: {}", device_id
+            );
 
             while let Some(command) = receiver.recv().await {
                 debug!(device = "lsl", "Processing LSL command: {:?}", command);
@@ -433,7 +446,10 @@ impl LslDevice {
                 debug!(device = "lsl", "Command processed: {:?}", command);
             }
 
-            info!(device = "lsl", "LSL command processing stopped for device: {}", device_id);
+            info!(
+                device = "lsl",
+                "LSL command processing stopped for device: {}", device_id
+            );
         });
 
         Ok(())
@@ -498,7 +514,10 @@ impl Device for LslDevice {
                     info!(device = "lsl", "Discovered {} LSL streams", streams.len());
                 }
                 Err(e) => {
-                    warn!(device = "lsl", "Failed to discover streams during connection: {}", e);
+                    warn!(
+                        device = "lsl",
+                        "Failed to discover streams during connection: {}", e
+                    );
                     // Don't fail connection due to discovery issues
                 }
             }
@@ -514,15 +533,17 @@ impl Device for LslDevice {
         self.status = DeviceStatus::Connected;
         info!(
             device = "lsl",
-            "LSL device connected successfully in {:?}",
-            connection_latency
+            "LSL device connected successfully in {:?}", connection_latency
         );
 
         Ok(())
     }
 
     async fn disconnect(&mut self) -> Result<(), DeviceError> {
-        info!(device = "lsl", "Disconnecting LSL device: {}", self.device_id);
+        info!(
+            device = "lsl",
+            "Disconnecting LSL device: {}", self.device_id
+        );
 
         // Stop all outlets and inlets
         self.outlet_manager

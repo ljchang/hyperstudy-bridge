@@ -165,7 +165,11 @@ impl TtlDevice {
             all_ports.push(port_info);
         }
 
-        info!(device = "ttl", "Found {} serial ports total", all_ports.len());
+        info!(
+            device = "ttl",
+            "Found {} serial ports total",
+            all_ports.len()
+        );
         Ok(all_ports)
     }
 
@@ -210,9 +214,7 @@ impl TtlDevice {
         let result = if ttl_devices.is_empty() {
             info!(
                 device = "ttl",
-                "No TTL devices found (VID: 0x{:04X}, PID: 0x{:04X})",
-                TTL_USB_VID,
-                TTL_USB_PID
+                "No TTL devices found (VID: 0x{:04X}, PID: 0x{:04X})", TTL_USB_VID, TTL_USB_PID
             );
             serde_json::json!({
                 "devices": ttl_devices,
@@ -221,7 +223,10 @@ impl TtlDevice {
             })
         } else if ttl_devices.len() == 1 {
             let auto_port = ttl_devices[0]["port"].as_str().unwrap_or("");
-            info!(device = "ttl", "Auto-selecting single TTL device: {}", auto_port);
+            info!(
+                device = "ttl",
+                "Auto-selecting single TTL device: {}", auto_port
+            );
             serde_json::json!({
                 "devices": ttl_devices,
                 "autoSelected": auto_port,
@@ -257,7 +262,8 @@ impl TtlDevice {
                             info!(
                                 device = "ttl",
                                 "Found TTL device with serial number {} at port {}",
-                                serial_number, port.port_name
+                                serial_number,
+                                port.port_name
                             );
                             return Ok(Some(port.port_name));
                         }
@@ -266,7 +272,10 @@ impl TtlDevice {
             }
         }
 
-        info!(device = "ttl", "No TTL device found with serial number: {}", serial_number);
+        info!(
+            device = "ttl",
+            "No TTL device found with serial number: {}", serial_number
+        );
         Ok(None)
     }
 
@@ -336,7 +345,10 @@ impl TtlDevice {
                     latency
                 );
             } else if latency > Duration::from_micros(500) {
-                warn!(device = "ttl", "TTL pulse latency approaching limit: {:?}", latency);
+                warn!(
+                    device = "ttl",
+                    "TTL pulse latency approaching limit: {:?}", latency
+                );
             }
 
             // Check if the error indicates a physical disconnection
@@ -362,7 +374,10 @@ impl TtlDevice {
 #[async_trait]
 impl Device for TtlDevice {
     async fn connect(&mut self) -> Result<(), DeviceError> {
-        info!(device = "ttl", "Connecting to TTL device on port: {}", self.port_name);
+        info!(
+            device = "ttl",
+            "Connecting to TTL device on port: {}", self.port_name
+        );
 
         self.status = DeviceStatus::Connecting;
 

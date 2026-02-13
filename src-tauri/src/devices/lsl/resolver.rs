@@ -220,8 +220,7 @@ impl StreamResolver {
     pub async fn discover_streams(&self) -> Result<Vec<DiscoveredStream>, LslError> {
         info!(
             device = "lsl",
-            "Performing one-time stream discovery (timeout: {:?})",
-            self.timeout_duration
+            "Performing one-time stream discovery (timeout: {:?})", self.timeout_duration
         );
 
         let discovery_start = Instant::now();
@@ -349,8 +348,7 @@ impl StreamResolver {
 
             warn!(
                 device = "lsl",
-                "Stream cache exceeded limit, evicted {} oldest entries",
-                to_remove
+                "Stream cache exceeded limit, evicted {} oldest entries", to_remove
             );
         }
 
@@ -460,7 +458,10 @@ impl StreamResolver {
                                 // Continue - don't block on slow receivers
                             }
                             Err(mpsc::error::TrySendError::Closed(_)) => {
-                                error!(device = "lsl", "Discovery event receiver dropped, stopping discovery");
+                                error!(
+                                    device = "lsl",
+                                    "Discovery event receiver dropped, stopping discovery"
+                                );
                                 return;
                             }
                         }

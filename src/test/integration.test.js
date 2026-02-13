@@ -38,7 +38,7 @@ vi.mock('../lib/services/tauri.js', () => ({
     cleanupEventListeners: vi.fn(),
     getLogs: vi.fn(() => Promise.resolve({ success: true, data: [] })),
     exportLogs: vi.fn(),
-  }
+  },
 }));
 
 // Note: Integration tests are skipped because App.svelte imports websocket.svelte.js
@@ -110,20 +110,26 @@ describe.skip('Integration Tests', () => {
   describe('Device Management Integration', () => {
     beforeEach(() => {
       const mockDevices = new Map([
-        ['ttl', {
-          id: 'ttl',
-          name: 'TTL Pulse Generator',
-          type: 'Adafruit RP2040',
-          status: 'disconnected',
-          config: { port: '/dev/ttyUSB0' }
-        }],
-        ['kernel', {
-          id: 'kernel',
-          name: 'Kernel Flow2',
-          type: 'fNIRS',
-          status: 'connected',
-          config: { ip: '127.0.0.1', port: 6767 }
-        }]
+        [
+          'ttl',
+          {
+            id: 'ttl',
+            name: 'TTL Pulse Generator',
+            type: 'Adafruit RP2040',
+            status: 'disconnected',
+            config: { port: '/dev/ttyUSB0' },
+          },
+        ],
+        [
+          'kernel',
+          {
+            id: 'kernel',
+            name: 'Kernel Flow2',
+            type: 'fNIRS',
+            status: 'connected',
+            config: { ip: '127.0.0.1', port: 6767 },
+          },
+        ],
       ]);
       websocketStore.getDevices.mockReturnValue(mockDevices);
     });
@@ -150,10 +156,7 @@ describe.skip('Integration Tests', () => {
       const connectButton = screen.getByText('Connect');
       await user.click(connectButton);
 
-      expect(websocketStore.connectDevice).toHaveBeenCalledWith(
-        'ttl',
-        { port: '/dev/ttyUSB0' }
-      );
+      expect(websocketStore.connectDevice).toHaveBeenCalledWith('ttl', { port: '/dev/ttyUSB0' });
     });
 
     it('updates UI when device status changes', async () => {
@@ -161,13 +164,16 @@ describe.skip('Integration Tests', () => {
 
       // Change device status in store
       const updatedDevices = new Map([
-        ['ttl', {
-          id: 'ttl',
-          name: 'TTL Pulse Generator',
-          type: 'Adafruit RP2040',
-          status: 'connected', // Changed from disconnected
-          config: { port: '/dev/ttyUSB0' }
-        }]
+        [
+          'ttl',
+          {
+            id: 'ttl',
+            name: 'TTL Pulse Generator',
+            type: 'Adafruit RP2040',
+            status: 'connected', // Changed from disconnected
+            config: { port: '/dev/ttyUSB0' },
+          },
+        ],
       ]);
       websocketStore.getDevices.mockReturnValue(updatedDevices);
 
@@ -239,13 +245,16 @@ describe.skip('Integration Tests', () => {
   describe('Device Configuration Integration', () => {
     beforeEach(() => {
       const mockDevices = new Map([
-        ['ttl', {
-          id: 'ttl',
-          name: 'TTL Pulse Generator',
-          type: 'Adafruit RP2040',
-          status: 'disconnected',
-          config: { port: '/dev/ttyUSB0', baudRate: 115200, pulseDuration: 10 }
-        }]
+        [
+          'ttl',
+          {
+            id: 'ttl',
+            name: 'TTL Pulse Generator',
+            type: 'Adafruit RP2040',
+            status: 'disconnected',
+            config: { port: '/dev/ttyUSB0', baudRate: 115200, pulseDuration: 10 },
+          },
+        ],
       ]);
       websocketStore.getDevices.mockReturnValue(mockDevices);
     });
@@ -318,7 +327,7 @@ describe.skip('Integration Tests', () => {
           message: 'Application started',
           timestamp: new Date('2023-01-01T10:00:00Z'),
           device: null,
-          source: 'frontend'
+          source: 'frontend',
         },
         {
           id: '2',
@@ -326,8 +335,8 @@ describe.skip('Integration Tests', () => {
           message: 'Connection failed',
           timestamp: new Date('2023-01-01T10:01:00Z'),
           device: 'ttl',
-          source: 'bridge'
-        }
+          source: 'bridge',
+        },
       ];
       logsStore.getFilteredLogs.mockReturnValue(mockLogs);
       logsStore.getDeviceList.mockReturnValue(['ttl']);
@@ -422,24 +431,33 @@ describe.skip('Integration Tests', () => {
   describe('Multi-Device Scenarios', () => {
     beforeEach(() => {
       const mockDevices = new Map([
-        ['ttl', {
-          id: 'ttl',
-          name: 'TTL Pulse Generator',
-          status: 'connected',
-          config: { port: '/dev/ttyUSB0' }
-        }],
-        ['kernel', {
-          id: 'kernel',
-          name: 'Kernel Flow2',
-          status: 'disconnected',
-          config: { ip: '127.0.0.1', port: 6767 }
-        }],
-        ['pupil', {
-          id: 'pupil',
-          name: 'Pupil Labs Neon',
-          status: 'error',
-          config: { url: 'localhost:8081' }
-        }]
+        [
+          'ttl',
+          {
+            id: 'ttl',
+            name: 'TTL Pulse Generator',
+            status: 'connected',
+            config: { port: '/dev/ttyUSB0' },
+          },
+        ],
+        [
+          'kernel',
+          {
+            id: 'kernel',
+            name: 'Kernel Flow2',
+            status: 'disconnected',
+            config: { ip: '127.0.0.1', port: 6767 },
+          },
+        ],
+        [
+          'pupil',
+          {
+            id: 'pupil',
+            name: 'Pupil Labs Neon',
+            status: 'error',
+            config: { url: 'localhost:8081' },
+          },
+        ],
       ]);
       websocketStore.getDevices.mockReturnValue(mockDevices);
     });
@@ -501,9 +519,10 @@ describe.skip('Integration Tests', () => {
     });
 
     it('recovers from connection errors', async () => {
-      websocketStore.getStatus.mockReturnValueOnce('error')
-                              .mockReturnValueOnce('connecting')
-                              .mockReturnValue('ready');
+      websocketStore.getStatus
+        .mockReturnValueOnce('error')
+        .mockReturnValueOnce('connecting')
+        .mockReturnValue('ready');
 
       const { rerender } = render(App);
 
@@ -533,18 +552,14 @@ describe.skip('Integration Tests', () => {
       const { rerender } = render(App);
 
       // Initial state
-      const initialDevices = new Map([
-        ['ttl', { id: 'ttl', name: 'TTL', status: 'disconnected' }]
-      ]);
+      const initialDevices = new Map([['ttl', { id: 'ttl', name: 'TTL', status: 'disconnected' }]]);
       websocketStore.getDevices.mockReturnValue(initialDevices);
       rerender({});
 
       expect(screen.getByText('Connect')).toBeInTheDocument();
 
       // Simulate status change
-      const updatedDevices = new Map([
-        ['ttl', { id: 'ttl', name: 'TTL', status: 'connected' }]
-      ]);
+      const updatedDevices = new Map([['ttl', { id: 'ttl', name: 'TTL', status: 'connected' }]]);
       websocketStore.getDevices.mockReturnValue(updatedDevices);
       rerender({});
 
@@ -556,7 +571,7 @@ describe.skip('Integration Tests', () => {
 
       // Initial logs
       logsStore.getFilteredLogs.mockReturnValue([
-        { id: '1', message: 'Initial log', level: 'info', timestamp: new Date() }
+        { id: '1', message: 'Initial log', level: 'info', timestamp: new Date() },
       ]);
       rerender({});
 
@@ -565,7 +580,7 @@ describe.skip('Integration Tests', () => {
       // Add new log
       logsStore.getFilteredLogs.mockReturnValue([
         { id: '2', message: 'New log entry', level: 'info', timestamp: new Date() },
-        { id: '1', message: 'Initial log', level: 'info', timestamp: new Date() }
+        { id: '1', message: 'Initial log', level: 'info', timestamp: new Date() },
       ]);
       rerender({});
 
@@ -605,7 +620,7 @@ describe.skip('Integration Tests', () => {
           id: `device-${i}`,
           name: `Device ${i}`,
           status: 'disconnected',
-          config: {}
+          config: {},
         });
       }
       websocketStore.getDevices.mockReturnValue(manyDevices);
@@ -625,7 +640,7 @@ describe.skip('Integration Tests', () => {
       // Simulate rapid updates
       for (let i = 0; i < 20; i++) {
         const devices = new Map([
-          ['ttl', { id: 'ttl', name: 'TTL', status: i % 2 ? 'connected' : 'disconnected' }]
+          ['ttl', { id: 'ttl', name: 'TTL', status: i % 2 ? 'connected' : 'disconnected' }],
         ]);
         websocketStore.getDevices.mockReturnValue(devices);
         rerender({});
@@ -670,7 +685,9 @@ describe.skip('Integration Tests', () => {
       render(App);
 
       // Should have proper landmark roles
-      const landmarks = document.querySelectorAll('[role="main"], [role="navigation"], [role="banner"]');
+      const landmarks = document.querySelectorAll(
+        '[role="main"], [role="navigation"], [role="banner"]'
+      );
       expect(landmarks.length).toBeGreaterThan(0);
     });
   });

@@ -125,7 +125,9 @@ impl StreamOutlet {
         info!(
             device = "lsl",
             "Creating LSL outlet: {} (type: {}, channels: {})",
-            info.name, info.stream_type, info.channel_count
+            info.name,
+            info.stream_type,
+            info.channel_count
         );
 
         // Create std::sync channel for commands (allows blocking recv in thread)
@@ -189,14 +191,20 @@ impl StreamOutlet {
                 }
             };
 
-            info!(device = "lsl", "LSL outlet thread started for: {}", thread_info.name);
+            info!(
+                device = "lsl",
+                "LSL outlet thread started for: {}", thread_info.name
+            );
 
             // Process commands in a blocking loop using std::sync::mpsc
             // No Tokio runtime needed - this is pure blocking I/O
             loop {
                 // Check shutdown flag first
                 if thread_shutdown_flag.load(Ordering::Relaxed) {
-                    info!(device = "lsl", "LSL outlet thread shutdown flag set: {}", thread_info.name);
+                    info!(
+                        device = "lsl",
+                        "LSL outlet thread shutdown flag set: {}", thread_info.name
+                    );
                     break;
                 }
 
@@ -215,7 +223,10 @@ impl StreamOutlet {
                         let _ = response.send(has);
                     }
                     Ok(OutletCommand::Shutdown) => {
-                        info!(device = "lsl", "LSL outlet thread shutting down: {}", thread_info.name);
+                        info!(
+                            device = "lsl",
+                            "LSL outlet thread shutting down: {}", thread_info.name
+                        );
                         break;
                     }
                     Err(std_mpsc::RecvTimeoutError::Timeout) => {
@@ -223,7 +234,10 @@ impl StreamOutlet {
                         continue;
                     }
                     Err(std_mpsc::RecvTimeoutError::Disconnected) => {
-                        info!(device = "lsl", "LSL outlet command channel closed: {}", thread_info.name);
+                        info!(
+                            device = "lsl",
+                            "LSL outlet command channel closed: {}", thread_info.name
+                        );
                         break;
                     }
                 }
@@ -414,7 +428,10 @@ impl StreamOutlet {
             // Check buffer overflow
             if buffer.len() >= self.buffer_limit {
                 buffer.pop_front(); // Remove oldest sample
-                warn!(device = "lsl", "Outlet buffer overflow, dropping oldest sample");
+                warn!(
+                    device = "lsl",
+                    "Outlet buffer overflow, dropping oldest sample"
+                );
 
                 let mut status = self.status.write().await;
                 status.data_loss = (status.data_loss + 0.1).min(100.0);
@@ -486,8 +503,7 @@ impl StreamOutlet {
 
         debug!(
             device = "lsl",
-            "Sample sent: timestamp={:.3}, channels={}",
-            timestamp, channel_count
+            "Sample sent: timestamp={:.3}, channels={}", timestamp, channel_count
         );
 
         Ok(())

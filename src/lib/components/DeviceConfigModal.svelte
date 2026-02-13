@@ -25,8 +25,8 @@
         placeholder: '/dev/cu.usbmodem or /dev/tty.usbmodem (macOS), /dev/ttyUSB0 (Linux)',
         required: true,
         pattern: '^(/dev/(tty\\.|cu\\.|ttyUSB)|COM\\d+)',
-        errorMessage: 'Invalid port format. Expected /dev/cu.*, /dev/tty.*, /dev/ttyUSB*, or COM*'
-      }
+        errorMessage: 'Invalid port format. Expected /dev/cu.*, /dev/tty.*, /dev/ttyUSB*, or COM*',
+      },
     },
     kernel: {
       ip: {
@@ -35,7 +35,7 @@
         placeholder: '127.0.0.1 or 192.168.1.100',
         required: true,
         pattern: '^((25[0-5]|(2[0-4]|1\\d|[1-9]|)\\d)\\.?\\b){4}$',
-        errorMessage: 'Invalid IP address format'
+        errorMessage: 'Invalid IP address format',
       },
       port: {
         label: 'Port',
@@ -44,15 +44,15 @@
         max: 65535,
         default: 6767,
         required: true,
-        errorMessage: 'Port must be between 1-65535'
+        errorMessage: 'Port must be between 1-65535',
       },
       samplingRate: {
         label: 'Sampling Rate (Hz)',
         type: 'select',
         options: [1, 5, 10, 25, 50, 100],
         default: 10,
-        required: true
-      }
+        required: true,
+      },
     },
     pupil: {
       url: {
@@ -61,52 +61,52 @@
         placeholder: 'localhost:8081 or 192.168.1.101:8081',
         required: true,
         pattern: '^[\\w.-]+(:\\d+)?$',
-        errorMessage: 'Invalid URL format. Expected hostname:port'
+        errorMessage: 'Invalid URL format. Expected hostname:port',
       },
       streamGaze: {
         label: 'Stream Gaze Data',
         type: 'checkbox',
-        default: true
+        default: true,
       },
       streamVideo: {
         label: 'Stream Video',
         type: 'checkbox',
-        default: false
+        default: false,
       },
       gazeFormat: {
         label: 'Gaze Data Format',
         type: 'select',
         options: ['normalized', 'pixels', 'degrees'],
         default: 'normalized',
-        required: true
-      }
+        required: true,
+      },
     },
     lsl: {
       enableOutlet: {
         label: 'Enable LSL Outlet',
         type: 'checkbox',
-        default: false
+        default: false,
       },
       streamName: {
         label: 'Stream Name',
         type: 'text',
         placeholder: 'HyperStudy_Device',
         required: false,
-        default: 'HyperStudy_Bridge'
+        default: 'HyperStudy_Bridge',
       },
       streamType: {
         label: 'Stream Type',
         type: 'select',
         options: ['Markers', 'EEG', 'fNIRS', 'Gaze', 'Audio', 'Accelerometer', 'Other'],
         default: 'Markers',
-        required: false
+        required: false,
       },
       sourceId: {
         label: 'Source ID',
         type: 'text',
         placeholder: 'hyperstudy-bridge-001',
         required: false,
-        default: 'hyperstudy-bridge'
+        default: 'hyperstudy-bridge',
       },
       chunkSize: {
         label: 'Chunk Size',
@@ -115,7 +115,7 @@
         max: 1000,
         default: 32,
         required: false,
-        errorMessage: 'Chunk size must be between 1-1000'
+        errorMessage: 'Chunk size must be between 1-1000',
       },
       bufferSize: {
         label: 'Buffer Size (samples)',
@@ -124,19 +124,19 @@
         max: 10000,
         default: 1000,
         required: false,
-        errorMessage: 'Buffer size must be between 100-10000'
+        errorMessage: 'Buffer size must be between 100-10000',
       },
       enableTimestamp: {
         label: 'Include Timestamps',
         type: 'checkbox',
-        default: true
+        default: true,
       },
       enableMetadata: {
         label: 'Include Metadata',
         type: 'checkbox',
-        default: true
-      }
-    }
+        default: true,
+      },
+    },
   };
 
   // Initialize form data when device changes
@@ -362,12 +362,18 @@
       handleSave();
     }
   }
-
 </script>
 
 {#if isOpen && device}
   <div class="modal-overlay" role="presentation" onclick={handleClose} onkeydown={handleKeydown}>
-    <div class="modal" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === 'Escape' && handleClose()}>
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      tabindex="-1"
+      onclick={e => e.stopPropagation()}
+      onkeydown={e => e.key === 'Escape' && handleClose()}
+    >
       <div class="modal-header">
         <h2>Configure {device.name}</h2>
         <button class="close-btn" onclick={handleClose}>×</button>
@@ -383,20 +389,26 @@
           <button
             class="tab-btn"
             class:active={activeTab === 'device'}
-            onclick={() => activeTab = 'device'}
+            onclick={() => (activeTab = 'device')}
           >
             Device Settings
           </button>
           <button
             class="tab-btn"
             class:active={activeTab === 'lsl'}
-            onclick={() => activeTab = 'lsl'}
+            onclick={() => (activeTab = 'lsl')}
           >
             LSL Configuration
           </button>
         </div>
 
-        <form class="config-form" onsubmit={(e) => { e.preventDefault(); handleSave(); }}>
+        <form
+          class="config-form"
+          onsubmit={e => {
+            e.preventDefault();
+            handleSave();
+          }}
+        >
           {#if activeTab === 'device'}
             <!-- Device Configuration Tab -->
             {#if deviceConfigs[device.id]}
@@ -415,7 +427,7 @@
                       class="form-input"
                       class:error={errors[fieldName]}
                       value={formData[fieldName]}
-                      onchange={(e) => handleFieldChange(fieldName, e.target.value)}
+                      onchange={e => handleFieldChange(fieldName, e.target.value)}
                     >
                       <option value="">Select {fieldConfig.label}</option>
                       {#each fieldConfig.options as option}
@@ -429,7 +441,7 @@
                         type="checkbox"
                         class="form-checkbox"
                         checked={formData[fieldName]}
-                        onchange={(e) => handleFieldChange(fieldName, e.target.checked)}
+                        onchange={e => handleFieldChange(fieldName, e.target.checked)}
                       />
                       <span class="checkbox-label">Enable {fieldConfig.label}</span>
                     </label>
@@ -444,7 +456,7 @@
                         min={fieldConfig.min}
                         max={fieldConfig.max}
                         value={formData[fieldName]}
-                        oninput={(e) => handleFieldChange(fieldName, e.target.value)}
+                        oninput={e => handleFieldChange(fieldName, e.target.value)}
                       />
                       {#if device.id === 'ttl' && fieldName === 'port'}
                         <button
@@ -461,7 +473,9 @@
                     <!-- Show detected devices dropdown for TTL port -->
                     {#if device.id === 'ttl' && fieldName === 'port' && showDeviceSelector && detectedTtlDevices.length > 0}
                       <div class="device-selector">
-                        <div class="selector-header">Found {detectedTtlDevices.length} device(s):</div>
+                        <div class="selector-header">
+                          Found {detectedTtlDevices.length} device(s):
+                        </div>
                         {#each detectedTtlDevices as ttlDevice}
                           <button
                             type="button"
@@ -495,8 +509,8 @@
             <!-- LSL Configuration Tab -->
             <div class="lsl-config-section">
               <p class="section-description">
-                Configure Lab Streaming Layer (LSL) output for this device. When enabled,
-                device data will be published as an LSL stream for use by other applications.
+                Configure Lab Streaming Layer (LSL) output for this device. When enabled, device
+                data will be published as an LSL stream for use by other applications.
               </p>
 
               {#each Object.entries(deviceConfigs.lsl) as [fieldName, fieldConfig]}
@@ -508,7 +522,7 @@
                         type="checkbox"
                         class="form-checkbox"
                         checked={lslConfig[fieldName]}
-                        onchange={(e) => handleFieldChange(fieldName, e.target.checked, true)}
+                        onchange={e => handleFieldChange(fieldName, e.target.checked, true)}
                       />
                       <span class="checkbox-label">
                         {fieldConfig.label}
@@ -531,7 +545,7 @@
                         class="form-input"
                         class:error={errors[fieldName]}
                         value={lslConfig[fieldName]}
-                        onchange={(e) => handleFieldChange(fieldName, e.target.value, true)}
+                        onchange={e => handleFieldChange(fieldName, e.target.value, true)}
                       >
                         <option value="">Select {fieldConfig.label}</option>
                         {#each fieldConfig.options as option}
@@ -548,7 +562,7 @@
                         min={fieldConfig.min}
                         max={fieldConfig.max}
                         value={lslConfig[fieldName]}
-                        oninput={(e) => handleFieldChange(fieldName, e.target.value, true)}
+                        oninput={e => handleFieldChange(fieldName, e.target.value, true)}
                         disabled={!lslConfig.enableOutlet && fieldName !== 'enableOutlet'}
                       />
                     {/if}
@@ -565,16 +579,20 @@
                   <h4>Stream Preview</h4>
                   <div class="stream-preview">
                     <div class="preview-item">
-                      <strong>Name:</strong> {lslConfig.streamName || 'HyperStudy_Bridge'}
+                      <strong>Name:</strong>
+                      {lslConfig.streamName || 'HyperStudy_Bridge'}
                     </div>
                     <div class="preview-item">
-                      <strong>Type:</strong> {lslConfig.streamType || 'Markers'}
+                      <strong>Type:</strong>
+                      {lslConfig.streamType || 'Markers'}
                     </div>
                     <div class="preview-item">
-                      <strong>Source ID:</strong> {lslConfig.sourceId || 'hyperstudy-bridge'}
+                      <strong>Source ID:</strong>
+                      {lslConfig.sourceId || 'hyperstudy-bridge'}
                     </div>
                     <div class="preview-item">
-                      <strong>Buffer Size:</strong> {lslConfig.bufferSize || 1000} samples
+                      <strong>Buffer Size:</strong>
+                      {lslConfig.bufferSize || 1000} samples
                     </div>
                   </div>
                 </div>
@@ -585,9 +603,7 @@
       </div>
 
       <div class="modal-footer">
-        <button class="cancel-btn" onclick={handleClose} disabled={isSubmitting}>
-          Cancel
-        </button>
+        <button class="cancel-btn" onclick={handleClose} disabled={isSubmitting}> Cancel </button>
         <button
           class="save-btn"
           onclick={handleSave}
@@ -616,8 +632,12 @@
   }
 
   @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
   }
 
   .modal {
@@ -721,7 +741,8 @@
     margin-left: 0.25rem;
   }
 
-  .form-input, select.form-input {
+  .form-input,
+  select.form-input {
     padding: 0.75rem;
     background: var(--color-background);
     border: 1px solid var(--color-border);

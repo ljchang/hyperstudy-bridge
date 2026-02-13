@@ -150,7 +150,8 @@ impl NeonLslManager {
                     debug!(
                         device = "neon",
                         "Found Neon gaze stream: {} ({} channels)",
-                        stream_name, stream.info.channel_count
+                        stream_name,
+                        stream.info.channel_count
                     );
                 } else if StreamFilter::is_neon_events_stream(stream_name) {
                     entry.has_events_stream = true;
@@ -167,7 +168,11 @@ impl NeonLslManager {
         }
 
         let device_list: Vec<DiscoveredNeonDevice> = device_map.into_values().collect();
-        info!(device = "neon", "Discovered {} Neon device(s)", device_list.len());
+        info!(
+            device = "neon",
+            "Discovered {} Neon device(s)",
+            device_list.len()
+        );
 
         for device in &device_list {
             info!(
@@ -203,7 +208,10 @@ impl NeonLslManager {
         &self,
         device_name: &str,
     ) -> Result<mpsc::Receiver<NeonGazeData>, LslError> {
-        info!(device = "neon", "Connecting to Neon gaze stream: {}", device_name);
+        info!(
+            device = "neon",
+            "Connecting to Neon gaze stream: {}", device_name
+        );
 
         // Check if already connected
         {
@@ -273,7 +281,10 @@ impl NeonLslManager {
         let channel_count = device.gaze_channel_count;
 
         let handle = tokio::spawn(async move {
-            info!(device = "neon", "Neon gaze stream task started for: {}", task_device_name);
+            info!(
+                device = "neon",
+                "Neon gaze stream task started for: {}", task_device_name
+            );
 
             while !task_shutdown.load(Ordering::Relaxed) {
                 // Pull samples with a short timeout
@@ -287,7 +298,10 @@ impl NeonLslManager {
                             match NeonGazeData::from_lsl_sample(sample.timestamp, &data) {
                                 Ok(gaze) => {
                                     if task_tx.send(gaze).await.is_err() {
-                                        debug!(device = "neon", "Gaze receiver dropped, stopping task");
+                                        debug!(
+                                            device = "neon",
+                                            "Gaze receiver dropped, stopping task"
+                                        );
                                         break;
                                     }
                                 }
@@ -314,7 +328,10 @@ impl NeonLslManager {
                 }
             }
 
-            info!(device = "neon", "Neon gaze stream task stopped for: {}", task_device_name);
+            info!(
+                device = "neon",
+                "Neon gaze stream task stopped for: {}", task_device_name
+            );
         });
 
         // Store the task
@@ -330,7 +347,10 @@ impl NeonLslManager {
             );
         }
 
-        info!(device = "neon", "Connected to Neon gaze stream: {}", device_name);
+        info!(
+            device = "neon",
+            "Connected to Neon gaze stream: {}", device_name
+        );
         Ok(rx)
     }
 
@@ -342,7 +362,10 @@ impl NeonLslManager {
         &self,
         device_name: &str,
     ) -> Result<mpsc::Receiver<NeonEventData>, LslError> {
-        info!(device = "neon", "Connecting to Neon events stream: {}", device_name);
+        info!(
+            device = "neon",
+            "Connecting to Neon events stream: {}", device_name
+        );
 
         // Check if already connected
         {
@@ -411,7 +434,10 @@ impl NeonLslManager {
         let task_device_name = device_name.to_string();
 
         let handle = tokio::spawn(async move {
-            info!(device = "neon", "Neon events stream task started for: {}", task_device_name);
+            info!(
+                device = "neon",
+                "Neon events stream task started for: {}", task_device_name
+            );
 
             while !task_shutdown.load(Ordering::Relaxed) {
                 // Pull samples with a longer timeout (events are irregular)
@@ -426,20 +452,28 @@ impl NeonLslManager {
                                 Ok(event) => {
                                     debug!(
                                         device = "neon",
-                                        "Neon event: {} @ {}",
-                                        event.event_name, event.timestamp
+                                        "Neon event: {} @ {}", event.event_name, event.timestamp
                                     );
                                     if task_tx.send(event).await.is_err() {
-                                        debug!(device = "neon", "Events receiver dropped, stopping task");
+                                        debug!(
+                                            device = "neon",
+                                            "Events receiver dropped, stopping task"
+                                        );
                                         break;
                                     }
                                 }
                                 Err(e) => {
-                                    warn!(device = "neon", "Failed to parse Neon event data: {}", e);
+                                    warn!(
+                                        device = "neon",
+                                        "Failed to parse Neon event data: {}", e
+                                    );
                                 }
                             }
                         } else {
-                            warn!(device = "neon", "Unexpected data format for Neon events (expected String)");
+                            warn!(
+                                device = "neon",
+                                "Unexpected data format for Neon events (expected String)"
+                            );
                         }
                     }
                     Ok(None) => {
@@ -453,7 +487,10 @@ impl NeonLslManager {
                 }
             }
 
-            info!(device = "neon", "Neon events stream task stopped for: {}", task_device_name);
+            info!(
+                device = "neon",
+                "Neon events stream task stopped for: {}", task_device_name
+            );
         });
 
         // Store the task
@@ -469,13 +506,19 @@ impl NeonLslManager {
             );
         }
 
-        info!(device = "neon", "Connected to Neon events stream: {}", device_name);
+        info!(
+            device = "neon",
+            "Connected to Neon events stream: {}", device_name
+        );
         Ok(rx)
     }
 
     /// Disconnect from a Neon gaze stream
     pub async fn disconnect_gaze_stream(&self, device_name: &str) -> Result<(), LslError> {
-        info!(device = "neon", "Disconnecting Neon gaze stream: {}", device_name);
+        info!(
+            device = "neon",
+            "Disconnecting Neon gaze stream: {}", device_name
+        );
 
         let task = {
             let mut tasks = self.gaze_tasks.write().await;
@@ -497,13 +540,19 @@ impl NeonLslManager {
             }
         }
 
-        info!(device = "neon", "Disconnected Neon gaze stream: {}", device_name);
+        info!(
+            device = "neon",
+            "Disconnected Neon gaze stream: {}", device_name
+        );
         Ok(())
     }
 
     /// Disconnect from a Neon events stream
     pub async fn disconnect_events_stream(&self, device_name: &str) -> Result<(), LslError> {
-        info!(device = "neon", "Disconnecting Neon events stream: {}", device_name);
+        info!(
+            device = "neon",
+            "Disconnecting Neon events stream: {}", device_name
+        );
 
         let task = {
             let mut tasks = self.event_tasks.write().await;
@@ -525,7 +574,10 @@ impl NeonLslManager {
             }
         }
 
-        info!(device = "neon", "Disconnected Neon events stream: {}", device_name);
+        info!(
+            device = "neon",
+            "Disconnected Neon events stream: {}", device_name
+        );
         Ok(())
     }
 

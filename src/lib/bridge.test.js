@@ -97,9 +97,7 @@ describe('Bridge Connection', () => {
   });
 
   it('should throw error when sending command while disconnected', async () => {
-    await expect(bridge.sendCommand('ttl', 'connect', {})).rejects.toThrow(
-      'Bridge not connected'
-    );
+    await expect(bridge.sendCommand('ttl', 'connect', {})).rejects.toThrow('Bridge not connected');
   });
 
   it('should send commands when connected', async () => {

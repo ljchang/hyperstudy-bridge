@@ -236,7 +236,10 @@ impl TimeSync {
             quality.drift_ppm = 10.0; // 10 ppm drift
             quality.status = SyncStatus::Drifting;
 
-            warn!(device = "lsl", "Clock drift detected: {} ppm", quality.drift_ppm);
+            warn!(
+                device = "lsl",
+                "Clock drift detected: {} ppm", quality.drift_ppm
+            );
 
             // Trigger re-synchronization
             drop(quality); // Release the lock

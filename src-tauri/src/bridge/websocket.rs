@@ -390,7 +390,11 @@ async fn handle_device_command(
                     .await;
                 }
                 Some(Err(e)) => {
-                    send_response(tx, BridgeResponse::device_error(device_id, e.to_string(), id)).await;
+                    send_response(
+                        tx,
+                        BridgeResponse::device_error(device_id, e.to_string(), id),
+                    )
+                    .await;
                 }
                 None => {
                     send_response(
@@ -429,12 +433,20 @@ async fn handle_device_command(
                 Some(Ok(_)) => {
                     send_response(
                         tx,
-                        BridgeResponse::data(device_id, json!({ "success": true, "message": "Data sent" }), id),
+                        BridgeResponse::data(
+                            device_id,
+                            json!({ "success": true, "message": "Data sent" }),
+                            id,
+                        ),
                     )
                     .await;
                 }
                 Some(Err(e)) => {
-                    send_response(tx, BridgeResponse::device_error(device_id, e.to_string(), id)).await;
+                    send_response(
+                        tx,
+                        BridgeResponse::device_error(device_id, e.to_string(), id),
+                    )
+                    .await;
                 }
                 None => {
                     send_response(
@@ -590,12 +602,20 @@ async fn handle_device_command(
                 Some(Ok(_)) => {
                     send_response(
                         tx,
-                        BridgeResponse::data(device_id, json!({ "success": true, "message": "Event sent" }), id),
+                        BridgeResponse::data(
+                            device_id,
+                            json!({ "success": true, "message": "Event sent" }),
+                            id,
+                        ),
                     )
                     .await;
                 }
                 Some(Err(e)) => {
-                    send_response(tx, BridgeResponse::device_error(device_id, e.to_string(), id)).await;
+                    send_response(
+                        tx,
+                        BridgeResponse::device_error(device_id, e.to_string(), id),
+                    )
+                    .await;
                 }
                 None => {
                     // Device not connected yet - try to auto-connect if we have config
@@ -667,11 +687,7 @@ async fn handle_device_command(
                 } else {
                     send_response(
                         tx,
-                        BridgeResponse::device_error(
-                            device_id,
-                            "Device not found".to_string(),
-                            id,
-                        ),
+                        BridgeResponse::device_error(device_id, "Device not found".to_string(), id),
                     )
                     .await;
                 }
@@ -907,7 +923,11 @@ async fn handle_device_command(
             .await;
         }
         _ => {
-            send_response(tx, BridgeResponse::error("Unsupported action".to_string(), id)).await;
+            send_response(
+                tx,
+                BridgeResponse::error("Unsupported action".to_string(), id),
+            )
+            .await;
         }
     }
 }
