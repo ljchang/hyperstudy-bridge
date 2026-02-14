@@ -7,4 +7,4 @@ dependencies = ["frenztoolkit>=0.3.2", "pylsl>=1.16"]
 
 [build-system]
 requires = ["hatchling"]
-build-backend = "hatchling.backends"
+build-backend = "hatchling.build"
