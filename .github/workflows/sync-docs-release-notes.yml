@@ -99,6 +99,19 @@ jobs:
 
           echo "Updated $FILE with release $TAG"
 
+      - name: Debug token access
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_REPO_TOKEN }}
+        run: |
+          echo "=== Token identity ==="
+          gh api user --jq '.login' || echo "Token cannot access /user endpoint"
+          echo "=== Repo access check ==="
+          gh api repos/ljchang/hyperstudy-docs --jq '{permissions: .permissions, private: .private}' || echo "Cannot access repo"
+          echo "=== Git credential config ==="
+          cd docs-repo
+          git config --list --show-scope | grep -i -E 'credential|helper|extraheader|url' || echo "No credential config found"
+
       - name: Commit and push
         if: steps.check.outputs.exists == 'false'
         env:
@@ -107,6 +120,9 @@ jobs:
           cd docs-repo
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Clear any credential helpers that might override URL auth
+          git config --unset-all credential.helper || true
+          git config --unset-all http.https://github.com/.extraheader || true
           git remote set-url origin "https://x-access-token:${DOCS_REPO_TOKEN}@github.com/ljchang/hyperstudy-docs.git"
           git add docs/devices/hyperstudy-bridge.md
           git commit -m "Update HyperStudy Bridge release notes for ${{ steps.release.outputs.tag }}" || exit 0
