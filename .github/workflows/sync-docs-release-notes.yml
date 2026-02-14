@@ -100,10 +100,13 @@ jobs:
 
       - name: Commit and push
         if: steps.check.outputs.exists == 'false'
+        env:
+          DOCS_REPO_TOKEN: ${{ secrets.DOCS_REPO_TOKEN }}
         run: |
           cd docs-repo
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${DOCS_REPO_TOKEN}@github.com/ljchang/hyperstudy-docs.git"
           git add docs/devices/hyperstudy-bridge.md
           git commit -m "Update HyperStudy Bridge release notes for ${{ steps.release.outputs.tag }}" || exit 0
           git push
