@@ -1,7 +1,14 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import * as bridgeStore from '../stores/websocket.svelte.js';
-  import { sendTtlPulse, listTtlDevices, startFrenzBridge, stopFrenzBridge, getFrenzBridgeStatus, checkFrenzBridgeAvailable } from '../services/tauri.js';
+  import {
+    sendTtlPulse,
+    listTtlDevices,
+    startFrenzBridge,
+    stopFrenzBridge,
+    getFrenzBridgeStatus,
+    checkFrenzBridgeAvailable,
+  } from '../services/tauri.js';
   import { getSecret } from '../services/stronghold.js';
   import { listen } from '@tauri-apps/api/event';
   import DeviceConfigModal from './DeviceConfigModal.svelte';
@@ -52,7 +59,7 @@
     frenzBridgeStatus = await getFrenzBridgeStatus();
 
     // Listen for real-time status updates
-    unlistenFrenzStatus = await listen('frenz_bridge_status', (event) => {
+    unlistenFrenzStatus = await listen('frenz_bridge_status', event => {
       frenzBridgeStatus = event.payload;
     });
   }
@@ -97,23 +104,34 @@
 
   function getFrenzBridgeStateLabel(state) {
     switch (state) {
-      case 'not_available': return 'Not Available';
-      case 'stopped': return 'Stopped';
-      case 'bootstrapping': return 'Installing...';
-      case 'connecting': return 'Connecting...';
-      case 'streaming': return 'Streaming';
-      case 'error': return 'Error';
-      default: return state;
+      case 'not_available':
+        return 'Not Available';
+      case 'stopped':
+        return 'Stopped';
+      case 'bootstrapping':
+        return 'Installing...';
+      case 'connecting':
+        return 'Connecting...';
+      case 'streaming':
+        return 'Streaming';
+      case 'error':
+        return 'Error';
+      default:
+        return state;
     }
   }
 
   function getFrenzBridgeStateColor(state) {
     switch (state) {
-      case 'streaming': return 'var(--color-success)';
+      case 'streaming':
+        return 'var(--color-success)';
       case 'bootstrapping':
-      case 'connecting': return 'var(--color-warning)';
-      case 'error': return 'var(--color-error)';
-      default: return 'var(--color-text-disabled)';
+      case 'connecting':
+        return 'var(--color-warning)';
+      case 'error':
+        return 'var(--color-error)';
+      default:
+        return 'var(--color-text-disabled)';
     }
   }
 
@@ -394,7 +412,10 @@
       {#if frenzBridgeAvailable}
         <div class="config-row">
           <span class="label">Bridge:</span>
-          <span class="value bridge-status" style="color: {getFrenzBridgeStateColor(frenzBridgeStatus.state)}">
+          <span
+            class="value bridge-status"
+            style="color: {getFrenzBridgeStateColor(frenzBridgeStatus.state)}"
+          >
             {getFrenzBridgeStateLabel(frenzBridgeStatus.state)}
           </span>
         </div>
@@ -417,7 +438,9 @@
       {:else if !frenzBridgeAvailable && frenzBridgeStatus.state !== 'stopped'}
         <div class="config-row">
           <span class="label">Bridge:</span>
-          <span class="value" style="color: var(--color-text-disabled)">Not available on this platform</span>
+          <span class="value" style="color: var(--color-text-disabled)"
+            >Not available on this platform</span
+          >
         </div>
       {/if}
       <div class="config-row">
@@ -447,7 +470,9 @@
           class="action-btn bridge-btn"
           onclick={handleStartFrenzBridge}
           disabled={frenzBridgeLoading || !frenzDeviceId || !frenzKeyConfigured}
-          title={!frenzDeviceId || !frenzKeyConfigured ? 'Configure credentials first' : 'Start Python bridge'}
+          title={!frenzDeviceId || !frenzKeyConfigured
+            ? 'Configure credentials first'
+            : 'Start Python bridge'}
         >
           {frenzBridgeLoading ? '...' : 'Start Bridge'}
         </button>

@@ -131,10 +131,7 @@ impl FrenzProcessManager {
         if let Ok(resource_dir) = app_handle.path().resource_dir() {
             let path = resource_dir.join(binary_name);
             if path.exists() {
-                info!(
-                    device = "frenz",
-                    "Found FRENZ bridge binary: {:?}", path
-                );
+                info!(device = "frenz", "Found FRENZ bridge binary: {:?}", path);
                 return Some(path);
             }
         }
@@ -186,10 +183,7 @@ impl FrenzProcessManager {
         let binary_path = Self::find_binary(app_handle)
             .ok_or_else(|| "FRENZ bridge binary not found".to_string())?;
 
-        info!(
-            device = "frenz",
-            "Starting FRENZ bridge: {:?}", binary_path
-        );
+        info!(device = "frenz", "Starting FRENZ bridge: {:?}", binary_path);
 
         // Reset state
         self.shutdown.store(false, Ordering::Relaxed);
@@ -269,12 +263,8 @@ impl FrenzProcessManager {
                 }
                 Ok(Ok(None)) => {
                     // EOF before any output — process exited immediately
-                    Self::handle_process_exit(
-                        &status_clone,
-                        &process_clone,
-                        &app_handle_clone,
-                    )
-                    .await;
+                    Self::handle_process_exit(&status_clone, &process_clone, &app_handle_clone)
+                        .await;
                     return;
                 }
                 Ok(Err(e)) => {
@@ -316,27 +306,15 @@ impl FrenzProcessManager {
                                 "FRENZ bridge first-run setup complete, received first status"
                             );
                         }
-                        Self::handle_status_line(
-                            &line,
-                            &status_clone,
-                            &app_handle_clone,
-                        )
-                        .await;
+                        Self::handle_status_line(&line, &status_clone, &app_handle_clone).await;
                     }
                     Ok(None) => {
-                        Self::handle_process_exit(
-                            &status_clone,
-                            &process_clone,
-                            &app_handle_clone,
-                        )
-                        .await;
+                        Self::handle_process_exit(&status_clone, &process_clone, &app_handle_clone)
+                            .await;
                         break;
                     }
                     Err(e) => {
-                        warn!(
-                            device = "frenz",
-                            "Error reading FRENZ bridge stdout: {}", e
-                        );
+                        warn!(device = "frenz", "Error reading FRENZ bridge stdout: {}", e);
                         break;
                     }
                 }
@@ -478,12 +456,7 @@ impl FrenzProcessManager {
             }
 
             // Wait up to 5 seconds for graceful exit
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                child.wait(),
-            )
-            .await
-            {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), child.wait()).await {
                 Ok(Ok(exit_status)) => {
                     info!(
                         device = "frenz",
@@ -491,10 +464,7 @@ impl FrenzProcessManager {
                     );
                 }
                 Ok(Err(e)) => {
-                    warn!(
-                        device = "frenz",
-                        "Error waiting for FRENZ bridge: {}", e
-                    );
+                    warn!(device = "frenz", "Error waiting for FRENZ bridge: {}", e);
                 }
                 Err(_) => {
                     // Timeout — force kill
