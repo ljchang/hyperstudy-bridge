@@ -78,11 +78,7 @@ jobs:
             echo "---"
           } > /tmp/release_entry.txt
 
-          # Insert after RELEASE_NOTES_START marker using sed
-          # First, escape special characters in the release entry for sed
-          ESCAPED_ENTRY=$(sed -e 's/[&/\]/\\&/g' -e 's/$/\\/' /tmp/release_entry.txt | tr -d '\n' | sed 's/\\$//')
-
-          # Use awk for safer multi-line insertion
+          # Insert after RELEASE_NOTES_START marker using awk
           awk '
             /<!-- RELEASE_NOTES_START -->/ {
               print
@@ -99,32 +95,26 @@ jobs:
 
           echo "Updated $FILE with release $TAG"
 
-      - name: Debug token access
+      - name: Commit and push via API
         if: steps.check.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ secrets.DOCS_REPO_TOKEN }}
         run: |
-          echo "=== Token identity ==="
-          gh api user --jq '.login' || echo "Token cannot access /user endpoint"
-          echo "=== Repo access check ==="
-          gh api repos/ljchang/hyperstudy-docs --jq '{permissions: .permissions, private: .private}' || echo "Cannot access repo"
-          echo "=== Git credential config ==="
-          cd docs-repo
-          git config --list --show-scope | grep -i -E 'credential|helper|extraheader|url' || echo "No credential config found"
+          FILE_PATH="docs/devices/hyperstudy-bridge.md"
+          TAG="${{ steps.release.outputs.tag }}"
 
-      - name: Commit and push
-        if: steps.check.outputs.exists == 'false'
-        env:
-          DOCS_REPO_TOKEN: ${{ secrets.DOCS_REPO_TOKEN }}
-        run: |
-          cd docs-repo
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          # Clear any credential helpers that might override URL auth
-          git config --unset-all credential.helper || true
-          git config --unset-all http.https://github.com/.extraheader || true
-          git remote set-url origin "https://x-access-token:${DOCS_REPO_TOKEN}@github.com/ljchang/hyperstudy-docs.git"
-          git add docs/devices/hyperstudy-bridge.md
-          git commit -m "Update HyperStudy Bridge release notes for ${{ steps.release.outputs.tag }}" || exit 0
-          git push
+          # Get the current file SHA (required for updates)
+          FILE_SHA=$(gh api "repos/ljchang/hyperstudy-docs/contents/${FILE_PATH}" --jq '.sha')
 
+          # Base64-encode the updated file content
+          CONTENT_B64=$(base64 -w 0 "docs-repo/${FILE_PATH}")
+
+          # Push via the Contents API
+          gh api --method PUT "repos/ljchang/hyperstudy-docs/contents/${FILE_PATH}" \
+            -f message="Update HyperStudy Bridge release notes for ${TAG}" \
+            -f content="${CONTENT_B64}" \
+            -f sha="${FILE_SHA}" \
+            -f "committer[name]=github-actions[bot]" \
+            -f "committer[email]=github-actions[bot]@users.noreply.github.com"
+
+          echo "Successfully pushed release notes for ${TAG} via API"
