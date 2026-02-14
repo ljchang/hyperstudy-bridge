@@ -1,6 +1,7 @@
 use super::{Device, DeviceConfig, DeviceError, DeviceInfo, DeviceStatus, DeviceType};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use socket2::SockRef;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -8,7 +9,7 @@ use tokio::time::{sleep, timeout};
 use tracing::{debug, error, info, warn};
 
 const DEFAULT_PORT: u16 = 6767;
-const CONNECTION_HEALTH_CHECK_INTERVAL_MS: u64 = 10000; // 10 seconds - for connection health monitoring
+const CONNECTION_HEALTH_CHECK_INTERVAL_MS: u64 = 10000; // Retained for config schema compatibility (unused since TCP keepalive replacement)
 const MAX_RECONNECT_ATTEMPTS: u32 = 10;
 const INITIAL_RECONNECT_DELAY_MS: u64 = 1000;
 const MAX_RECONNECT_DELAY_MS: u64 = 30000;
@@ -105,7 +106,8 @@ pub struct KernelConfig {
     pub ip_address: String,
     pub port: u16,
     pub connection_timeout_ms: u64,
-    /// Interval for checking connection health (not a device heartbeat)
+    /// Formerly used for time-based staleness checks (now replaced by TCP keepalive).
+    /// Retained for config schema compatibility; not used in health decisions.
     pub connection_health_check_interval_ms: u64,
     pub max_reconnect_attempts: u32,
     pub initial_reconnect_delay_ms: u64,
@@ -219,6 +221,25 @@ impl KernelDevice {
 
         match timeout(connection_timeout, TcpStream::connect(&addr)).await {
             Ok(Ok(socket)) => {
+                // Disable Nagle's algorithm for low-latency event delivery.
+                // Kernel events are small, infrequent JSON payloads — Nagle would
+                // buffer them for up to 40ms with no throughput benefit.
+                if let Err(e) = socket.set_nodelay(true) {
+                    warn!(device = "kernel", "Failed to set TCP_NODELAY: {}", e);
+                }
+
+                // Enable TCP keepalive for dead connection detection.
+                // This replaces the time-based staleness heuristic: the OS sends
+                // actual probe packets, so write_all() will fail with a real error
+                // if the remote end is dead — no false positives on idle connections.
+                let sock_ref = SockRef::from(&socket);
+                let keepalive = socket2::TcpKeepalive::new()
+                    .with_time(Duration::from_secs(10))
+                    .with_interval(Duration::from_secs(2));
+                if let Err(e) = sock_ref.set_tcp_keepalive(&keepalive) {
+                    warn!(device = "kernel", "Failed to set TCP keepalive: {}", e);
+                }
+
                 info!(
                     device = "kernel",
                     "Successfully established connection to Kernel Flow2 at {}", addr
@@ -292,29 +313,13 @@ impl KernelDevice {
         }
     }
 
-    /// Detect connection health based on recent successful operations.
+    /// Detect connection health based on socket presence and status.
     ///
-    /// Note: The Kernel Tasks SDK protocol does not define a heartbeat mechanism.
-    /// Connection health is determined by tracking successful send/receive operations
-    /// and relying on TCP-level keepalive and error detection.
+    /// Dead-connection detection is handled by TCP keepalive at the OS level
+    /// (configured in establish_connection). If the connection is actually dead,
+    /// write_all() or flush() will return an error caught by the retry logic in send().
     fn is_connection_healthy(&self) -> bool {
-        if self.socket.is_none() {
-            return false;
-        }
-
-        // Check if too much time has passed since last successful operation
-        if let Some(last_op) = self.last_successful_operation {
-            let time_since_last_op = last_op.elapsed();
-            // Consider connection potentially stale if no activity for extended period
-            // Use 3x the health check interval as the staleness threshold
-            if time_since_last_op
-                > Duration::from_millis(self.config.connection_health_check_interval_ms * 3)
-            {
-                return false;
-            }
-        }
-
-        true
+        self.socket.is_some() && self.status == DeviceStatus::Connected
     }
 
     /// Check if an IO error indicates connection loss
@@ -326,6 +331,63 @@ impl KernelDevice {
                 | std::io::ErrorKind::BrokenPipe
                 | std::io::ErrorKind::UnexpectedEof
         )
+    }
+
+    /// Check if a DeviceError indicates connection loss (for retry decisions)
+    fn is_connection_lost_error(&self, error: &DeviceError) -> bool {
+        matches!(
+            error,
+            DeviceError::ConnectionFailed(_) | DeviceError::Timeout
+        )
+    }
+
+    /// Attempt write_all + flush on the current socket.
+    /// Returns Ok on success, or a DeviceError on failure.
+    /// Does NOT modify self.socket on error — the caller decides whether to retry.
+    async fn try_send(&mut self, data: &[u8]) -> Result<Duration, DeviceError> {
+        let socket = self.socket.as_mut().ok_or(DeviceError::NotConnected)?;
+        let io_timeout = Duration::from_millis(IO_TIMEOUT_MS);
+
+        let start = Instant::now();
+        let result = timeout(io_timeout, socket.write_all(data)).await;
+        let latency = start.elapsed();
+
+        match result {
+            Ok(Ok(_)) => {
+                // Flush with timeout
+                match timeout(io_timeout, socket.flush()).await {
+                    Ok(Ok(_)) => Ok(latency),
+                    Ok(Err(flush_err)) => {
+                        if self.is_io_error_connection_lost(&flush_err) {
+                            Err(DeviceError::ConnectionFailed(format!(
+                                "Connection lost during flush: {}",
+                                flush_err
+                            )))
+                        } else {
+                            Err(DeviceError::CommunicationError(format!(
+                                "Flush failed: {}",
+                                flush_err
+                            )))
+                        }
+                    }
+                    Err(_) => Err(DeviceError::Timeout),
+                }
+            }
+            Ok(Err(send_err)) => {
+                if self.is_io_error_connection_lost(&send_err) {
+                    Err(DeviceError::ConnectionFailed(format!(
+                        "Connection lost during send: {}",
+                        send_err
+                    )))
+                } else {
+                    Err(DeviceError::CommunicationError(format!(
+                        "Send failed: {}",
+                        send_err
+                    )))
+                }
+            }
+            Err(_) => Err(DeviceError::Timeout),
+        }
     }
 
     /// Get connection uptime
@@ -422,59 +484,25 @@ impl Device for KernelDevice {
     }
 
     async fn send(&mut self, data: &[u8]) -> Result<(), DeviceError> {
-        // Check connection health before sending
-        if !self.is_connection_healthy() {
-            warn!(
-                device = "kernel",
-                "Connection unhealthy, attempting reconnection before send"
-            );
-            if self.device_config.auto_reconnect {
-                self.attempt_reconnect().await?;
-            } else {
-                return Err(DeviceError::NotConnected);
-            }
-        }
-
         // Get device_id before mutable borrow
         let device_id = self.get_info().id;
 
-        if let Some(ref mut socket) = self.socket {
-            let io_timeout = Duration::from_millis(IO_TIMEOUT_MS);
+        for attempt in 0..2u8 {
+            // Ensure we have a connection (reconnect if socket is gone)
+            if !self.is_connection_healthy() {
+                if self.device_config.auto_reconnect {
+                    warn!(
+                        device = "kernel",
+                        "Connection unhealthy (attempt {}), reconnecting before send", attempt
+                    );
+                    self.attempt_reconnect().await?;
+                } else {
+                    return Err(DeviceError::NotConnected);
+                }
+            }
 
-            // Measure latency for the operation
-            let start = Instant::now();
-            let result = timeout(io_timeout, socket.write_all(data)).await;
-            let latency = start.elapsed();
-
-            match result {
-                Ok(Ok(_)) => {
-                    // Flush with timeout
-                    match timeout(io_timeout, socket.flush()).await {
-                        Ok(Ok(_)) => {}
-                        Ok(Err(flush_err)) => {
-                            if self.is_io_error_connection_lost(&flush_err) {
-                                self.socket = None;
-                                self.status = DeviceStatus::Error;
-                                return Err(DeviceError::ConnectionFailed(format!(
-                                    "Connection lost during flush: {}",
-                                    flush_err
-                                )));
-                            } else {
-                                return Err(DeviceError::CommunicationError(format!(
-                                    "Flush failed: {}",
-                                    flush_err
-                                )));
-                            }
-                        }
-                        Err(_) => {
-                            self.socket = None;
-                            self.status = DeviceStatus::Error;
-                            return Err(DeviceError::CommunicationError(
-                                "Flush timed out".to_string(),
-                            ));
-                        }
-                    }
-
+            match self.try_send(data).await {
+                Ok(latency) => {
                     // Record success
                     self.last_successful_operation = Some(Instant::now());
 
@@ -489,35 +517,25 @@ impl Device for KernelDevice {
                         data.len(),
                         latency
                     );
-                    Ok(())
+                    return Ok(());
                 }
-                Ok(Err(send_err)) => {
-                    if self.is_io_error_connection_lost(&send_err) {
-                        self.socket = None;
-                        self.status = DeviceStatus::Error;
-                        Err(DeviceError::ConnectionFailed(format!(
-                            "Connection lost during send: {}",
-                            send_err
-                        )))
-                    } else {
-                        Err(DeviceError::CommunicationError(format!(
-                            "Send failed: {}",
-                            send_err
-                        )))
-                    }
+                Err(ref e) if attempt == 0 && self.is_connection_lost_error(e) => {
+                    warn!(
+                        device = "kernel",
+                        "Send failed on attempt 0, will reconnect and retry: {}", e
+                    );
+                    self.socket = None;
+                    self.status = DeviceStatus::Connecting;
+                    continue;
                 }
-                Err(_) => {
-                    // Timeout elapsed
+                Err(e) => {
                     self.socket = None;
                     self.status = DeviceStatus::Error;
-                    Err(DeviceError::CommunicationError(
-                        "Send timed out".to_string(),
-                    ))
+                    return Err(e);
                 }
             }
-        } else {
-            Err(DeviceError::NotConnected)
         }
+        unreachable!()
     }
 
     async fn receive(&mut self) -> Result<Vec<u8>, DeviceError> {
@@ -810,7 +828,13 @@ impl KernelDevice {
             wire_data.len()
         );
 
-        self.send(&wire_data).await
+        self.send(&wire_data).await?;
+
+        info!(
+            device = "kernel",
+            "Kernel event delivered: id={}, event='{}'", event.id, event.event
+        );
+        Ok(())
     }
 
     /// Create and send an event with auto-generated ID and current timestamp.

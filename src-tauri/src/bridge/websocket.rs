@@ -4,7 +4,9 @@ use crate::devices::{kernel::KernelDevice, mock::MockDevice, pupil::PupilDevice,
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::{AppHandle, Runtime};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
@@ -115,8 +117,17 @@ async fn handle_connection<R: Runtime>(
         }
     });
 
+    // Shared flag to signal the receive task to stop gracefully after
+    // finishing its current message (avoids aborting mid-handle_command).
+    let should_stop = Arc::new(AtomicBool::new(false));
+    let should_stop_clone = should_stop.clone();
+
     let receive_task = tokio::spawn(async move {
         while let Some(msg) = ws_receiver.next().await {
+            if should_stop_clone.load(Ordering::Relaxed) {
+                debug!("Receive task stopping: send channel closed");
+                break;
+            }
             match msg {
                 Ok(Message::Text(text)) => {
                     state_clone.update_connection_activity(&connection_id_clone);
@@ -161,16 +172,20 @@ async fn handle_connection<R: Runtime>(
         }
     });
 
-    // Wait for either task to complete, then abort all others to prevent resource leaks
-    // Pin the tasks so we can use references in select!
+    // Wait for either task to complete, then shut down the others.
+    // When send_task exits (frontend disconnected), we signal receive_task
+    // to stop gracefully so it can finish processing any in-flight command
+    // (e.g., a Kernel event send) before shutting down.
     tokio::pin!(send_task);
     tokio::pin!(receive_task);
     tokio::pin!(status_task);
 
     tokio::select! {
         result = &mut send_task => {
-            debug!("Send task completed: {:?}", result);
-            receive_task.abort();
+            debug!("Send task completed: {:?}, draining receive task", result);
+            should_stop.store(true, Ordering::Relaxed);
+            // Let the current handle_command finish (up to 10s)
+            let _ = tokio::time::timeout(Duration::from_secs(10), receive_task).await;
             status_task.abort();
         },
         result = &mut receive_task => {
@@ -921,6 +936,296 @@ async fn handle_device_command(
                 ),
             )
             .await;
+        }
+        // ====================================================================
+        // FRENZ Brainband LSL handlers
+        // ====================================================================
+        CommandAction::DiscoverFrenz => {
+            info!("Discovering FRENZ devices via LSL");
+
+            match state.frenz_manager.discover_frenz_devices().await {
+                Ok(devices) => {
+                    let device_list: Vec<serde_json::Value> = devices
+                        .iter()
+                        .map(|d| {
+                            let streams: Vec<serde_json::Value> = d
+                                .streams
+                                .values()
+                                .map(|s| {
+                                    json!({
+                                        "suffix": s.suffix,
+                                        "channel_count": s.channel_count,
+                                        "nominal_srate": s.nominal_srate,
+                                        "category": s.category.to_string(),
+                                    })
+                                })
+                                .collect();
+                            json!({
+                                "device_name": d.device_name,
+                                "stream_count": d.streams.len(),
+                                "streams": streams,
+                            })
+                        })
+                        .collect();
+
+                    send_response(
+                        tx,
+                        BridgeResponse::data(
+                            "frenz_lsl".to_string(),
+                            json!({
+                                "type": "discovery",
+                                "devices": device_list,
+                                "count": devices.len()
+                            }),
+                            id,
+                        ),
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    warn!("FRENZ discovery failed: {}", e);
+                    send_response(
+                        tx,
+                        BridgeResponse::device_error("frenz_lsl".to_string(), e.to_string(), id),
+                    )
+                    .await;
+                }
+            }
+        }
+        CommandAction::ConnectFrenzStreams => {
+            let device_name = payload
+                .as_ref()
+                .and_then(|p| p.get("device_name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            if device_name.is_empty() {
+                send_response(
+                    tx,
+                    BridgeResponse::device_error(
+                        "frenz_lsl".to_string(),
+                        "Missing 'device_name' in payload".to_string(),
+                        id,
+                    ),
+                )
+                .await;
+                return;
+            }
+
+            // Extract selected stream suffixes (empty = connect all)
+            let selected_streams: Vec<String> = payload
+                .as_ref()
+                .and_then(|p| p.get("streams"))
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            // Check if marker outlet should be created
+            let enable_markers = payload
+                .as_ref()
+                .and_then(|p| p.get("enable_markers"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+
+            info!(
+                "Connecting FRENZ streams for {}: {:?}",
+                device_name,
+                if selected_streams.is_empty() {
+                    "all".to_string()
+                } else {
+                    format!("{} selected", selected_streams.len())
+                }
+            );
+
+            // Create marker outlet if requested
+            if enable_markers {
+                if let Err(e) = state.frenz_manager.create_marker_outlet().await {
+                    warn!("Failed to create FRENZ marker outlet: {}", e);
+                }
+            }
+
+            match state
+                .frenz_manager
+                .connect_streams(device_name, &selected_streams)
+                .await
+            {
+                Ok(receivers) => {
+                    let connected_suffixes: Vec<String> = receivers.keys().cloned().collect();
+                    let connected_count = receivers.len();
+
+                    // Spawn forwarding tasks for each stream
+                    for (suffix, mut rx) in receivers {
+                        let tx_clone = tx.clone();
+                        let device_name_clone = device_name.to_string();
+                        let suffix_clone = suffix.clone();
+
+                        tokio::spawn(async move {
+                            while let Some(sample) = rx.recv().await {
+                                let response = BridgeResponse::data(
+                                    format!("frenz_{}", device_name_clone),
+                                    json!({
+                                        "type": "frenz_data",
+                                        "stream": suffix_clone,
+                                        "timestamp": sample.timestamp,
+                                        "values": sample.values,
+                                        "string_value": sample.string_value,
+                                    }),
+                                    None,
+                                );
+                                if tx_clone.send(response).await.is_err() {
+                                    break;
+                                }
+                            }
+                        });
+                    }
+
+                    send_response(
+                        tx,
+                        BridgeResponse::data(
+                            "frenz_lsl".to_string(),
+                            json!({
+                                "type": "connected",
+                                "device_name": device_name,
+                                "connected_streams": connected_suffixes,
+                                "count": connected_count,
+                            }),
+                            id,
+                        ),
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    warn!("Failed to connect FRENZ streams: {}", e);
+                    send_response(
+                        tx,
+                        BridgeResponse::device_error("frenz_lsl".to_string(), e.to_string(), id),
+                    )
+                    .await;
+                }
+            }
+        }
+        CommandAction::DisconnectFrenz => {
+            let device_name = payload
+                .as_ref()
+                .and_then(|p| p.get("device_name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            if device_name.is_empty() {
+                // Disconnect all FRENZ streams
+                info!("Disconnecting all FRENZ streams");
+                let _ = state.frenz_manager.disconnect_all().await;
+
+                send_response(
+                    tx,
+                    BridgeResponse::data(
+                        "frenz_lsl".to_string(),
+                        json!({ "success": true, "message": "Disconnected all FRENZ streams" }),
+                        id,
+                    ),
+                )
+                .await;
+            } else {
+                // Disconnect specific stream if suffix provided, otherwise all for device
+                let suffix = payload
+                    .as_ref()
+                    .and_then(|p| p.get("stream"))
+                    .and_then(|v| v.as_str());
+
+                if let Some(suffix) = suffix {
+                    info!("Disconnecting FRENZ stream: {}{}", device_name, suffix);
+                    let _ = state
+                        .frenz_manager
+                        .disconnect_stream(device_name, suffix)
+                        .await;
+                } else {
+                    // Disconnect all streams for this device
+                    if let Some(device) = state.frenz_manager.get_device(device_name).await {
+                        for suffix in device.streams.keys() {
+                            let _ = state
+                                .frenz_manager
+                                .disconnect_stream(device_name, suffix)
+                                .await;
+                        }
+                    }
+                }
+
+                send_response(
+                    tx,
+                    BridgeResponse::status(
+                        format!("frenz_{}", device_name),
+                        crate::devices::DeviceStatus::Disconnected,
+                        id,
+                    ),
+                )
+                .await;
+            }
+        }
+        CommandAction::FrenzStatus => {
+            let stats = state.frenz_manager.get_stats().await;
+
+            send_response(
+                tx,
+                BridgeResponse::data(
+                    "frenz_lsl".to_string(),
+                    json!({
+                        "type": "status",
+                        "stats": stats
+                    }),
+                    id,
+                ),
+            )
+            .await;
+        }
+        CommandAction::SendFrenzMarker => {
+            let marker = payload
+                .as_ref()
+                .and_then(|p| p.get("marker"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            if marker.is_empty() {
+                send_response(
+                    tx,
+                    BridgeResponse::device_error(
+                        "frenz_lsl".to_string(),
+                        "Missing 'marker' in payload".to_string(),
+                        id,
+                    ),
+                )
+                .await;
+                return;
+            }
+
+            let timestamp = payload
+                .as_ref()
+                .and_then(|p| p.get("timestamp"))
+                .and_then(|v| v.as_f64());
+
+            match state.frenz_manager.send_marker(marker, timestamp).await {
+                Ok(()) => {
+                    send_response(
+                        tx,
+                        BridgeResponse::data(
+                            "frenz_lsl".to_string(),
+                            json!({ "success": true, "marker": marker }),
+                            id,
+                        ),
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    send_response(
+                        tx,
+                        BridgeResponse::device_error("frenz_lsl".to_string(), e.to_string(), id),
+                    )
+                    .await;
+                }
+            }
         }
         _ => {
             send_response(
