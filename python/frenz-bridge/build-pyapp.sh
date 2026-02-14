@@ -35,13 +35,21 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Build wheel first — PyApp requires a file (wheel/sdist), not a directory
+echo "=== Building wheel ==="
+pip install build 2>/dev/null || python -m pip install build
+python -m build --wheel --outdir "$SCRIPT_DIR/dist/"
+WHEEL=$(ls "$SCRIPT_DIR"/dist/*.whl | head -1)
+echo "Built wheel: $WHEEL"
+
 # PyApp configuration
-export PYAPP_PROJECT_PATH="$SCRIPT_DIR"
+export PYAPP_PROJECT_PATH="$WHEEL"
 export PYAPP_EXEC_CODE="from frenz_lsl_bridge import main; main()"
 export PYAPP_DISTRIBUTION_EMBED=1
 export PYAPP_PYTHON_VERSION=3.11
 export PYAPP_PIP_EXTRA_ARGS="--no-cache-dir"
 
+echo ""
 echo "=== Building FRENZ LSL Bridge (PyApp) ==="
 echo "Project path: $PYAPP_PROJECT_PATH"
 echo "Python version: $PYAPP_PYTHON_VERSION"

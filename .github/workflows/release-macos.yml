@@ -51,15 +51,26 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Setup Python for wheel build
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Build FRENZ bridge (PyApp)
         working-directory: python/frenz-bridge
         env:
-          PYAPP_PROJECT_PATH: ${{ github.workspace }}/python/frenz-bridge
           PYAPP_EXEC_CODE: "from frenz_lsl_bridge import main; main()"
           PYAPP_DISTRIBUTION_EMBED: "1"
           PYAPP_PYTHON_VERSION: "3.11"
           PYAPP_PIP_EXTRA_ARGS: "--no-cache-dir"
         run: |
+          # Build wheel first — PyApp requires a file, not a directory
+          pip install build
+          python -m build --wheel --outdir dist/
+          WHEEL=$(ls dist/*.whl | head -1)
+          echo "Built wheel: $WHEEL"
+          export PYAPP_PROJECT_PATH="$(pwd)/$WHEEL"
+
           mkdir -p build
           cargo install pyapp --force --root ./build
           mkdir -p ../../src-tauri/resources

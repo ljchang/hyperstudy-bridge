@@ -32,6 +32,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -42,16 +47,23 @@ jobs:
         with:
           key: pyapp-${{ inputs.target }}
 
+      - name: Build wheel
+        working-directory: python/frenz-bridge
+        run: |
+          pip install build
+          python -m build --wheel --outdir dist/
+
       - name: Build PyApp binary (Unix)
         if: "!contains(inputs.target, 'windows')"
         working-directory: python/frenz-bridge
         env:
-          PYAPP_PROJECT_PATH: ${{ github.workspace }}/python/frenz-bridge
           PYAPP_EXEC_CODE: "from frenz_lsl_bridge import main; main()"
           PYAPP_DISTRIBUTION_EMBED: "1"
           PYAPP_PYTHON_VERSION: "3.11"
           PYAPP_PIP_EXTRA_ARGS: "--no-cache-dir"
         run: |
+          export PYAPP_PROJECT_PATH="$(pwd)/$(ls dist/*.whl | head -1)"
+          echo "Using wheel: $PYAPP_PROJECT_PATH"
           mkdir -p build
           cargo install pyapp --force --root ./build
           ls -la build/bin/
@@ -61,12 +73,14 @@ jobs:
         working-directory: python/frenz-bridge
         shell: pwsh
         env:
-          PYAPP_PROJECT_PATH: ${{ github.workspace }}/python/frenz-bridge
           PYAPP_EXEC_CODE: "from frenz_lsl_bridge import main; main()"
           PYAPP_DISTRIBUTION_EMBED: "1"
           PYAPP_PYTHON_VERSION: "3.11"
           PYAPP_PIP_EXTRA_ARGS: "--no-cache-dir"
         run: |
+          $wheel = (Get-ChildItem dist/*.whl | Select-Object -First 1).FullName
+          $env:PYAPP_PROJECT_PATH = $wheel
+          Write-Host "Using wheel: $wheel"
           New-Item -ItemType Directory -Force -Path build | Out-Null
           cargo install pyapp --force --root ./build
           Get-ChildItem build/bin/
