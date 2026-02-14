@@ -104,6 +104,20 @@ jobs:
           # Clean up
           rm $CERTIFICATE_PATH
 
+      - name: Sign FRENZ bridge binary
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          # Sign the PyApp binary with hardened runtime + secure timestamp
+          # so it passes Apple notarization when bundled in the .app
+          codesign --sign "$APPLE_SIGNING_IDENTITY" \
+            --options runtime \
+            --timestamp \
+            --force \
+            src-tauri/resources/frenz-bridge
+          echo "Signed frenz-bridge binary:"
+          codesign -dvv src-tauri/resources/frenz-bridge
+
       - name: Build Tauri App
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
