@@ -12,10 +12,10 @@ A unified, high-performance desktop application for bridging HyperStudy web expe
 
 | Platform | Download |
 |----------|----------|
-| **macOS (Apple Silicon)** | [Apple Silicon](https://github.com/ljchang/hyperstudy-bridge/releases/latest) |
-| **macOS (Intel)** | [Intel](https://github.com/ljchang/hyperstudy-bridge/releases/latest) |
-| **Windows** | [Windows Installer](https://github.com/ljchang/hyperstudy-bridge/releases/latest) |
-| **Linux** | [Linux AppImage](https://github.com/ljchang/hyperstudy-bridge/releases/latest) |
+| **macOS (Apple Silicon)** | [Apple Silicon](https://github.com/ljchang/hyperstudy-bridge/releases/download/v0.8.13/HyperStudy-Bridge-v0.8.13-aarch64-apple-darwin.dmg) |
+| **macOS (Intel)** | [Intel](https://github.com/ljchang/hyperstudy-bridge/releases/download/v0.8.13/HyperStudy-Bridge-v0.8.13-x86_64-apple-darwin.dmg) |
+| **Windows** | [Windows Installer](https://github.com/ljchang/hyperstudy-bridge/releases/download/v0.8.13/HyperStudy-Bridge-v0.8.13-x86_64-windows.msi) |
+| **Linux** | [Linux AppImage](https://github.com/ljchang/hyperstudy-bridge/releases/download/v0.8.13/HyperStudy-Bridge-v0.8.13-x86_64-linux.AppImage) |
 
 _macOS builds are signed and notarized by Apple. Windows builds are unsigned (see note below)._
 
