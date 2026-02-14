@@ -35,6 +35,9 @@ tungstenite = "0.27"
 # See: https://github.com/labstreaminglayer/liblsl-rust/issues/5
 lsl = { git = "https://github.com/labstreaminglayer/liblsl-rust.git", branch = "main" }
 
+# HTTP Client (for Neon REST API)
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
 # Utilities
 anyhow = "1"
 thiserror = "2"

@@ -2,300 +2,127 @@
 
 ## Overview
 
-The Pupil Labs Neon Eye Tracker device module has been successfully implemented and enhanced to provide comprehensive support for the Pupil Labs Real-Time API. This implementation follows the HyperStudy Bridge architecture patterns and provides a robust, feature-complete interface for eye tracking integration.
+The Pupil Labs Neon device module provides control of the Neon Companion App via its REST API (port 8080) and receives gaze data via LSL streaming. This two-channel architecture separates control operations from high-frequency data streaming.
 
-## Key Features Implemented
+## Architecture
 
-### 1. Core Device Functionality
-- **WebSocket Client**: Full WebSocket client implementation using `tokio-tungstenite`
-- **Device Trait Implementation**: Complete implementation of the `Device` trait with async/await patterns
-- **Connection Management**: Robust connection handling with automatic retry logic and timeout management
-- **Status Monitoring**: Real-time device status tracking and reporting
+```
+Control:  HyperStudy → WS → Bridge → pupil.rs (REST API) → Neon Companion App
+Data:     Neon Companion App → LSL → neon.rs (LSL inlet) → WS → HyperStudy
+```
 
-### 2. Real-Time API Protocol Support
+| Channel | Module | Protocol | Purpose |
+|---------|--------|----------|---------|
+| Control | `pupil.rs` | HTTP REST (port 8080) | Recording, events, status |
+| Data | `neon.rs` | LSL (200Hz Float32) | Gaze streaming |
 
-#### JSON Message Protocol
-- **PupilMessage Structure**: Comprehensive message format supporting all Pupil Labs API message types
-- **Message Routing**: Automatic parsing and routing of incoming messages to appropriate handlers
-- **Request-Response Correlation**: Unique message IDs for tracking request-response pairs
+## REST API Integration (pupil.rs)
 
-#### Data Structures
-- **GazeData**: Complete gaze data structure with 2D/3D coordinates, confidence, and pupil diameter
-- **PupilData**: Detailed pupil measurements including ellipse parameters
-- **DeviceInfo**: Device identification and status information
-- **EventAnnotation**: Rich event annotation system with custom metadata support
+### Supported Endpoints
 
-### 3. Streaming Capabilities
+| Bridge Command | REST Endpoint | Description |
+|---|---|---|
+| `{"command": "recording_start"}` | `POST /api/recording:start` | Start recording, returns UUID |
+| `{"command": "recording_stop"}` | `POST /api/recording:stop_and_save` | Stop and save recording |
+| `{"command": "recording_cancel"}` | `POST /api/recording:cancel` | Cancel recording |
+| `{"command": "event", "name": "...", "timestamp": ...}` | `POST /api/event` | Send event annotation (ns timestamps) |
+| `{"command": "status"}` | `GET /api/status` | Query device status |
 
-#### Gaze Data Streaming
-```rust
-// Start/stop gaze data streaming
-device.start_gaze_streaming().await?;
-device.stop_gaze_streaming().await?;
+### Response Envelope
 
-// Access latest gaze data
-if let Some(gaze_data) = device.get_latest_gaze_data() {
-    println!("Gaze position: {:?}", gaze_data.gaze_position_2d);
-    println!("Confidence: {}", gaze_data.confidence);
+All Neon API responses use the envelope pattern:
+```json
+{
+  "message": "success message",
+  "result": { ... }
 }
 ```
 
-#### Configurable Streaming
-- **Multiple Data Types**: Support for gaze, pupil, video, and IMU data streams
-- **Frame Rate Control**: Configurable sampling rates
-- **Selective Streaming**: Enable/disable specific data streams as needed
+The `GET /api/status` endpoint returns a heterogeneous array:
+```json
+{
+  "message": "...",
+  "result": [
+    {"model": "Phone", "data": {"device_name": "...", "battery_level": 0.85, ...}},
+    {"model": "Hardware", "data": {"glasses_serial": "...", ...}},
+    {"model": "Sensor", "data": {"sensor": "world", "connected": true, ...}},
+    {"model": "Sensor", "data": {"sensor": "gaze", "connected": true, ...}},
+    {"model": "Recording", "data": {"id": "uuid", "action": "START", ...}}
+  ]
+}
+```
 
-### 4. Recording Control
+### Key Types
 
-#### Session Management
+- `NeonStatus` — assembled from the heterogeneous status array (Phone + Hardware + Sensors + Recording)
+- `PhoneInfo` — battery, memory, device identity
+- `HardwareInfo` — glasses/camera serials
+- `SensorInfo` — per-sensor connection status
+- `RecordingInfo` — active recording state
+- `EventRequest` / `EventResponse` — event annotations with nanosecond timestamps
+
+### Usage Examples
+
 ```rust
-// Start recording with optional template
-device.start_recording(Some("experiment_template".to_string())).await?;
+// Create and connect
+let mut device = PupilDevice::new("neon.local:8080".to_string());
+device.connect().await?;
+
+// Start recording
+let recording_id = device.start_recording().await?;
+
+// Send event with nanosecond timestamp
+device.send_neon_event("stimulus_onset", Some(timestamp_ns)).await?;
 
 // Stop recording
 device.stop_recording().await?;
 
-// Check recording status
-let is_recording = device.is_recording();
-```
-
-#### Recording States
-- **Recording Status Tracking**: Real-time recording state monitoring
-- **Template Support**: Custom recording templates for different experiment types
-- **Automatic Cleanup**: Proper recording state management during disconnection
-
-### 5. Event Annotation System
-
-#### Rich Event Metadata
-```rust
-let event = EventAnnotation {
-    timestamp: current_timestamp(),
-    label: "stimulus_onset".to_string(),
-    duration: Some(2.5),
-    extra_data: Some(HashMap::from([
-        ("condition".to_string(), serde_json::Value::String("experimental".to_string())),
-        ("trial_id".to_string(), serde_json::Value::Number(serde_json::Number::from(42))),
-    ])),
-};
-
-device.send_event(event).await?;
-```
-
-#### Event Features
-- **Flexible Metadata**: Support for arbitrary key-value pairs in event data
-- **Duration Support**: Optional event duration for interval events
-- **Real-time Delivery**: Immediate event transmission to device
-
-### 6. Device Discovery and Configuration
-
-#### Network Discovery
-```rust
-// Discover available devices on the network
-let devices = PupilDevice::discover_devices().await?;
-for device_ip in devices {
-    let mut device = PupilDevice::new(device_ip);
-    // Test connection...
-}
-```
-
-#### Advanced Configuration
-```rust
-let mut config = DeviceConfig::default();
-config.custom_settings = serde_json::json!({
-    "device_ip": "192.168.1.100",
-    "max_retries": 5,
-    "streaming_config": {
-        "gaze": true,
-        "pupil": true,
-        "video": false,
-        "imu": false,
-        "frame_rate": 120.0
-    }
-});
-
-device.configure(config)?;
-```
-
-### 7. Error Handling and Reliability
-
-#### Comprehensive Error Management
-- **Timeout Handling**: Configurable timeouts for all operations
-- **Automatic Reconnection**: Intelligent retry logic with exponential backoff
-- **Graceful Degradation**: Proper cleanup and state management on errors
-- **Connection Loss Recovery**: Automatic detection and recovery from connection issues
-
-#### Health Monitoring
-```rust
-// Regular heartbeat to monitor connection health
-device.heartbeat().await?;
-
-// Connection status monitoring
-match device.get_status() {
-    DeviceStatus::Connected => println!("Device is healthy"),
-    DeviceStatus::Error => println!("Device has errors"),
-    _ => println!("Device status: {:?}", device.get_status()),
-}
-```
-
-### 8. Performance Monitoring
-
-#### Real-time Metrics
-- **Connection Metrics**: Track connection attempts, successes, and failures
-- **Data Flow Monitoring**: Monitor incoming data rates and processing latency
-- **Performance Tracking**: Built-in performance monitoring integration
-
-#### Metadata Reporting
-```rust
-let device_info = device.get_info();
-// Includes streaming status, connection health, latest data timestamps, etc.
-```
-
-## Architecture Integration
-
-### Device Trait Compliance
-The implementation fully complies with the HyperStudy Bridge device trait:
-- `connect()` / `disconnect()` with timeout and retry support
-- `send()` / `receive()` with proper message handling
-- `configure()` with extensive customization options
-- `heartbeat()` for connection health monitoring
-- `get_info()` / `get_status()` for comprehensive device reporting
-
-### WebSocket Bridge Integration
-The device seamlessly integrates with the WebSocket bridge protocol:
-```typescript
-// Bridge command example
-{
-  "type": "command",
-  "device": "pupil",
-  "action": "connect",
-  "payload": { "device_ip": "192.168.1.100" }
-}
-
-// Start streaming
-{
-  "type": "command",
-  "device": "pupil",
-  "action": "send",
-  "payload": { "command": "start_gaze_streaming" }
-}
-```
-
-### Async/Await Patterns
-- Full Tokio integration with async/await throughout
-- Non-blocking operations for all I/O
-- Concurrent message processing and streaming
-- Efficient resource management
-
-## Testing Coverage
-
-### Unit Tests
-The implementation includes comprehensive unit tests covering:
-- Device creation and configuration
-- Message protocol parsing
-- Data structure serialization/deserialization
-- Error handling scenarios
-- Configuration management
-
-### Integration Tests
-- Device discovery functionality
-- Connection and reconnection logic
-- Streaming configuration and data flow
-- Event annotation system
-- Recording control features
-
-## Usage Examples
-
-### Basic Usage
-```rust
-let mut device = PupilDevice::new("192.168.1.100".to_string());
-device.connect().await?;
-device.start_gaze_streaming().await?;
-// Process gaze data...
+// Disconnect
 device.disconnect().await?;
 ```
 
-### Advanced Configuration
-```rust
-let mut device = PupilDevice::new_with_url("ws://192.168.1.100:8080/api/ws".to_string());
-let config = DeviceConfig {
-    timeout_ms: 10000,
-    auto_reconnect: true,
-    custom_settings: streaming_config_json,
-    ..Default::default()
-};
-device.configure(config)?;
-```
+## LSL Gaze Streaming (neon.rs)
 
-### Event-Driven Processing
-```rust
-loop {
-    match device.receive().await {
-        Ok(data) => {
-            if let Some(gaze_data) = device.get_latest_gaze_data() {
-                process_gaze_data(gaze_data);
-            }
-        }
-        Err(DeviceError::Timeout) => continue,  // No data available
-        Err(e) => handle_error(e),
-    }
-}
-```
+Gaze data streaming uses LSL (Lab Streaming Layer) at 200Hz via the `NeonLslManager`:
 
-## Security and Reliability
+1. Enable "Stream over LSL" in Neon Companion App settings
+2. Bridge discovers `"{Name}_Neon Gaze"` LSL stream
+3. `InletManager` receives Float32 samples
+4. Samples forwarded via WebSocket to HyperStudy
 
-### Security Features
-- **Local Network Only**: WebSocket connections restricted to local network
-- **Input Validation**: All incoming messages validated and sanitized
-- **Error Sanitization**: Sensitive information excluded from error messages
+### Bridge Commands for LSL
 
-### Reliability Features
-- **Connection Monitoring**: Continuous health checks via heartbeat
-- **Automatic Recovery**: Intelligent reconnection with backoff
-- **State Consistency**: Proper state management during errors and disconnections
-- **Resource Cleanup**: Automatic cleanup of resources on disconnect
+- `DiscoverNeon` — find Neon LSL streams on the network
+- `ConnectNeonGaze` — connect to gaze data stream
+- `ConnectNeonEvents` — connect to event stream
 
-## Performance Characteristics
+## Device Trait Implementation
 
-### Latency
-- **Sub-millisecond Processing**: Optimized message parsing and routing
-- **Streaming Efficiency**: High-throughput data streaming support
-- **Minimal Overhead**: Efficient async I/O with Tokio
+| Method | Implementation |
+|---|---|
+| `connect()` | `GET /api/status` with retry logic |
+| `disconnect()` | Clear cached state |
+| `send()` | Parse JSON command, route to REST endpoint |
+| `receive()` | Poll `GET /api/status` for updates |
+| `heartbeat()` | `GET /api/status`, update cached state |
+| `test_connection()` | `GET /api/status` with 3s timeout |
+| `send_event()` | `POST /api/event` with nanosecond timestamps |
+| `configure()` | Update URL, timeout, retry settings |
 
-### Memory Usage
-- **Bounded Buffers**: Configurable buffer sizes for memory control
-- **Efficient Serialization**: Zero-copy operations where possible
-- **Resource Management**: Automatic cleanup and garbage collection
+## Testing
 
-### Scalability
-- **Multiple Devices**: Support for multiple concurrent device connections
-- **High Data Rates**: Efficient handling of high-frequency gaze data
-- **Configurable Performance**: Tunable parameters for different use cases
+Unit tests cover:
+- URL parsing and protocol stripping
+- API response envelope deserialization
+- Heterogeneous status array parsing (Phone, Hardware, Sensor, Recording)
+- Recording start/stop envelope parsing
+- Event response envelope (name not returned by API)
+- Event request serialization with/without timestamps
+- Command routing JSON parsing
+- Device configuration management
 
-## Future Enhancements
+## Prerequisites
 
-### Planned Features
-1. **mDNS Discovery**: Automatic device discovery using multicast DNS
-2. **Calibration Support**: Integration with Pupil Labs calibration procedures
-3. **Video Streaming**: Support for real-time video data from eye cameras
-4. **Advanced Analytics**: Built-in gaze pattern analysis and filtering
-
-### Extension Points
-- **Custom Message Types**: Easy addition of new message types
-- **Plugin Architecture**: Modular extensions for specific research needs
-- **Data Export**: Built-in data export and formatting capabilities
-- **Real-time Visualization**: Integration with visualization frameworks
-
-## Documentation and Support
-
-### Code Documentation
-- Comprehensive rustdoc documentation for all public APIs
-- Inline code examples and usage patterns
-- Error handling guidelines and best practices
-
-### Integration Guide
-- Step-by-step integration instructions
-- Configuration examples for common use cases
-- Troubleshooting guide for common issues
-- Performance tuning recommendations
-
-The Pupil Labs Neon Eye Tracker implementation provides a robust, production-ready solution for eye tracking integration in the HyperStudy Bridge system. It follows Rust best practices, maintains high performance, and offers comprehensive functionality for research applications.
+- Neon Companion App running on phone
+- Phone and computer on same network
+- For gaze data: "Stream over LSL" enabled in Companion App settings

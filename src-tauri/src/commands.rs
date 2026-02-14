@@ -153,7 +153,7 @@ pub async fn connect_device(
             let url = config
                 .get("url")
                 .and_then(|v| v.as_str())
-                .unwrap_or("localhost:8081");
+                .unwrap_or("neon.local:8080");
             Box::new(PupilDevice::new(url.to_string()))
         }
         "mock" => Box::new(MockDevice::new(

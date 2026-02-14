@@ -219,31 +219,31 @@ taskmgr     # Windows
    - Check device is in bridge mode
    - Restart Kernel device
 
-#### Pupil Labs Connection Issues
+#### Pupil Labs Neon Connection Issues
 
 **Symptoms:**
-- Cannot discover device
-- WebSocket connection fails
-- No gaze data received
+- Cannot connect to Neon device
+- REST API requests fail
+- No gaze data received via LSL
 
 **Solutions:**
 
-1. **Enable Real-Time API**
-   - Open Pupil Companion app
-   - Settings → Developer → Enable Real-time API
-   - Note the displayed URL
+1. **Verify Neon Companion App**
+   - Ensure Neon Companion App is running on the phone
+   - Phone and computer must be on the same network
+   - For gaze data: enable "Stream over LSL" in Companion App settings
 
-2. **Network Discovery**
+2. **Test REST API Connectivity**
    ```bash
-   # Scan for Pupil devices
-   nmap -p 8080-8081 192.168.1.0/24
+   # Test REST API on port 8080
+   curl http://neon.local:8080/api/status
 
-   # Test WebSocket
-   wscat -c ws://192.168.1.50:8081
+   # If mDNS fails, find the phone's IP and test directly
+   curl http://192.168.1.50:8080/api/status
    ```
 
 3. **Sync Time**
-   - Ensure computer and Pupil device time are synced
+   - Ensure computer and Neon device time are synced
    - Use NTP server for both devices
 
 ### Data Quality Issues

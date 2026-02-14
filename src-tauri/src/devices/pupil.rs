@@ -1,422 +1,480 @@
 use super::{Device, DeviceConfig, DeviceError, DeviceInfo, DeviceStatus, DeviceType};
 use async_trait::async_trait;
-use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::net::TcpStream;
+use std::time::Duration;
 use tokio::time::timeout;
-use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use tracing::{debug, error, info, warn};
-use uuid::Uuid;
 
-#[allow(dead_code)]
-const DISCOVERY_PORT: u16 = 8080;
-#[allow(dead_code)]
-const WS_PORT: u16 = 8081;
-const DEFAULT_WS_ENDPOINT: &str = "/api/ws";
+/// Default API port for Neon Companion App REST API.
+const DEFAULT_API_PORT: u16 = 8080;
 
-/// JSON message structure for Pupil Labs Real-Time API
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PupilMessage {
-    #[serde(rename = "type")]
-    pub msg_type: String,
-    pub payload: serde_json::Value,
-    pub timestamp: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
+/// Default timeout for HTTP requests (milliseconds).
+const DEFAULT_HTTP_TIMEOUT_MS: u64 = 5000;
+
+// ---------------------------------------------------------------------------
+// Neon REST API response types (matching OpenAPI spec v2.1.0)
+// ---------------------------------------------------------------------------
+
+/// Generic API response envelope. All Neon REST endpoints wrap responses in
+/// `{"message": "...", "result": ...}`.
+#[derive(Debug, Clone, Deserialize)]
+struct ApiResponse<T> {
+    #[allow(dead_code)]
+    message: String,
+    result: T,
 }
 
-/// Gaze data structure from Pupil Labs
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GazeData {
-    pub timestamp: f64,
-    pub gaze_position_2d: (f64, f64), // Normalized coordinates [0-1]
-    pub gaze_position_3d: Option<(f64, f64, f64)>,
-    pub confidence: f64,
-    pub eye_id: u8, // 0 = left, 1 = right, 2 = binocular
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pupil_diameter: Option<f64>,
+/// A single component from the GET /api/status heterogeneous array.
+/// The status endpoint returns `{"result": [{"model": "Phone", "data": {...}}, ...]}`.
+#[derive(Debug, Clone, Deserialize)]
+struct StatusItem {
+    model: String,
+    data: serde_json::Value,
 }
 
-/// Pupil data structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PupilData {
-    pub timestamp: f64,
-    pub eye_id: u8,
-    pub confidence: f64,
-    pub diameter: f64,
-    pub ellipse: PupilEllipse,
+/// Parsed status from Neon Companion App, assembled from the heterogeneous
+/// status array returned by GET /api/status.
+#[derive(Debug, Clone, Serialize)]
+pub struct NeonStatus {
+    pub phone: PhoneInfo,
+    pub hardware: Option<HardwareInfo>,
+    pub sensors: Vec<SensorInfo>,
+    pub recording: Option<RecordingInfo>,
 }
 
-/// Pupil ellipse parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PupilEllipse {
-    pub center: (f64, f64),
-    pub axes: (f64, f64),
-    pub angle: f64,
-}
+impl NeonStatus {
+    /// Parse a NeonStatus from the heterogeneous array returned by GET /api/status.
+    fn from_status_items(items: Vec<StatusItem>) -> Result<Self, DeviceError> {
+        let mut phone = None;
+        let mut hardware = None;
+        let mut sensors = Vec::new();
+        let mut recording = None;
 
-/// Recording control commands
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum RecordingCommand {
-    #[serde(rename = "start")]
-    Start { template: Option<String> },
-    #[serde(rename = "stop")]
-    Stop,
-    #[serde(rename = "cancel")]
-    Cancel,
-}
-
-/// Event annotation structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EventAnnotation {
-    pub timestamp: f64,
-    pub label: String,
-    pub duration: Option<f64>,
-    pub extra_data: Option<HashMap<String, serde_json::Value>>,
-}
-
-/// Device information from Pupil Labs
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PupilDeviceInfo {
-    pub device_id: String,
-    pub device_name: String,
-    pub serial_number: String,
-    pub firmware_version: String,
-    pub battery_level: Option<f32>,
-    pub memory_usage: Option<f32>,
-}
-
-/// Streaming configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StreamingConfig {
-    pub gaze: bool,
-    pub pupil: bool,
-    pub video: bool,
-    pub imu: bool,
-    pub frame_rate: Option<f64>,
-}
-
-impl Default for StreamingConfig {
-    fn default() -> Self {
-        Self {
-            gaze: true,
-            pupil: false,
-            video: false,
-            imu: false,
-            frame_rate: None,
+        for item in items {
+            match item.model.as_str() {
+                "Phone" => {
+                    phone = Some(serde_json::from_value(item.data).map_err(|e| {
+                        DeviceError::InvalidData(format!("Failed to parse Phone data: {}", e))
+                    })?);
+                }
+                "Hardware" => {
+                    hardware = Some(serde_json::from_value(item.data).map_err(|e| {
+                        DeviceError::InvalidData(format!("Failed to parse Hardware data: {}", e))
+                    })?);
+                }
+                "Sensor" => {
+                    sensors.push(serde_json::from_value(item.data).map_err(|e| {
+                        DeviceError::InvalidData(format!("Failed to parse Sensor data: {}", e))
+                    })?);
+                }
+                "Recording" => {
+                    recording = Some(serde_json::from_value(item.data).map_err(|e| {
+                        DeviceError::InvalidData(format!("Failed to parse Recording data: {}", e))
+                    })?);
+                }
+                other => {
+                    debug!(model = %other, "Unknown status component, skipping");
+                }
+            }
         }
+
+        let phone = phone.ok_or_else(|| {
+            DeviceError::InvalidData("Missing Phone component in status response".to_string())
+        })?;
+
+        Ok(NeonStatus {
+            phone,
+            hardware,
+            sensors,
+            recording,
+        })
     }
 }
 
+/// Phone/device information from Neon status response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PhoneInfo {
+    pub ip: String,
+    pub port: u16,
+    pub device_id: String,
+    pub device_name: String,
+    pub battery_level: f32,
+    pub battery_state: String,
+    pub memory: u64,
+    pub memory_state: String,
+    #[serde(default)]
+    pub time_echo_port: u16,
+}
+
+/// Hardware information (glasses/camera serials).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HardwareInfo {
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub glasses_serial: String,
+    #[serde(default)]
+    pub world_camera_serial: String,
+    #[serde(default)]
+    pub module_serial: String,
+}
+
+/// Sensor connection information.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SensorInfo {
+    pub sensor: String,
+    pub conn_type: String,
+    #[serde(default)]
+    pub protocol: String,
+    #[serde(default)]
+    pub ip: String,
+    #[serde(default)]
+    pub port: u16,
+    #[serde(default)]
+    pub params: String,
+    #[serde(default)]
+    pub connected: bool,
+}
+
+/// Recording state information (from status array component).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordingInfo {
+    pub id: String,
+    #[serde(default)]
+    pub action: String,
+    #[serde(default)]
+    pub rec_duration_ns: u64,
+    #[serde(default)]
+    pub message: String,
+}
+
+/// POST /api/event request body.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventRequest {
+    pub name: String,
+    /// Optional timestamp in nanoseconds since Unix epoch.
+    /// If omitted, the Companion App uses its own clock.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<i64>,
+}
+
+/// POST /api/event response body (inside envelope `result`).
+/// Note: The Neon API does not currently return the event name in the response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventResponse {
+    #[serde(default)]
+    pub name: String,
+    pub recording_id: String,
+    pub timestamp: i64,
+}
+
+/// POST /api/recording:start response body (inside envelope `result`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordingStartResponse {
+    pub id: String,
+}
+
+/// POST /api/recording:stop_and_save response body (inside envelope `result`).
+#[derive(Debug, Clone, Deserialize)]
+struct RecordingStopResponse {
+    #[allow(dead_code)]
+    id: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    rec_duration_ns: u64,
+}
+
+/// POST /api/recording:cancel response body (inside envelope `result`).
+#[derive(Debug, Clone, Deserialize)]
+struct RecordingCancelResponse {
+    #[allow(dead_code)]
+    id: String,
+}
+
+// ---------------------------------------------------------------------------
+// Command routing: JSON payloads sent via Device::send()
+// ---------------------------------------------------------------------------
+
+/// Internal command structure parsed from send() byte payload.
+#[derive(Debug, Clone, Deserialize)]
+struct PupilCommand {
+    command: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    timestamp: Option<i64>,
+}
+
+// ---------------------------------------------------------------------------
+// PupilDevice — Neon Companion REST API client
+// ---------------------------------------------------------------------------
+
+/// Pupil Labs Neon device controller using the Companion App REST API.
+///
+/// This module handles recording control, event sending, and status monitoring
+/// via HTTP requests to the Neon Companion App (port 8080). Gaze data streaming
+/// is handled separately via LSL through the `neon.rs` module.
 #[derive(Debug)]
 pub struct PupilDevice {
-    ws_client: Option<WebSocketStream<MaybeTlsStream<TcpStream>>>,
-    device_url: String,
+    http_client: reqwest::Client,
+    base_url: String,
     device_ip: String,
     status: DeviceStatus,
     config: DeviceConfig,
-    streaming_config: StreamingConfig,
-    recording: bool,
-    device_info: Option<PupilDeviceInfo>,
-    last_gaze_data: Option<GazeData>,
-    last_pupil_data: Option<PupilData>,
+    recording_id: Option<String>,
+    neon_status: Option<NeonStatus>,
     connection_retry_count: u32,
     max_retries: u32,
 }
 
 impl PupilDevice {
-    pub fn new(device_ip: String) -> Self {
-        let device_url = format!("ws://{}:8080{}", device_ip, DEFAULT_WS_ENDPOINT);
+    /// Create a new PupilDevice for the given host (e.g., "neon.local:8080" or "192.168.1.100").
+    ///
+    /// If no port is specified, defaults to 8080.
+    pub fn new(host: String) -> Self {
+        let (device_ip, base_url) = Self::parse_host(&host);
+
+        let http_client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(DEFAULT_HTTP_TIMEOUT_MS))
+            .build()
+            .unwrap_or_default();
+
         Self {
-            ws_client: None,
-            device_url: device_url.clone(),
+            http_client,
+            base_url,
             device_ip,
             status: DeviceStatus::Disconnected,
             config: DeviceConfig::default(),
-            streaming_config: StreamingConfig::default(),
-            recording: false,
-            device_info: None,
-            last_gaze_data: None,
-            last_pupil_data: None,
+            recording_id: None,
+            neon_status: None,
             connection_retry_count: 0,
             max_retries: 3,
         }
     }
 
-    /// Create a new device instance with custom WebSocket URL
-    pub fn new_with_url(device_url: String) -> Self {
-        let device_ip = device_url
-            .replace("ws://", "")
-            .replace("wss://", "")
-            .split(':')
-            .next()
-            .unwrap_or("localhost")
-            .to_string();
+    /// Parse a host string into (ip, base_url).
+    /// Accepts formats: "neon.local:8080", "192.168.1.100", "neon.local"
+    fn parse_host(host: &str) -> (String, String) {
+        // Strip any protocol prefix if accidentally included
+        let cleaned = host
+            .trim_start_matches("http://")
+            .trim_start_matches("https://")
+            .trim_start_matches("ws://")
+            .trim_start_matches("wss://");
 
-        Self {
-            ws_client: None,
-            device_url,
-            device_ip,
-            status: DeviceStatus::Disconnected,
-            config: DeviceConfig::default(),
-            streaming_config: StreamingConfig::default(),
-            recording: false,
-            device_info: None,
-            last_gaze_data: None,
-            last_pupil_data: None,
-            connection_retry_count: 0,
-            max_retries: 3,
-        }
+        let (ip_part, port) = if let Some((ip, port_str)) = cleaned.rsplit_once(':') {
+            let port = port_str.parse::<u16>().unwrap_or(DEFAULT_API_PORT);
+            (ip.to_string(), port)
+        } else {
+            (cleaned.to_string(), DEFAULT_API_PORT)
+        };
+
+        let base_url = format!("http://{}:{}/api", ip_part, port);
+        (ip_part, base_url)
     }
 
-    /// Discover Pupil Labs devices on the local network
-    pub async fn discover_devices() -> Result<Vec<String>, DeviceError> {
-        // TODO: Implement mDNS discovery for Pupil Labs devices
-        // For now, return common local IP ranges for manual testing
-        let common_ips = vec![
-            "192.168.1.100".to_string(),
-            "192.168.1.101".to_string(),
-            "192.168.0.100".to_string(),
-            "192.168.0.101".to_string(),
-            "10.0.0.100".to_string(),
-            "127.0.0.1".to_string(),
-        ];
+    // -----------------------------------------------------------------------
+    // Public helper methods (convenience wrappers for common REST operations)
+    // -----------------------------------------------------------------------
 
-        info!(
-            device = "pupil",
-            "Device discovery not yet implemented, returning common IPs"
-        );
-        Ok(common_ips)
-    }
+    /// Fetch current device status from `GET /api/status`.
+    ///
+    /// The Neon API returns a heterogeneous array of `{"model": "...", "data": {...}}`
+    /// objects wrapped in a `{"message": "...", "result": [...]}` envelope.
+    pub async fn get_neon_status(&mut self) -> Result<NeonStatus, DeviceError> {
+        let url = format!("{}/status", self.base_url);
+        let resp = self.http_client.get(&url).send().await.map_err(|e| {
+            DeviceError::CommunicationError(format!("GET /api/status failed: {}", e))
+        })?;
 
-    /// Get current timestamp in Unix epoch seconds
-    fn get_timestamp() -> f64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs_f64()
-    }
-
-    /// Generate a unique message ID
-    fn generate_message_id() -> String {
-        Uuid::new_v4().to_string()
-    }
-
-    /// Create a PupilMessage for sending commands
-    fn create_message(msg_type: &str, payload: serde_json::Value) -> PupilMessage {
-        PupilMessage {
-            msg_type: msg_type.to_string(),
-            payload,
-            timestamp: Self::get_timestamp(),
-            id: Some(Self::generate_message_id()),
-        }
-    }
-
-    /// Start gaze data streaming
-    pub async fn start_gaze_streaming(&mut self) -> Result<(), DeviceError> {
-        if self.ws_client.is_none() {
-            return Err(DeviceError::NotConnected);
+        if !resp.status().is_success() {
+            return Err(DeviceError::CommunicationError(format!(
+                "GET /api/status returned {}",
+                resp.status()
+            )));
         }
 
-        let message = Self::create_message(
-            "start_streaming",
-            serde_json::json!({
-                "data_type": "gaze",
-                "format": "json"
-            }),
-        );
+        let envelope: ApiResponse<Vec<StatusItem>> = resp.json().await.map_err(|e| {
+            DeviceError::InvalidData(format!("Failed to parse status envelope: {}", e))
+        })?;
 
-        let json_str =
-            serde_json::to_string(&message).map_err(|e| DeviceError::InvalidData(e.to_string()))?;
-
-        self.send(json_str.as_bytes()).await?;
-        self.streaming_config.gaze = true;
-        info!(device = "pupil", "Started gaze data streaming");
-        Ok(())
+        let neon_status = NeonStatus::from_status_items(envelope.result)?;
+        self.neon_status = Some(neon_status.clone());
+        Ok(neon_status)
     }
 
-    /// Stop gaze data streaming
-    pub async fn stop_gaze_streaming(&mut self) -> Result<(), DeviceError> {
-        if self.ws_client.is_none() {
-            return Err(DeviceError::NotConnected);
+    /// Start a recording. Returns the recording UUID.
+    pub async fn start_recording(&mut self) -> Result<String, DeviceError> {
+        let url = format!("{}/recording:start", self.base_url);
+        let resp = self.http_client.post(&url).send().await.map_err(|e| {
+            DeviceError::CommunicationError(format!("POST recording:start failed: {}", e))
+        })?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(DeviceError::CommunicationError(format!(
+                "recording:start returned {} — {}",
+                status, body
+            )));
         }
 
-        let message = Self::create_message(
-            "stop_streaming",
-            serde_json::json!({
-                "data_type": "gaze"
-            }),
-        );
+        let envelope: ApiResponse<RecordingStartResponse> = resp.json().await.map_err(|e| {
+            DeviceError::InvalidData(format!("Failed to parse recording response: {}", e))
+        })?;
 
-        let json_str =
-            serde_json::to_string(&message).map_err(|e| DeviceError::InvalidData(e.to_string()))?;
-
-        self.send(json_str.as_bytes()).await?;
-        self.streaming_config.gaze = false;
-        info!(device = "pupil", "Stopped gaze data streaming");
-        Ok(())
+        self.recording_id = Some(envelope.result.id.clone());
+        info!(device = "pupil", recording_id = %envelope.result.id, "Recording started");
+        Ok(envelope.result.id)
     }
 
-    /// Start recording with optional template
-    pub async fn start_recording(&mut self, template: Option<String>) -> Result<(), DeviceError> {
-        if self.ws_client.is_none() {
-            return Err(DeviceError::NotConnected);
-        }
-
-        let message = Self::create_message(
-            "recording.start",
-            serde_json::json!({
-                "template": template
-            }),
-        );
-
-        let json_str =
-            serde_json::to_string(&message).map_err(|e| DeviceError::InvalidData(e.to_string()))?;
-
-        self.send(json_str.as_bytes()).await?;
-        self.recording = true;
-        info!(
-            device = "pupil",
-            "Started recording with template: {:?}", template
-        );
-        Ok(())
-    }
-
-    /// Stop recording
+    /// Stop the current recording and save it.
     pub async fn stop_recording(&mut self) -> Result<(), DeviceError> {
-        if self.ws_client.is_none() {
-            return Err(DeviceError::NotConnected);
+        let url = format!("{}/recording:stop_and_save", self.base_url);
+        let resp = self.http_client.post(&url).send().await.map_err(|e| {
+            DeviceError::CommunicationError(format!("POST recording:stop_and_save failed: {}", e))
+        })?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(DeviceError::CommunicationError(format!(
+                "recording:stop_and_save returned {} — {}",
+                status, body
+            )));
         }
 
-        let message = Self::create_message("recording.stop", serde_json::json!({}));
+        // Parse envelope to validate response
+        let _envelope: ApiResponse<RecordingStopResponse> = resp.json().await.map_err(|e| {
+            DeviceError::InvalidData(format!("Failed to parse stop response: {}", e))
+        })?;
 
-        let json_str =
-            serde_json::to_string(&message).map_err(|e| DeviceError::InvalidData(e.to_string()))?;
-
-        self.send(json_str.as_bytes()).await?;
-        self.recording = false;
-        info!(device = "pupil", "Stopped recording");
+        info!(device = "pupil", "Recording stopped and saved");
+        self.recording_id = None;
         Ok(())
     }
 
-    /// Send event annotation
-    pub async fn send_event(&mut self, event: EventAnnotation) -> Result<(), DeviceError> {
-        if self.ws_client.is_none() {
-            return Err(DeviceError::NotConnected);
+    /// Cancel the current recording without saving.
+    pub async fn cancel_recording(&mut self) -> Result<(), DeviceError> {
+        let url = format!("{}/recording:cancel", self.base_url);
+        let resp = self.http_client.post(&url).send().await.map_err(|e| {
+            DeviceError::CommunicationError(format!("POST recording:cancel failed: {}", e))
+        })?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(DeviceError::CommunicationError(format!(
+                "recording:cancel returned {} — {}",
+                status, body
+            )));
         }
 
-        let message = Self::create_message(
-            "event",
-            serde_json::to_value(&event).map_err(|e| DeviceError::InvalidData(e.to_string()))?,
-        );
+        // Parse envelope to validate response
+        let _envelope: ApiResponse<RecordingCancelResponse> = resp.json().await.map_err(|e| {
+            DeviceError::InvalidData(format!("Failed to parse cancel response: {}", e))
+        })?;
 
-        let json_str =
-            serde_json::to_string(&message).map_err(|e| DeviceError::InvalidData(e.to_string()))?;
-
-        self.send(json_str.as_bytes()).await?;
-        debug!(device = "pupil", "Sent event annotation: {}", event.label);
+        info!(device = "pupil", "Recording cancelled");
+        self.recording_id = None;
         Ok(())
     }
 
-    /// Request device information
-    pub async fn request_device_info(&mut self) -> Result<(), DeviceError> {
-        if self.ws_client.is_none() {
-            return Err(DeviceError::NotConnected);
+    /// Send an event annotation to the Neon Companion App.
+    ///
+    /// Timestamps are in nanoseconds since Unix epoch. If `timestamp_ns` is None,
+    /// the Companion App uses its own clock.
+    pub async fn send_neon_event(
+        &mut self,
+        name: &str,
+        timestamp_ns: Option<i64>,
+    ) -> Result<EventResponse, DeviceError> {
+        let url = format!("{}/event", self.base_url);
+        let body = EventRequest {
+            name: name.to_string(),
+            timestamp: timestamp_ns,
+        };
+
+        let resp = self
+            .http_client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| {
+                DeviceError::CommunicationError(format!("POST /api/event failed: {}", e))
+            })?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let resp_body = resp.text().await.unwrap_or_default();
+            return Err(DeviceError::CommunicationError(format!(
+                "POST /api/event returned {} — {}",
+                status, resp_body
+            )));
         }
 
-        let message = Self::create_message("device.info", serde_json::json!({}));
+        let envelope: ApiResponse<EventResponse> = resp.json().await.map_err(|e| {
+            DeviceError::InvalidData(format!("Failed to parse event response: {}", e))
+        })?;
 
-        let json_str =
-            serde_json::to_string(&message).map_err(|e| DeviceError::InvalidData(e.to_string()))?;
+        // The Neon API does not return the event name — inject it manually
+        let mut event_resp = envelope.result;
+        event_resp.name = name.to_string();
 
-        self.send(json_str.as_bytes()).await?;
-        debug!(device = "pupil", "Requested device information");
-        Ok(())
+        debug!(device = "pupil", event = %event_resp.name, "Event sent successfully");
+        Ok(event_resp)
     }
 
-    /// Process incoming message and update internal state
-    fn process_message(&mut self, message_text: &str) -> Result<(), DeviceError> {
-        match serde_json::from_str::<PupilMessage>(message_text) {
-            Ok(msg) => {
-                debug!(device = "pupil", "Received message type: {}", msg.msg_type);
-
-                match msg.msg_type.as_str() {
-                    "gaze" => {
-                        if let Ok(gaze_data) = serde_json::from_value::<GazeData>(msg.payload) {
-                            self.last_gaze_data = Some(gaze_data);
-                            debug!(device = "pupil", "Updated gaze data");
-                        }
-                    }
-                    "pupil" => {
-                        if let Ok(pupil_data) = serde_json::from_value::<PupilData>(msg.payload) {
-                            self.last_pupil_data = Some(pupil_data);
-                            debug!(device = "pupil", "Updated pupil data");
-                        }
-                    }
-                    "device.info" => {
-                        if let Ok(device_info) =
-                            serde_json::from_value::<PupilDeviceInfo>(msg.payload)
-                        {
-                            self.device_info = Some(device_info);
-                            info!(device = "pupil", "Updated device information");
-                        }
-                    }
-                    "recording.started" => {
-                        self.recording = true;
-                        info!(device = "pupil", "Recording started confirmation received");
-                    }
-                    "recording.stopped" => {
-                        self.recording = false;
-                        info!(device = "pupil", "Recording stopped confirmation received");
-                    }
-                    "error" => {
-                        warn!(
-                            device = "pupil",
-                            "Received error from device: {:?}", msg.payload
-                        );
-                    }
-                    _ => {
-                        debug!(device = "pupil", "Unknown message type: {}", msg.msg_type);
-                    }
-                }
-                Ok(())
-            }
-            Err(e) => {
-                debug!(
-                    device = "pupil",
-                    "Failed to parse message as PupilMessage: {}", e
-                );
-                // Message might be raw data or different format, not necessarily an error
-                Ok(())
-            }
-        }
-    }
-
-    /// Get the latest gaze data
-    pub fn get_latest_gaze_data(&self) -> Option<&GazeData> {
-        self.last_gaze_data.as_ref()
-    }
-
-    /// Get the latest pupil data
-    pub fn get_latest_pupil_data(&self) -> Option<&PupilData> {
-        self.last_pupil_data.as_ref()
-    }
-
-    /// Get device information
-    pub fn get_device_info(&self) -> Option<&PupilDeviceInfo> {
-        self.device_info.as_ref()
-    }
-
-    /// Check if currently recording
+    /// Check if a recording is currently active.
     pub fn is_recording(&self) -> bool {
-        self.recording
+        self.recording_id.is_some()
     }
 
-    /// Get current streaming configuration
-    pub fn get_streaming_config(&self) -> &StreamingConfig {
-        &self.streaming_config
+    /// Get the cached Neon status (from last connect/heartbeat).
+    pub fn get_cached_status(&self) -> Option<&NeonStatus> {
+        self.neon_status.as_ref()
+    }
+
+    /// Route a JSON command to the appropriate REST endpoint.
+    async fn route_command(&mut self, data: &[u8]) -> Result<serde_json::Value, DeviceError> {
+        let text = String::from_utf8_lossy(data);
+
+        let cmd: PupilCommand = serde_json::from_str(&text)
+            .map_err(|e| DeviceError::InvalidData(format!("Invalid command JSON: {}", e)))?;
+
+        match cmd.command.as_str() {
+            "recording_start" => {
+                let id = self.start_recording().await?;
+                Ok(serde_json::json!({ "recording_id": id }))
+            }
+            "recording_stop" => {
+                self.stop_recording().await?;
+                Ok(serde_json::json!({ "success": true }))
+            }
+            "recording_cancel" => {
+                self.cancel_recording().await?;
+                Ok(serde_json::json!({ "success": true }))
+            }
+            "event" => {
+                let name = cmd.name.unwrap_or_else(|| "unnamed".to_string());
+                let resp = self.send_neon_event(&name, cmd.timestamp).await?;
+                Ok(serde_json::json!({
+                    "name": resp.name,
+                    "recording_id": resp.recording_id,
+                    "timestamp": resp.timestamp,
+                }))
+            }
+            "status" => {
+                let status = self.get_neon_status().await?;
+                Ok(serde_json::to_value(&status)
+                    .map_err(|e| DeviceError::InvalidData(e.to_string()))?)
+            }
+            other => Err(DeviceError::InvalidData(format!(
+                "Unknown Pupil command: {}",
+                other
+            ))),
+        }
     }
 }
 
@@ -425,51 +483,47 @@ impl Device for PupilDevice {
     async fn connect(&mut self) -> Result<(), DeviceError> {
         info!(
             device = "pupil",
-            "Connecting to Pupil Labs Neon at {}", self.device_url
+            "Connecting to Neon Companion at {}", self.base_url
         );
         self.status = DeviceStatus::Connecting;
         self.connection_retry_count = 0;
 
-        let url = if !self.device_url.starts_with("ws://") && !self.device_url.starts_with("wss://")
-        {
-            format!("ws://{}", self.device_url)
-        } else {
-            self.device_url.clone()
-        };
+        let connect_timeout = Duration::from_millis(self.config.timeout_ms);
 
-        // Apply connection timeout from config
-        let connect_timeout = tokio::time::Duration::from_millis(self.config.timeout_ms);
-
-        // Use loop-based retry instead of recursion to prevent stack overflow
         loop {
-            match tokio::time::timeout(connect_timeout, connect_async(&url)).await {
-                Ok(Ok((ws_stream, response))) => {
-                    self.ws_client = Some(ws_stream);
+            match timeout(connect_timeout, self.get_neon_status()).await {
+                Ok(Ok(status)) => {
+                    self.neon_status = Some(status.clone());
                     self.status = DeviceStatus::Connected;
                     self.connection_retry_count = 0;
 
                     info!(
                         device = "pupil",
-                        "Successfully connected to Pupil Labs Neon. Status: {}",
-                        response.status()
+                        device_name = %status.phone.device_name,
+                        device_id = %status.phone.device_id,
+                        battery = %status.phone.battery_level,
+                        "Connected to Neon Companion"
                     );
 
-                    // Request device information after successful connection
-                    if let Err(e) = self.request_device_info().await {
-                        warn!(device = "pupil", "Failed to request device info: {}", e);
+                    // Check for active recording
+                    if let Some(ref rec) = status.recording {
+                        self.recording_id = Some(rec.id.clone());
+                        info!(
+                            device = "pupil",
+                            recording_id = %rec.id,
+                            "Found active recording"
+                        );
                     }
 
                     return Ok(());
                 }
                 Ok(Err(e)) => {
-                    self.status = DeviceStatus::Error;
                     self.connection_retry_count += 1;
                     error!(
                         device = "pupil",
-                        "Failed to connect to Pupil Labs Neon: {}", e
+                        "Failed to connect to Neon Companion: {}", e
                     );
 
-                    // Auto-retry if enabled and under retry limit
                     if self.config.auto_reconnect && self.connection_retry_count < self.max_retries
                     {
                         warn!(
@@ -478,35 +532,39 @@ impl Device for PupilDevice {
                             self.connection_retry_count,
                             self.max_retries
                         );
-                        tokio::time::sleep(tokio::time::Duration::from_millis(
+                        tokio::time::sleep(Duration::from_millis(
                             self.config.reconnect_interval_ms,
                         ))
                         .await;
-                        continue; // Retry via loop instead of recursion
+                        continue;
                     }
 
-                    return Err(DeviceError::WebSocketError(e.to_string()));
+                    self.status = DeviceStatus::Error;
+                    return Err(DeviceError::ConnectionFailed(format!(
+                        "Cannot reach Neon Companion at {}: {}",
+                        self.base_url, e
+                    )));
                 }
                 Err(_) => {
-                    self.status = DeviceStatus::Error;
                     self.connection_retry_count += 1;
-                    error!(device = "pupil", "Connection timeout to Pupil Labs Neon");
+                    error!(device = "pupil", "Connection timeout to Neon Companion");
 
                     if self.config.auto_reconnect && self.connection_retry_count < self.max_retries
                     {
                         warn!(
                             device = "pupil",
-                            "Retrying connection after timeout ({}/{})",
+                            "Retrying after timeout ({}/{})",
                             self.connection_retry_count,
                             self.max_retries
                         );
-                        tokio::time::sleep(tokio::time::Duration::from_millis(
+                        tokio::time::sleep(Duration::from_millis(
                             self.config.reconnect_interval_ms,
                         ))
                         .await;
-                        continue; // Retry via loop instead of recursion
+                        continue;
                     }
 
+                    self.status = DeviceStatus::Error;
                     return Err(DeviceError::Timeout);
                 }
             }
@@ -514,178 +572,68 @@ impl Device for PupilDevice {
     }
 
     async fn disconnect(&mut self) -> Result<(), DeviceError> {
-        info!(device = "pupil", "Disconnecting from Pupil Labs Neon");
-
-        // Stop any active streaming before disconnecting
-        if self.streaming_config.gaze {
-            let _ = self.stop_gaze_streaming().await;
-        }
-
-        // Stop recording if active
-        if self.recording {
-            let _ = self.stop_recording().await;
-        }
-
-        if let Some(mut ws) = self.ws_client.take() {
-            // Close WebSocket with timeout to prevent hanging
-            let close_timeout = Duration::from_secs(2);
-            match timeout(close_timeout, ws.close(None)).await {
-                Ok(Ok(_)) => debug!(device = "pupil", "WebSocket closed gracefully"),
-                Ok(Err(e)) => warn!(
-                    device = "pupil",
-                    "Error closing WebSocket connection: {}", e
-                ),
-                Err(_) => warn!(
-                    device = "pupil",
-                    "WebSocket close timed out after {:?}", close_timeout
-                ),
-            }
-        }
+        info!(device = "pupil", "Disconnecting from Neon Companion");
 
         self.status = DeviceStatus::Disconnected;
-        self.streaming_config = StreamingConfig::default();
-        self.recording = false;
-        self.device_info = None;
-        self.last_gaze_data = None;
-        self.last_pupil_data = None;
+        self.neon_status = None;
+        self.recording_id = None;
         self.connection_retry_count = 0;
 
-        info!(
-            device = "pupil",
-            "Successfully disconnected from Pupil Labs Neon"
-        );
+        info!(device = "pupil", "Disconnected from Neon Companion");
         Ok(())
     }
 
     async fn send(&mut self, data: &[u8]) -> Result<(), DeviceError> {
-        if let Some(ref mut ws) = self.ws_client {
-            let message = String::from_utf8_lossy(data);
+        if self.status != DeviceStatus::Connected {
+            return Err(DeviceError::NotConnected);
+        }
 
-            // Apply send timeout
-            let send_timeout = tokio::time::Duration::from_millis(self.config.timeout_ms);
-
-            match tokio::time::timeout(
-                send_timeout,
-                ws.send(Message::Text(message.to_string().into())),
-            )
-            .await
-            {
-                Ok(Ok(())) => {
-                    debug!(device = "pupil", "Sent message to Pupil: {}", message);
-                    Ok(())
-                }
-                Ok(Err(e)) => {
-                    error!(device = "pupil", "WebSocket send error: {}", e);
-                    self.status = DeviceStatus::Error;
-                    Err(DeviceError::WebSocketError(e.to_string()))
-                }
-                Err(_) => {
-                    error!(device = "pupil", "Send timeout to Pupil Labs Neon");
-                    self.status = DeviceStatus::Error;
-                    Err(DeviceError::Timeout)
-                }
+        match self.route_command(data).await {
+            Ok(result) => {
+                debug!(device = "pupil", result = %result, "Command executed");
+                Ok(())
             }
-        } else {
-            Err(DeviceError::NotConnected)
+            Err(e) => {
+                error!(device = "pupil", "Command failed: {}", e);
+                Err(e)
+            }
         }
     }
 
     async fn receive(&mut self) -> Result<Vec<u8>, DeviceError> {
-        if let Some(ref mut ws) = self.ws_client {
-            // Apply receive timeout
-            let receive_timeout = tokio::time::Duration::from_millis(self.config.timeout_ms);
+        if self.status != DeviceStatus::Connected {
+            return Err(DeviceError::NotConnected);
+        }
 
-            match tokio::time::timeout(receive_timeout, ws.next()).await {
-                Ok(Some(Ok(Message::Text(text)))) => {
-                    debug!(device = "pupil", "Received text from Pupil: {}", text);
-
-                    // Process the message to update internal state
-                    if let Err(e) = self.process_message(&text) {
-                        warn!(
-                            device = "pupil",
-                            "Failed to process received message: {}", e
-                        );
-                    }
-
-                    Ok(text.as_bytes().to_vec())
-                }
-                Ok(Some(Ok(Message::Binary(data)))) => {
-                    debug!(device = "pupil", "Received {} bytes from Pupil", data.len());
-                    Ok(data.to_vec())
-                }
-                Ok(Some(Ok(Message::Close(frame)))) => {
-                    info!(device = "pupil", "WebSocket closed by remote: {:?}", frame);
-                    self.status = DeviceStatus::Disconnected;
-                    self.ws_client = None;
-                    self.recording = false;
-                    self.streaming_config = StreamingConfig::default();
-                    Err(DeviceError::ConnectionFailed(
-                        "WebSocket closed by remote".to_string(),
-                    ))
-                }
-                Ok(Some(Ok(Message::Ping(data)))) => {
-                    // Respond to ping with pong
-                    if let Err(e) = ws.send(Message::Pong(data)).await {
-                        warn!(device = "pupil", "Failed to send pong response: {}", e);
-                    }
-                    Ok(Vec::new())
-                }
-                Ok(Some(Ok(Message::Pong(_)))) => {
-                    debug!(device = "pupil", "Received pong from Pupil");
-                    Ok(Vec::new())
-                }
-                Ok(Some(Ok(Message::Frame(_)))) => {
-                    // Raw frame, not typically used
-                    Ok(Vec::new())
-                }
-                Ok(Some(Err(e))) => {
-                    error!(device = "pupil", "WebSocket receive error: {}", e);
-                    self.status = DeviceStatus::Error;
-                    Err(DeviceError::WebSocketError(e.to_string()))
-                }
-                Ok(None) => {
-                    info!(device = "pupil", "WebSocket stream ended");
-                    self.status = DeviceStatus::Disconnected;
-                    self.ws_client = None;
-                    self.recording = false;
-                    self.streaming_config = StreamingConfig::default();
-                    Err(DeviceError::ConnectionFailed(
-                        "WebSocket stream ended".to_string(),
-                    ))
-                }
-                Err(_) => {
-                    // Timeout occurred, this is not necessarily an error for receive operations
-                    debug!(device = "pupil", "Receive timeout (no data available)");
-                    Ok(Vec::new())
-                }
+        // Poll status endpoint for updates.
+        // Gaze data streaming is handled by the LSL neon.rs module, not here.
+        match self.get_neon_status().await {
+            Ok(status) => {
+                let json = serde_json::to_vec(&status)
+                    .map_err(|e| DeviceError::InvalidData(e.to_string()))?;
+                Ok(json)
             }
-        } else {
-            Err(DeviceError::NotConnected)
+            Err(e) => {
+                warn!(device = "pupil", "Failed to poll status: {}", e);
+                Ok(Vec::new())
+            }
         }
     }
 
     fn get_info(&self) -> DeviceInfo {
         let mut metadata = serde_json::json!({
-            "device_url": self.device_url,
+            "base_url": self.base_url,
             "device_ip": self.device_ip,
-            "streaming_config": self.streaming_config,
-            "recording": self.recording,
-            "connection_retry_count": self.connection_retry_count,
+            "recording_id": self.recording_id,
         });
 
-        // Add device info if available
-        if let Some(ref device_info) = self.device_info {
-            metadata["device_info"] = serde_json::to_value(device_info).unwrap_or_default();
-        }
-
-        // Add latest gaze data timestamp if available
-        if let Some(ref gaze_data) = self.last_gaze_data {
-            if let Some(timestamp_num) = serde_json::Number::from_f64(gaze_data.timestamp) {
-                metadata["last_gaze_timestamp"] = serde_json::Value::Number(timestamp_num);
-            }
-            if let Some(confidence_num) = serde_json::Number::from_f64(gaze_data.confidence) {
-                metadata["gaze_confidence"] = serde_json::Value::Number(confidence_num);
-            }
+        if let Some(ref status) = self.neon_status {
+            metadata["device_name"] = serde_json::json!(status.phone.device_name);
+            metadata["device_id"] = serde_json::json!(status.phone.device_id);
+            metadata["battery_level"] = serde_json::json!(status.phone.battery_level);
+            metadata["battery_state"] = serde_json::json!(status.phone.battery_state);
+            metadata["memory_state"] = serde_json::json!(status.phone.memory_state);
+            metadata["sensor_count"] = serde_json::json!(status.sensors.len());
         }
 
         DeviceInfo {
@@ -702,82 +650,83 @@ impl Device for PupilDevice {
     }
 
     fn configure(&mut self, config: DeviceConfig) -> Result<(), DeviceError> {
-        info!(
-            device = "pupil",
-            "Configuring Pupil device with new settings"
-        );
+        info!(device = "pupil", "Configuring Pupil device");
         self.config = config;
 
         if let Some(custom) = self.config.custom_settings.as_object() {
-            // Update device URL if provided
-            if let Some(url) = custom.get("device_url").and_then(|v| v.as_str()) {
-                self.device_url = url.to_string();
-                self.device_ip = url
-                    .replace("ws://", "")
-                    .replace("wss://", "")
-                    .split(':')
-                    .next()
-                    .unwrap_or("localhost")
-                    .to_string();
+            // Update device IP/URL if provided
+            if let Some(ip) = custom.get("device_ip").and_then(|v| v.as_str()) {
+                let (device_ip, base_url) = Self::parse_host(ip);
+                self.device_ip = device_ip;
+                self.base_url = base_url;
             }
 
-            // Update device IP if provided
-            if let Some(ip) = custom.get("device_ip").and_then(|v| v.as_str()) {
-                self.device_ip = ip.to_string();
-                self.device_url = format!("ws://{}:8080{}", ip, DEFAULT_WS_ENDPOINT);
+            if let Some(url) = custom.get("device_url").and_then(|v| v.as_str()) {
+                let (device_ip, base_url) = Self::parse_host(url);
+                self.device_ip = device_ip;
+                self.base_url = base_url;
             }
 
             // Update max retries if provided
             if let Some(retries) = custom.get("max_retries").and_then(|v| v.as_u64()) {
                 self.max_retries = retries as u32;
             }
-
-            // Update streaming configuration if provided
-            if let Some(streaming_config) = custom.get("streaming_config") {
-                if let Ok(stream_config) =
-                    serde_json::from_value::<StreamingConfig>(streaming_config.clone())
-                {
-                    self.streaming_config = stream_config;
-                    debug!(
-                        device = "pupil",
-                        "Updated streaming configuration: {:?}", self.streaming_config
-                    );
-                }
-            }
         }
 
-        info!(
-            device = "pupil",
-            "Pupil device configuration updated successfully"
-        );
+        // Rebuild HTTP client with updated timeout
+        self.http_client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(self.config.timeout_ms))
+            .build()
+            .unwrap_or_default();
+
+        info!(device = "pupil", "Pupil device configuration updated");
         Ok(())
     }
 
     async fn heartbeat(&mut self) -> Result<(), DeviceError> {
-        if let Some(ref mut ws) = self.ws_client {
-            let ping_timeout = tokio::time::Duration::from_millis(self.config.timeout_ms);
-
-            match tokio::time::timeout(ping_timeout, ws.send(Message::Ping(Vec::new().into())))
-                .await
-            {
-                Ok(Ok(())) => {
-                    debug!(device = "pupil", "Heartbeat ping sent successfully");
-                    Ok(())
-                }
-                Ok(Err(e)) => {
-                    error!(device = "pupil", "Heartbeat ping failed: {}", e);
-                    self.status = DeviceStatus::Error;
-                    Err(DeviceError::WebSocketError(e.to_string()))
-                }
-                Err(_) => {
-                    error!(device = "pupil", "Heartbeat ping timeout");
-                    self.status = DeviceStatus::Error;
-                    Err(DeviceError::Timeout)
-                }
-            }
-        } else {
-            Err(DeviceError::NotConnected)
+        if self.status != DeviceStatus::Connected {
+            return Err(DeviceError::NotConnected);
         }
+
+        match self.get_neon_status().await {
+            Ok(_) => {
+                debug!(device = "pupil", "Heartbeat OK");
+                Ok(())
+            }
+            Err(e) => {
+                error!(device = "pupil", "Heartbeat failed: {}", e);
+                self.status = DeviceStatus::Error;
+                Err(e)
+            }
+        }
+    }
+
+    async fn test_connection(&mut self) -> Result<bool, DeviceError> {
+        let test_url = format!("{}/status", self.base_url);
+        let test_client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(3))
+            .build()
+            .unwrap_or_default();
+
+        match test_client.get(&test_url).send().await {
+            Ok(resp) => Ok(resp.status().is_success()),
+            Err(_) => Ok(false),
+        }
+    }
+
+    async fn send_event(&mut self, event: serde_json::Value) -> Result<(), DeviceError> {
+        if self.status != DeviceStatus::Connected {
+            return Err(DeviceError::NotConnected);
+        }
+
+        let name = event
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unnamed");
+        let timestamp = event.get("timestamp").and_then(|v| v.as_i64());
+
+        self.send_neon_event(name, timestamp).await?;
+        Ok(())
     }
 }
 
@@ -791,18 +740,44 @@ mod tests {
 
         assert_eq!(device.get_status(), DeviceStatus::Disconnected);
         assert!(!device.is_recording());
-        assert_eq!(device.get_streaming_config().gaze, true);
-        assert_eq!(device.get_streaming_config().pupil, false);
+        assert_eq!(device.base_url, "http://192.168.1.100:8080/api");
+        assert_eq!(device.device_ip, "192.168.1.100");
     }
 
     #[test]
-    fn test_pupil_device_creation_with_url() {
-        let device = PupilDevice::new_with_url("ws://192.168.1.100:8080/api/ws".to_string());
+    fn test_pupil_device_creation_with_port() {
+        let device = PupilDevice::new("neon.local:8080".to_string());
 
+        assert_eq!(device.base_url, "http://neon.local:8080/api");
+        assert_eq!(device.device_ip, "neon.local");
         assert_eq!(device.get_status(), DeviceStatus::Disconnected);
+    }
+
+    #[test]
+    fn test_pupil_device_creation_default_port() {
+        let device = PupilDevice::new("neon.local".to_string());
+
+        assert_eq!(device.base_url, "http://neon.local:8080/api");
+        assert_eq!(device.device_ip, "neon.local");
+    }
+
+    #[test]
+    fn test_pupil_device_strips_protocol() {
+        let device = PupilDevice::new("http://192.168.1.100:8080".to_string());
+        assert_eq!(device.base_url, "http://192.168.1.100:8080/api");
+
+        let device2 = PupilDevice::new("ws://192.168.1.100:8080".to_string());
+        assert_eq!(device2.base_url, "http://192.168.1.100:8080/api");
+    }
+
+    #[test]
+    fn test_device_info() {
+        let device = PupilDevice::new("192.168.1.100".to_string());
         let info = device.get_info();
+
         assert_eq!(info.device_type, DeviceType::Pupil);
         assert!(info.name.contains("192.168.1.100"));
+        assert_eq!(info.id, "pupil_192_168_1_100");
     }
 
     #[test]
@@ -812,77 +787,194 @@ mod tests {
         let mut config = DeviceConfig::default();
         config.timeout_ms = 10000;
         config.custom_settings = serde_json::json!({
-            "device_ip": "192.168.1.101",
+            "device_ip": "192.168.1.101:8080",
             "max_retries": 5,
-            "streaming_config": {
-                "gaze": true,
-                "pupil": true,
-                "video": false,
-                "imu": false
-            }
         });
 
         let result = device.configure(config);
         assert!(result.is_ok());
-        assert_eq!(device.get_streaming_config().pupil, true);
+        assert_eq!(device.base_url, "http://192.168.1.101:8080/api");
+        assert_eq!(device.max_retries, 5);
     }
 
     #[test]
-    fn test_gaze_data_structure() {
-        let gaze_data = GazeData {
-            timestamp: 1234567890.0,
-            gaze_position_2d: (0.5, 0.3),
-            gaze_position_3d: Some((0.1, 0.2, 0.8)),
-            confidence: 0.95,
-            eye_id: 2,
-            pupil_diameter: Some(3.2),
+    fn test_neon_status_from_api_response() {
+        // Simulate the actual Neon API response format:
+        // {"message": "...", "result": [{"model": "Phone", "data": {...}}, ...]}
+        let api_json = serde_json::json!({
+            "message": "success",
+            "result": [
+                {
+                    "model": "Phone",
+                    "data": {
+                        "ip": "192.168.1.100",
+                        "port": 8080,
+                        "device_id": "abc123",
+                        "device_name": "Neon Test",
+                        "battery_level": 0.85,
+                        "battery_state": "OK",
+                        "memory": 4000000000_u64,
+                        "memory_state": "OK"
+                    }
+                },
+                {
+                    "model": "Hardware",
+                    "data": {
+                        "version": "2.0",
+                        "glasses_serial": "GL-001",
+                        "world_camera_serial": "WC-001"
+                    }
+                },
+                {
+                    "model": "Sensor",
+                    "data": {
+                        "sensor": "world",
+                        "conn_type": "DIRECT",
+                        "protocol": "rtsp",
+                        "ip": "192.168.1.100",
+                        "port": 8086,
+                        "connected": true
+                    }
+                },
+                {
+                    "model": "Sensor",
+                    "data": {
+                        "sensor": "gaze",
+                        "conn_type": "WEBSOCKET",
+                        "connected": true
+                    }
+                },
+                {
+                    "model": "Recording",
+                    "data": {
+                        "id": "550e8400-e29b-41d4-a716-446655440000",
+                        "action": "START",
+                        "rec_duration_ns": 5000000000_u64
+                    }
+                }
+            ]
+        });
+
+        // Parse the envelope
+        let envelope: ApiResponse<Vec<StatusItem>> = serde_json::from_value(api_json).unwrap();
+        assert_eq!(envelope.message, "success");
+
+        // Parse status from heterogeneous array
+        let status = NeonStatus::from_status_items(envelope.result).unwrap();
+        assert_eq!(status.phone.device_name, "Neon Test");
+        assert_eq!(status.phone.battery_level, 0.85);
+        assert!(status.hardware.is_some());
+        assert_eq!(status.hardware.unwrap().glasses_serial, "GL-001");
+        assert_eq!(status.sensors.len(), 2);
+        assert_eq!(status.sensors[0].sensor, "world");
+        assert!(status.sensors[0].connected);
+        assert!(status.recording.is_some());
+        assert_eq!(status.recording.unwrap().action, "START");
+    }
+
+    #[test]
+    fn test_neon_status_missing_phone() {
+        // Status response without a Phone component should fail
+        let items = vec![StatusItem {
+            model: "Sensor".to_string(),
+            data: serde_json::json!({"sensor": "world", "conn_type": "DIRECT"}),
+        }];
+
+        let result = NeonStatus::from_status_items(items);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_neon_status_minimal() {
+        // Minimal status with just Phone (no hardware, sensors, or recording)
+        let items = vec![StatusItem {
+            model: "Phone".to_string(),
+            data: serde_json::json!({
+                "ip": "192.168.1.100",
+                "port": 8080,
+                "device_id": "abc123",
+                "device_name": "Neon Minimal",
+                "battery_level": 0.5,
+                "battery_state": "OK",
+                "memory": 2000000000_u64,
+                "memory_state": "OK"
+            }),
+        }];
+
+        let status = NeonStatus::from_status_items(items).unwrap();
+        assert_eq!(status.phone.device_name, "Neon Minimal");
+        assert!(status.hardware.is_none());
+        assert!(status.sensors.is_empty());
+        assert!(status.recording.is_none());
+    }
+
+    #[test]
+    fn test_recording_start_envelope() {
+        let json = serde_json::json!({
+            "message": "Recording started",
+            "result": {
+                "id": "550e8400-e29b-41d4-a716-446655440000"
+            }
+        });
+
+        let envelope: ApiResponse<RecordingStartResponse> = serde_json::from_value(json).unwrap();
+        assert_eq!(envelope.result.id, "550e8400-e29b-41d4-a716-446655440000");
+    }
+
+    #[test]
+    fn test_event_response_envelope() {
+        // Note: The Neon API does not return the event name in the response
+        let json = serde_json::json!({
+            "message": "Event sent",
+            "result": {
+                "recording_id": "550e8400-e29b-41d4-a716-446655440000",
+                "timestamp": 1700000000000000000_i64
+            }
+        });
+
+        let envelope: ApiResponse<EventResponse> = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            envelope.result.recording_id,
+            "550e8400-e29b-41d4-a716-446655440000"
+        );
+        assert_eq!(envelope.result.timestamp, 1700000000000000000);
+        assert_eq!(envelope.result.name, ""); // Not returned by API
+    }
+
+    #[test]
+    fn test_event_request_serialization() {
+        let event = EventRequest {
+            name: "stimulus_onset".to_string(),
+            timestamp: Some(1700000000_000_000_000),
         };
+        let json = serde_json::to_value(&event).unwrap();
 
-        assert_eq!(gaze_data.timestamp, 1234567890.0);
-        assert_eq!(gaze_data.gaze_position_2d, (0.5, 0.3));
-        assert_eq!(gaze_data.confidence, 0.95);
-        assert_eq!(gaze_data.eye_id, 2);
+        assert_eq!(json["name"], "stimulus_onset");
+        assert_eq!(json["timestamp"], 1700000000_000_000_000_i64);
     }
 
     #[test]
-    fn test_event_annotation_structure() {
-        let event = EventAnnotation {
-            timestamp: 1234567890.0,
-            label: "stimulus_onset".to_string(),
-            duration: Some(2.5),
-            extra_data: Some(HashMap::from([
-                (
-                    "condition".to_string(),
-                    serde_json::Value::String("experimental".to_string()),
-                ),
-                (
-                    "trial_id".to_string(),
-                    serde_json::Value::Number(serde_json::Number::from(42)),
-                ),
-            ])),
+    fn test_event_request_without_timestamp() {
+        let event = EventRequest {
+            name: "marker".to_string(),
+            timestamp: None,
         };
+        let json = serde_json::to_value(&event).unwrap();
 
-        assert_eq!(event.label, "stimulus_onset");
-        assert_eq!(event.duration, Some(2.5));
-        assert!(event.extra_data.is_some());
+        assert_eq!(json["name"], "marker");
+        assert!(json.get("timestamp").is_none());
     }
 
     #[test]
-    fn test_pupil_message_creation() {
-        let message =
-            PupilDevice::create_message("test_command", serde_json::json!({"param": "value"}));
+    fn test_command_routing_parse() {
+        let cmd_json = r#"{"command": "recording_start"}"#;
+        let cmd: PupilCommand = serde_json::from_str(cmd_json).unwrap();
+        assert_eq!(cmd.command, "recording_start");
 
-        assert_eq!(message.msg_type, "test_command");
-        assert!(message.id.is_some());
-        assert!(message.timestamp > 0.0);
-    }
-
-    #[tokio::test]
-    async fn test_device_discovery() {
-        let devices = PupilDevice::discover_devices().await;
-        assert!(devices.is_ok());
-        let device_list = devices.unwrap();
-        assert!(!device_list.is_empty());
-        assert!(device_list.contains(&"127.0.0.1".to_string()));
+        let cmd_json = r#"{"command": "event", "name": "stim", "timestamp": 1700000000000000000}"#;
+        let cmd: PupilCommand = serde_json::from_str(cmd_json).unwrap();
+        assert_eq!(cmd.command, "event");
+        assert_eq!(cmd.name.unwrap(), "stim");
+        assert_eq!(cmd.timestamp.unwrap(), 1700000000_000_000_000);
     }
 }

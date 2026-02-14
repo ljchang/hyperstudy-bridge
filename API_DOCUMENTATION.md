@@ -176,6 +176,8 @@ type ResponseType = "status" | "data" | "error" | "device_list";
 
 ### Pupil Labs Neon Eye Tracker
 
+The Neon integration uses **REST API** (port 8080) for control and **LSL** for gaze data streaming.
+
 #### Connect to Pupil Device
 ```json
 {
@@ -183,57 +185,62 @@ type ResponseType = "status" | "data" | "error" | "device_list";
   "device": "pupil",
   "action": "connect",
   "payload": {
-    "deviceUrl": "ws://192.168.1.50:8081",
-    "discoveryPort": 8080  // Optional for auto-discovery
+    "url": "neon.local:8080"
   }
 }
 ```
 
-#### Start Gaze Streaming
-```json
-{
-  "type": "command",
-  "device": "pupil",
-  "action": "configure",
-  "payload": {
-    "streaming": true,
-    "dataTypes": ["gaze", "fixation", "blink"]
-  }
-}
-```
-
-**Gaze Data Response:**
-```json
-{
-  "type": "data",
-  "device": "pupil",
-  "payload": {
-    "gaze": {
-      "x": 0.523,
-      "y": 0.412,
-      "confidence": 0.98
-    },
-    "fixation": {
-      "active": true,
-      "duration": 234  // ms
-    },
-    "timestamp": 1634567890123
-  }
-}
-```
-
-#### Control Recording
+#### Start Recording
 ```json
 {
   "type": "command",
   "device": "pupil",
   "action": "send",
   "payload": {
-    "command": "start_recording",
-    "name": "experiment_001"
+    "command": "recording_start"
   }
 }
 ```
+
+#### Send Event Annotation
+```json
+{
+  "type": "command",
+  "device": "pupil",
+  "action": "send",
+  "payload": {
+    "command": "event",
+    "name": "stimulus_onset",
+    "timestamp": 1700000000000000000
+  }
+}
+```
+
+#### Stop Recording
+```json
+{
+  "type": "command",
+  "device": "pupil",
+  "action": "send",
+  "payload": {
+    "command": "recording_stop"
+  }
+}
+```
+
+#### Query Device Status
+```json
+{
+  "type": "command",
+  "device": "pupil",
+  "action": "send",
+  "payload": {
+    "command": "status"
+  }
+}
+```
+
+> **Note**: Gaze data streaming is handled via LSL, not the REST API. Enable "Stream over LSL" in the Neon Companion App, then use the `DiscoverNeon` and `ConnectNeonGaze` bridge commands.
 
 ### Lab Streaming Layer (LSL)
 
@@ -326,8 +333,7 @@ type ResponseType = "status" | "data" | "error" | "device_list";
       },
       "pupil": {
         "connected": true,
-        "deviceUrl": "ws://192.168.1.50:8081",
-        "streaming": true
+        "url": "neon.local:8080"
       }
     }
   }

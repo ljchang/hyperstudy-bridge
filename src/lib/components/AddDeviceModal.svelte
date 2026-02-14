@@ -25,8 +25,8 @@
       id: 'pupil',
       name: 'Pupil Labs Neon',
       type: 'Eye Tracker',
-      connection: 'WebSocket',
-      config: { url: 'localhost:8081' },
+      connection: 'REST API + LSL',
+      config: { url: 'neon.local:8080' },
     },
     {
       id: 'frenz',

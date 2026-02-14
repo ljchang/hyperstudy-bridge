@@ -1,301 +1,206 @@
-// Example usage of the Pupil Labs Neon Eye Tracker device module
-// This file demonstrates how to integrate and use the enhanced Pupil device
-// implementation in the HyperStudy Bridge application.
+// Example usage of the Pupil Labs Neon device module (REST API)
+//
+// This file demonstrates how to use the PupilDevice to control a Neon
+// Companion App via its REST API. Gaze data streaming is handled separately
+// by the LSL neon.rs module — this module is for control operations only.
+//
+// Prerequisites:
+//   - Neon Companion App running on the phone
+//   - Phone and computer on the same network
+//   - For gaze data: "Stream over LSL" enabled in Companion App settings
 
+use crate::devices::pupil::PupilDevice;
 use crate::devices::{Device, DeviceConfig, DeviceError};
-use crate::devices::pupil::{PupilDevice, EventAnnotation, StreamingConfig};
-use std::collections::HashMap;
 use tokio::time::{sleep, Duration};
-use tracing::{info, error};
+use tracing::{error, info};
 
-/// Example function demonstrating basic Pupil device usage
-pub async fn basic_pupil_usage_example() -> Result<(), DeviceError> {
-    info!("Starting basic Pupil Labs device example");
+/// Example: Basic connection and status check
+pub async fn basic_connection_example() -> Result<(), DeviceError> {
+    info!("Starting Neon basic connection example");
 
-    // 1. Create a new device instance
-    let mut device = PupilDevice::new("192.168.1.100".to_string());
+    // 1. Create device — defaults to port 8080 if not specified
+    let mut device = PupilDevice::new("neon.local:8080".to_string());
 
-    // 2. Configure the device with custom settings
+    // 2. Configure with custom timeout
     let mut config = DeviceConfig::default();
-    config.timeout_ms = 10000;  // 10 second timeout
+    config.timeout_ms = 10000;
     config.auto_reconnect = true;
     config.reconnect_interval_ms = 2000;
-    config.custom_settings = serde_json::json!({
-        "streaming_config": {
-            "gaze": true,
-            "pupil": false,
-            "video": false,
-            "imu": false
-        },
-        "max_retries": 3
-    });
-
     device.configure(config)?;
 
-    // 3. Connect to the device
-    match device.connect().await {
-        Ok(()) => {
-            info!("Successfully connected to Pupil Labs device");
+    // 3. Connect — verifies Companion App reachability via GET /api/status
+    device.connect().await?;
+    info!("Connected to Neon Companion");
 
-            // 4. Request device information
-            device.request_device_info().await?;
-
-            // 5. Start gaze data streaming
-            device.start_gaze_streaming().await?;
-
-            // 6. Send some event annotations
-            let event = EventAnnotation {
-                timestamp: 1234567890.0,
-                label: "experiment_start".to_string(),
-                duration: None,
-                extra_data: Some(HashMap::from([
-                    ("participant_id".to_string(), serde_json::Value::String("P001".to_string())),
-                    ("condition".to_string(), serde_json::Value::String("control".to_string())),
-                ])),
-            };
-            device.send_event(event).await?;
-
-            // 7. Simulate receiving data for a few seconds
-            for i in 0..5 {
-                match device.receive().await {
-                    Ok(data) => {
-                        if !data.is_empty() {
-                            info!("Received {} bytes from device", data.len());
-
-                            // Check for latest gaze data
-                            if let Some(gaze_data) = device.get_latest_gaze_data() {
-                                info!("Latest gaze position: {:?}, confidence: {}",
-                                      gaze_data.gaze_position_2d, gaze_data.confidence);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        error!("Error receiving data: {}", e);
-                    }
-                }
-
-                sleep(Duration::from_millis(500)).await;
-            }
-
-            // 8. Stop streaming and disconnect
-            device.stop_gaze_streaming().await?;
-            device.disconnect().await?;
-
-            info!("Basic Pupil device example completed successfully");
-            Ok(())
-        }
-        Err(e) => {
-            error!("Failed to connect to Pupil Labs device: {}", e);
-            Err(e)
-        }
+    // 4. Read cached status (populated during connect)
+    if let Some(status) = device.get_cached_status() {
+        info!(
+            "Device: {} ({})",
+            status.phone.device_name, status.phone.device_id
+        );
+        info!(
+            "Battery: {:.0}% ({})",
+            status.phone.battery_level * 100.0,
+            status.phone.battery_state
+        );
+        info!("Sensors: {} connected", status.sensors.len());
     }
+
+    // 5. Disconnect
+    device.disconnect().await?;
+    info!("Basic connection example completed");
+    Ok(())
 }
 
-/// Example function demonstrating recording functionality
+/// Example: Recording lifecycle (start → events → stop)
 pub async fn recording_example() -> Result<(), DeviceError> {
-    info!("Starting Pupil Labs recording example");
+    info!("Starting Neon recording example");
 
-    let mut device = PupilDevice::new("192.168.1.100".to_string());
-
-    // Connect to device
+    let mut device = PupilDevice::new("neon.local:8080".to_string());
     device.connect().await?;
 
-    // Start recording with a template
-    device.start_recording(Some("experiment_template".to_string())).await?;
-    info!("Recording started");
+    // Start recording — returns UUID
+    let recording_id = device.start_recording().await?;
+    info!("Recording started: {}", recording_id);
 
-    // Send experiment events
-    let events = vec![
-        EventAnnotation {
-            timestamp: 1234567890.0,
-            label: "stimulus_onset".to_string(),
-            duration: Some(2.0),
-            extra_data: Some(HashMap::from([
-                ("stimulus_type".to_string(), serde_json::Value::String("visual".to_string())),
-                ("stimulus_id".to_string(), serde_json::Value::Number(serde_json::Number::from(123))),
-            ])),
-        },
-        EventAnnotation {
-            timestamp: 1234567892.0,
-            label: "participant_response".to_string(),
-            duration: None,
-            extra_data: Some(HashMap::from([
-                ("response_time_ms".to_string(), serde_json::Value::Number(serde_json::Number::from(1250))),
-                ("accuracy".to_string(), serde_json::Value::Bool(true)),
-            ])),
-        },
-    ];
+    // Send experiment events with nanosecond timestamps
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as i64;
 
-    for event in events {
-        device.send_event(event).await?;
-        sleep(Duration::from_millis(100)).await;
-    }
+    device
+        .send_neon_event("experiment_start", Some(now_ns))
+        .await?;
+
+    // Simulate experiment with timed events
+    sleep(Duration::from_secs(2)).await;
+    device.send_neon_event("stimulus_onset", None).await?;
+
+    sleep(Duration::from_secs(1)).await;
+    device
+        .send_neon_event("participant_response", None)
+        .await?;
+
+    // Stop recording (saves to Neon Cloud)
+    device.stop_recording().await?;
+    info!("Recording stopped and saved");
+
+    device.disconnect().await?;
+    Ok(())
+}
+
+/// Example: Using the send() command routing via JSON
+///
+/// This shows how the bridge WebSocket handler routes commands —
+/// the same interface used by HyperStudy web app.
+pub async fn bridge_command_example() -> Result<(), DeviceError> {
+    info!("Starting bridge command routing example");
+
+    let mut device = PupilDevice::new("neon.local:8080".to_string());
+    device.connect().await?;
+
+    // These JSON commands are what arrive via WebSocket from HyperStudy:
+
+    // Start recording
+    device
+        .send(br#"{"command": "recording_start"}"#)
+        .await?;
+
+    // Send an event with timestamp
+    device
+        .send(br#"{"command": "event", "name": "trial_1_start", "timestamp": 1700000000000000000}"#)
+        .await?;
+
+    // Query status
+    device.send(br#"{"command": "status"}"#).await?;
 
     // Stop recording
-    device.stop_recording().await?;
-    info!("Recording stopped");
+    device
+        .send(br#"{"command": "recording_stop"}"#)
+        .await?;
 
-    // Disconnect
     device.disconnect().await?;
-
+    info!("Bridge command routing example completed");
     Ok(())
 }
 
-/// Example function demonstrating device discovery
-pub async fn discovery_example() -> Result<(), DeviceError> {
-    info!("Starting device discovery example");
+/// Example: Integration with Neon LSL manager for gaze data
+///
+/// The PupilDevice handles control (REST API), while NeonLslManager
+/// handles data streaming (LSL). This example shows the full workflow.
+pub async fn full_integration_example() -> Result<(), DeviceError> {
+    info!("Starting full Neon integration example");
+    info!("NOTE: Gaze data streaming requires LSL to be enabled in Neon Companion App");
+    info!("      Use NeonLslManager (neon.rs) for gaze data — not PupilDevice");
 
-    // Discover available devices
-    let devices = PupilDevice::discover_devices().await?;
-    info!("Found {} potential Pupil Labs devices", devices.len());
-
-    for device_ip in devices {
-        info!("Testing connection to device at: {}", device_ip);
-
-        let mut device = PupilDevice::new(device_ip.clone());
-
-        // Set shorter timeout for discovery
-        let mut config = DeviceConfig::default();
-        config.timeout_ms = 3000;  // 3 second timeout for discovery
-        config.auto_reconnect = false;
-        device.configure(config)?;
-
-        // Try to connect
-        match device.connect().await {
-            Ok(()) => {
-                info!("Successfully connected to device at {}", device_ip);
-
-                // Get device information
-                device.request_device_info().await?;
-                sleep(Duration::from_millis(500)).await;
-
-                if let Some(device_info) = device.get_device_info() {
-                    info!("Device info: {} ({})", device_info.device_name, device_info.serial_number);
-                }
-
-                device.disconnect().await?;
-                break;  // Found a working device
-            }
-            Err(e) => {
-                info!("Could not connect to device at {}: {}", device_ip, e);
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Example function demonstrating advanced streaming configuration
-pub async fn advanced_streaming_example() -> Result<(), DeviceError> {
-    info!("Starting advanced streaming configuration example");
-
-    let mut device = PupilDevice::new("192.168.1.100".to_string());
-
-    // Configure for multiple data streams
-    let mut config = DeviceConfig::default();
-    config.custom_settings = serde_json::json!({
-        "streaming_config": {
-            "gaze": true,
-            "pupil": true,
-            "video": false,
-            "imu": true,
-            "frame_rate": 120.0
-        }
-    });
-
-    device.configure(config)?;
+    // Step 1: Connect control channel via REST API
+    let mut device = PupilDevice::new("neon.local:8080".to_string());
     device.connect().await?;
 
-    // Start multiple streams
-    device.start_gaze_streaming().await?;
+    // Step 2: Start recording via REST
+    let recording_id = device.start_recording().await?;
+    info!("Recording {}: ready for gaze data collection", recording_id);
 
-    // Monitor data streams
-    let mut gaze_count = 0;
-    let mut pupil_count = 0;
+    // Step 3: Gaze data flows via LSL (handled by bridge/websocket.rs):
+    //   - DiscoverNeon → finds "{Name}_Neon Gaze" LSL stream
+    //   - ConnectNeonGaze → InletManager receives Float32 samples at 200Hz
+    //   - Samples forwarded via WebSocket to HyperStudy
 
-    for _ in 0..20 {  // Monitor for 10 seconds
-        match device.receive().await {
-            Ok(data) => {
-                if !data.is_empty() {
-                    // Check for new gaze data
-                    if device.get_latest_gaze_data().is_some() {
-                        gaze_count += 1;
-                    }
-
-                    // Check for new pupil data
-                    if device.get_latest_pupil_data().is_some() {
-                        pupil_count += 1;
-                    }
-                }
-            }
-            Err(e) => {
-                error!("Receive error: {}", e);
-            }
-        }
-
-        sleep(Duration::from_millis(500)).await;
+    // Step 4: Send event markers during experiment
+    for trial in 1..=3 {
+        let event_name = format!("trial_{}_start", trial);
+        device.send_neon_event(&event_name, None).await?;
+        sleep(Duration::from_secs(1)).await;
     }
 
-    info!("Received {} gaze samples and {} pupil samples", gaze_count, pupil_count);
-
-    // Cleanup
-    device.stop_gaze_streaming().await?;
+    // Step 5: Stop recording
+    device.stop_recording().await?;
     device.disconnect().await?;
 
+    info!("Full integration example completed");
     Ok(())
 }
 
-/// Example function demonstrating error handling and reconnection
+/// Example: Error handling and connection testing
 pub async fn error_handling_example() -> Result<(), DeviceError> {
-    info!("Starting error handling and reconnection example");
+    info!("Starting error handling example");
 
-    let mut device = PupilDevice::new("192.168.1.100".to_string());
+    let mut device = PupilDevice::new("neon.local:8080".to_string());
 
-    // Configure with auto-reconnect
+    // Test connection without fully connecting
+    match device.test_connection().await {
+        Ok(true) => info!("Neon Companion is reachable"),
+        Ok(false) => {
+            error!("Neon Companion is not reachable at neon.local:8080");
+            return Ok(());
+        }
+        Err(e) => {
+            error!("Connection test error: {}", e);
+            return Err(e);
+        }
+    }
+
+    // Connect with retry logic
     let mut config = DeviceConfig::default();
     config.auto_reconnect = true;
     config.reconnect_interval_ms = 1000;
     config.timeout_ms = 5000;
-    config.custom_settings = serde_json::json!({
-        "max_retries": 5
-    });
-
+    config.custom_settings = serde_json::json!({ "max_retries": 5 });
     device.configure(config)?;
 
-    // Connect with retry logic
-    let mut connection_attempts = 0;
-    loop {
-        connection_attempts += 1;
+    device.connect().await?;
 
-        match device.connect().await {
-            Ok(()) => {
-                info!("Connected successfully on attempt {}", connection_attempts);
-                break;
-            }
-            Err(e) => {
-                error!("Connection attempt {} failed: {}", connection_attempts, e);
-
-                if connection_attempts >= 3 {
-                    return Err(DeviceError::ConnectionFailed("Max connection attempts exceeded".to_string()));
-                }
-
-                sleep(Duration::from_secs(2)).await;
-            }
-        }
-    }
-
-    // Test heartbeat functionality
+    // Periodic heartbeat to detect disconnection
     for i in 0..5 {
         match device.heartbeat().await {
-            Ok(()) => {
-                info!("Heartbeat {} successful", i + 1);
-            }
+            Ok(()) => info!("Heartbeat {} OK", i + 1),
             Err(e) => {
-                error!("Heartbeat {} failed: {}", i + 1, e);
+                error!("Heartbeat {} failed: {} — device may have disconnected", i + 1, e);
+                break;
             }
         }
-
-        sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_secs(2)).await;
     }
 
     device.disconnect().await?;

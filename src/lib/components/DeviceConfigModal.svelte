@@ -58,29 +58,12 @@
     },
     pupil: {
       url: {
-        label: 'Device URL',
+        label: 'Neon Companion URL',
         type: 'text',
-        placeholder: 'localhost:8081 or 192.168.1.101:8081',
+        placeholder: 'neon.local:8080 or 192.168.1.101:8080',
         required: true,
         pattern: '^[\\w.-]+(:\\d+)?$',
         errorMessage: 'Invalid URL format. Expected hostname:port',
-      },
-      streamGaze: {
-        label: 'Stream Gaze Data',
-        type: 'checkbox',
-        default: true,
-      },
-      streamVideo: {
-        label: 'Stream Video',
-        type: 'checkbox',
-        default: false,
-      },
-      gazeFormat: {
-        label: 'Gaze Data Format',
-        type: 'select',
-        options: ['normalized', 'pixels', 'degrees'],
-        default: 'normalized',
-        required: true,
       },
     },
     frenz: {

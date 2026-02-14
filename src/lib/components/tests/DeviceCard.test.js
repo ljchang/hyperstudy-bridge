@@ -49,10 +49,10 @@ describe('DeviceCard', () => {
     id: 'pupil',
     name: 'Pupil Labs Neon',
     type: 'Eye Tracker',
-    connection: 'WebSocket',
+    connection: 'REST API + LSL',
     status: 'error',
     config: {
-      url: 'localhost:8081',
+      url: 'neon.local:8080',
     },
   };
 

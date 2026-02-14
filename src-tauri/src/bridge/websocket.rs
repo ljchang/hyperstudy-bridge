@@ -327,7 +327,7 @@ async fn handle_device_command(
                                 tx,
                                 BridgeResponse::device_error(
                                     device_id.clone(),
-                                    "Pupil device requires 'url' in config (e.g., localhost:8081)"
+                                    "Pupil device requires 'url' in config (e.g., neon.local:8080)"
                                         .to_string(),
                                     id,
                                 ),
@@ -421,9 +421,14 @@ async fn handle_device_command(
             }
         }
         CommandAction::Send => {
-            // Prepare data outside the lock
+            // Prepare data outside the lock.
+            // Pupil device expects the full JSON payload for command routing
+            // (e.g., {"command": "recording_start", "name": "...", "timestamp": ...}).
+            // Other devices (TTL, Kernel) expect raw command strings (e.g., "PULSE").
             let data = if let Some(p) = payload {
-                if let Some(cmd) = p.get("command").and_then(|v| v.as_str()) {
+                if device_id == "pupil" {
+                    p.to_string().as_bytes().to_vec()
+                } else if let Some(cmd) = p.get("command").and_then(|v| v.as_str()) {
                     cmd.as_bytes().to_vec()
                 } else if let Some(data) = p.get("data").and_then(|v| v.as_str()) {
                     data.as_bytes().to_vec()

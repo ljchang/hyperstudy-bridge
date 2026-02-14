@@ -40,10 +40,7 @@ describe('DeviceConfigModal', () => {
     name: 'Pupil Labs Neon',
     type: 'Eye Tracker',
     config: {
-      url: 'localhost:8081',
-      streamGaze: true,
-      streamVideo: false,
-      gazeFormat: 'normalized',
+      url: 'neon.local:8080',
     },
   };
 
@@ -172,7 +169,7 @@ describe('DeviceConfigModal', () => {
     it('validates Pupil URL format', async () => {
       render(DeviceConfigModal, { ...mockProps, device: mockPupilDevice });
 
-      const urlInput = screen.getByDisplayValue('localhost:8081');
+      const urlInput = screen.getByDisplayValue('neon.local:8080');
       await user.clear(urlInput);
       await user.type(urlInput, 'invalid url with spaces');
 

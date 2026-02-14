@@ -455,7 +455,7 @@ describe.skip('Integration Tests', () => {
             id: 'pupil',
             name: 'Pupil Labs Neon',
             status: 'error',
-            config: { url: 'localhost:8081' },
+            config: { url: 'neon.local:8080' },
           },
         ],
       ]);

@@ -144,14 +144,16 @@ pub struct KernelDevice {
 **Pupil Module Specifications:**
 ```rust
 pub struct PupilDevice {
-    ws_client: Option<WebSocketStream<MaybeTlsStream<TcpStream>>>,
-    device_url: String,
-    streaming: bool,
+    http_client: reqwest::Client,
+    base_url: String,        // "http://neon.local:8080/api"
+    device_ip: String,
+    recording_id: Option<String>,
+    neon_status: Option<NeonStatus>,
 }
 
-// API Endpoints
-const DISCOVERY_PORT: u16 = 8080;
-const WS_PORT: u16 = 8081;
+// REST API
+const DEFAULT_API_PORT: u16 = 8080;
+// Gaze data streaming handled via LSL (neon.rs module)
 ```
 
 ### Lab Streaming Layer (LSL) Integration Tasks

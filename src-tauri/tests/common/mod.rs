@@ -127,7 +127,7 @@ impl TestDataGenerator {
         let payload = match device_type {
             "ttl" => Some(json!({"port": "/dev/ttyUSB0"})),
             "kernel" => Some(json!({"ip": "127.0.0.1"})),
-            "pupil" => Some(json!({"url": "localhost:8081"})),
+            "pupil" => Some(json!({"url": "neon.local:8080"})),
             "mock" => Some(json!({})),
             _ => None,
         };
