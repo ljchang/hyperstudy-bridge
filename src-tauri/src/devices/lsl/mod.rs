@@ -1,3 +1,5 @@
+pub mod frenz;
+pub mod frenz_process;
 pub mod inlet;
 pub mod neon;
 pub mod outlet;
@@ -16,6 +18,8 @@ use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, warn};
 
 // Re-export main types for convenience
+pub use frenz::FrenzLslManager;
+pub use frenz_process::FrenzProcessManager;
 pub use inlet::{InletConfig, InletManager};
 pub use neon::NeonLslManager;
 pub use outlet::{OutletConfig, OutletManager};

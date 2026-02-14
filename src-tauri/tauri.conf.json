@@ -39,6 +39,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": {
+      "resources/frenz-bridge*": "./"
+    },
     "macOS": {
       "frameworks": [],
       "minimumSystemVersion": "10.15",

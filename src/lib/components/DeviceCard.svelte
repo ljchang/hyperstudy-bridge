@@ -1,7 +1,9 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import * as bridgeStore from '../stores/websocket.svelte.js';
-  import { sendTtlPulse, listTtlDevices } from '../services/tauri.js';
+  import { sendTtlPulse, listTtlDevices, startFrenzBridge, stopFrenzBridge, getFrenzBridgeStatus, checkFrenzBridgeAvailable } from '../services/tauri.js';
+  import { getSecret } from '../services/stronghold.js';
+  import { listen } from '@tauri-apps/api/event';
   import DeviceConfigModal from './DeviceConfigModal.svelte';
 
   let { device, onConfigUpdate = () => {}, onRemove = () => {} } = $props();
@@ -13,12 +15,118 @@
   let detectedTtlDevices = $state([]);
   let isLoadingDevices = $state(false);
 
+  // FRENZ credential status
+  let frenzDeviceId = $state(null);
+  let frenzKeyConfigured = $state(false);
+
+  // FRENZ bridge process status
+  let frenzBridgeAvailable = $state(false);
+  let frenzBridgeStatus = $state({ state: 'stopped', streams: [], sample_count: 0 });
+  let frenzBridgeLoading = $state(false);
+  let unlistenFrenzStatus = null;
+
   // Load TTL devices on mount if this is a TTL device
+  // Load FRENZ credential status if this is a FRENZ device
   onMount(() => {
     if (device.id === 'ttl') {
       refreshTtlDevices();
     }
+    if (device.id === 'frenz') {
+      loadFrensCredentialStatus();
+      loadFrenzBridgeInfo();
+    }
   });
+
+  onDestroy(() => {
+    if (unlistenFrenzStatus) {
+      unlistenFrenzStatus();
+      unlistenFrenzStatus = null;
+    }
+  });
+
+  async function loadFrenzBridgeInfo() {
+    // Check if PyApp binary is available
+    frenzBridgeAvailable = await checkFrenzBridgeAvailable();
+
+    // Get current status
+    frenzBridgeStatus = await getFrenzBridgeStatus();
+
+    // Listen for real-time status updates
+    unlistenFrenzStatus = await listen('frenz_bridge_status', (event) => {
+      frenzBridgeStatus = event.payload;
+    });
+  }
+
+  async function handleStartFrenzBridge() {
+    if (!frenzDeviceId || !frenzKeyConfigured) {
+      alert('Please configure FRENZ credentials first (use Configure button)');
+      return;
+    }
+
+    frenzBridgeLoading = true;
+    try {
+      const productKey = await getSecret('frenz_product_key');
+      if (!productKey) {
+        alert('Product key not found. Please reconfigure FRENZ credentials.');
+        return;
+      }
+      const result = await startFrenzBridge(frenzDeviceId, productKey);
+      if (!result.success) {
+        alert(`Failed to start bridge: ${result.error}`);
+      }
+    } catch (error) {
+      alert(`Error starting bridge: ${error.message || error}`);
+    } finally {
+      frenzBridgeLoading = false;
+    }
+  }
+
+  async function handleStopFrenzBridge() {
+    frenzBridgeLoading = true;
+    try {
+      const result = await stopFrenzBridge();
+      if (!result.success) {
+        alert(`Failed to stop bridge: ${result.error}`);
+      }
+    } catch (error) {
+      alert(`Error stopping bridge: ${error.message || error}`);
+    } finally {
+      frenzBridgeLoading = false;
+    }
+  }
+
+  function getFrenzBridgeStateLabel(state) {
+    switch (state) {
+      case 'not_available': return 'Not Available';
+      case 'stopped': return 'Stopped';
+      case 'bootstrapping': return 'Installing...';
+      case 'connecting': return 'Connecting...';
+      case 'streaming': return 'Streaming';
+      case 'error': return 'Error';
+      default: return state;
+    }
+  }
+
+  function getFrenzBridgeStateColor(state) {
+    switch (state) {
+      case 'streaming': return 'var(--color-success)';
+      case 'bootstrapping':
+      case 'connecting': return 'var(--color-warning)';
+      case 'error': return 'var(--color-error)';
+      default: return 'var(--color-text-disabled)';
+    }
+  }
+
+  async function loadFrensCredentialStatus() {
+    try {
+      const deviceId = await getSecret('frenz_device_id');
+      const productKey = await getSecret('frenz_product_key');
+      frenzDeviceId = deviceId || null;
+      frenzKeyConfigured = !!productKey;
+    } catch {
+      // Stronghold not initialized yet — that's fine
+    }
+  }
 
   async function refreshTtlDevices() {
     if (device.id !== 'ttl') return;
@@ -172,6 +280,11 @@
       }
 
       console.log(`Configuration saved successfully for ${deviceName}`);
+
+      // Refresh FRENZ credential status after save
+      if (deviceId === 'frenz') {
+        await loadFrensCredentialStatus();
+      }
     } catch (error) {
       console.error(`Failed to save configuration for ${deviceName}:`, error);
       throw error; // Re-throw to let the modal handle the error display
@@ -267,6 +380,53 @@
         <span class="label">URL:</span>
         <span class="value">{device.config.url || 'Auto-discover'}</span>
       </div>
+    {:else if device.id === 'frenz'}
+      <div class="config-row">
+        <span class="label">Device ID:</span>
+        <span class="value">{frenzDeviceId || 'Not configured'}</span>
+      </div>
+      <div class="config-row">
+        <span class="label">Product Key:</span>
+        <span class="value credential-status" class:configured={frenzKeyConfigured}>
+          {frenzKeyConfigured ? 'Configured' : 'Not configured'}
+        </span>
+      </div>
+      {#if frenzBridgeAvailable}
+        <div class="config-row">
+          <span class="label">Bridge:</span>
+          <span class="value bridge-status" style="color: {getFrenzBridgeStateColor(frenzBridgeStatus.state)}">
+            {getFrenzBridgeStateLabel(frenzBridgeStatus.state)}
+          </span>
+        </div>
+        {#if frenzBridgeStatus.message}
+          <div class="config-row">
+            <span class="label"></span>
+            <span class="value bridge-message">{frenzBridgeStatus.message}</span>
+          </div>
+        {/if}
+        {#if frenzBridgeStatus.state === 'streaming'}
+          <div class="config-row">
+            <span class="label">Streams:</span>
+            <span class="value">{frenzBridgeStatus.streams.length} active</span>
+          </div>
+          <div class="config-row">
+            <span class="label">Samples:</span>
+            <span class="value">{frenzBridgeStatus.sample_count.toLocaleString()}</span>
+          </div>
+        {/if}
+      {:else if !frenzBridgeAvailable && frenzBridgeStatus.state !== 'stopped'}
+        <div class="config-row">
+          <span class="label">Bridge:</span>
+          <span class="value" style="color: var(--color-text-disabled)">Not available on this platform</span>
+        </div>
+      {/if}
+      <div class="config-row">
+        <span class="label">LSL Streams:</span>
+        <span class="value">
+          {Object.entries(device.config || {}).filter(([k, v]) => k.startsWith('stream') && v)
+            .length} selected
+        </span>
+      </div>
     {/if}
   </div>
 
@@ -280,6 +440,26 @@
     </button>
     {#if device.id === 'ttl' && device.status === 'connected'}
       <button class="action-btn pulse-btn" onclick={sendTestPulse}> Send Pulse </button>
+    {/if}
+    {#if device.id === 'frenz' && frenzBridgeAvailable}
+      {#if frenzBridgeStatus.state === 'stopped' || frenzBridgeStatus.state === 'error'}
+        <button
+          class="action-btn bridge-btn"
+          onclick={handleStartFrenzBridge}
+          disabled={frenzBridgeLoading || !frenzDeviceId || !frenzKeyConfigured}
+          title={!frenzDeviceId || !frenzKeyConfigured ? 'Configure credentials first' : 'Start Python bridge'}
+        >
+          {frenzBridgeLoading ? '...' : 'Start Bridge'}
+        </button>
+      {:else}
+        <button
+          class="action-btn bridge-stop-btn"
+          onclick={handleStopFrenzBridge}
+          disabled={frenzBridgeLoading}
+        >
+          {frenzBridgeLoading ? '...' : 'Stop Bridge'}
+        </button>
+      {/if}
     {/if}
     <button class="action-btn config-btn" onclick={configureDevice}> Configure </button>
   </div>
@@ -523,5 +703,50 @@
   .refresh-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .credential-status {
+    font-family: inherit;
+    font-style: italic;
+    color: var(--color-text-disabled);
+  }
+
+  .credential-status.configured {
+    color: var(--color-success);
+    font-style: normal;
+  }
+
+  .bridge-status {
+    font-weight: 500;
+  }
+
+  .bridge-message {
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+    font-style: italic;
+  }
+
+  .bridge-btn {
+    background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+    color: white;
+    font-weight: 600;
+  }
+
+  .bridge-btn:hover:not(:disabled) {
+    background: linear-gradient(135deg, #00f2fe 0%, #4facfe 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(79, 172, 254, 0.4);
+  }
+
+  .bridge-stop-btn {
+    background: var(--color-surface-elevated);
+    color: var(--color-warning);
+    border: 1px solid var(--color-warning);
+    font-weight: 600;
+  }
+
+  .bridge-stop-btn:hover:not(:disabled) {
+    background: var(--color-warning);
+    color: white;
   }
 </style>

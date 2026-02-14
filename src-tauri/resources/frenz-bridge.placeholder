@@ -1,0 +1,6 @@
+This is a placeholder file. The actual frenz-bridge binary is built separately
+via PyApp and placed here before creating release builds. See python/frenz-bridge/
+for the build script.
+
+In development mode, the FRENZ bridge binary won't be available, and the UI will
+show "Not Available" for the bridge status.

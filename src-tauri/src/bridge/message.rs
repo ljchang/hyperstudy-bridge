@@ -47,6 +47,12 @@ pub enum CommandAction {
     ConnectNeonEvents, // Connect to Neon events stream
     DisconnectNeon,    // Disconnect from Neon streams
     NeonStatus,        // Get Neon LSL manager status
+    // FRENZ LSL specific actions
+    DiscoverFrenz,       // Discover FRENZ devices streaming via LSL
+    ConnectFrenzStreams, // Connect to selected FRENZ streams
+    DisconnectFrenz,     // Disconnect from FRENZ streams
+    FrenzStatus,         // Get FRENZ LSL manager status
+    SendFrenzMarker,     // Send event marker to FRENZ marker outlet
     Custom(String),
 }
 
@@ -184,7 +190,8 @@ impl MessageHandler {
             "kernel" => Some(DeviceType::Kernel),
             "pupil" => Some(DeviceType::Pupil),
             "lsl" => Some(DeviceType::LSL),
-            "neon_lsl" => Some(DeviceType::LSL), // Neon via LSL
+            "neon_lsl" => Some(DeviceType::LSL),  // Neon via LSL
+            "frenz_lsl" => Some(DeviceType::LSL), // FRENZ via LSL
             "mock" => Some(DeviceType::Mock),
             _ => None,
         }

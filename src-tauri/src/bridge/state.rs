@@ -1,4 +1,7 @@
-use crate::devices::lsl::{InletManager, NeonLslManager, StreamResolver, TimeSync};
+use crate::devices::lsl::{
+    FrenzLslManager, FrenzProcessManager, InletManager, NeonLslManager, OutletManager,
+    StreamResolver, TimeSync,
+};
 use crate::devices::{BoxedDevice, DeviceInfo, DeviceStatus, DeviceType};
 use crate::performance::PerformanceMonitor;
 use dashmap::DashMap;
@@ -21,6 +24,10 @@ pub struct AppState {
     pub last_error: Arc<RwLock<Option<String>>>,
     /// Neon LSL Manager for Pupil Labs Neon eye tracking via LSL
     pub neon_manager: Arc<NeonLslManager>,
+    /// FRENZ LSL Manager for Earable FRENZ brainband via LSL
+    pub frenz_manager: Arc<FrenzLslManager>,
+    /// FRENZ Python bridge process manager (PyApp lifecycle)
+    pub frenz_process: Arc<FrenzProcessManager>,
     /// Broadcast channel for device status change events
     /// WebSocket connections can subscribe to receive status updates
     device_status_tx: broadcast::Sender<DeviceStatusEvent>,
@@ -87,6 +94,9 @@ impl std::fmt::Debug for AppState {
             .field("start_time", &self.start_time)
             .field("message_count", &self.message_count)
             .field("last_error", &self.last_error)
+            .field("neon_manager", &self.neon_manager)
+            .field("frenz_manager", &self.frenz_manager)
+            .field("frenz_process", &self.frenz_process)
             .field(
                 "device_status_subscribers",
                 &self.device_status_tx.receiver_count(),
@@ -106,11 +116,18 @@ impl AppState {
     const STATUS_BROADCAST_CAPACITY: usize = 16;
 
     pub fn new() -> Self {
-        // Create shared LSL infrastructure for Neon manager
+        // Create shared LSL infrastructure for Neon and FRENZ managers
         let time_sync = Arc::new(TimeSync::new(true));
         let resolver = Arc::new(StreamResolver::new(5.0));
-        let inlet_manager = Arc::new(InletManager::new(time_sync));
-        let neon_manager = Arc::new(NeonLslManager::new(resolver, inlet_manager));
+        let inlet_manager = Arc::new(InletManager::new(time_sync.clone()));
+        let outlet_manager = Arc::new(OutletManager::new(time_sync));
+        let neon_manager = Arc::new(NeonLslManager::new(resolver.clone(), inlet_manager.clone()));
+        let frenz_manager = Arc::new(FrenzLslManager::new(
+            resolver,
+            inlet_manager,
+            outlet_manager,
+        ));
+        let frenz_process = Arc::new(FrenzProcessManager::new());
 
         // Create broadcast channel for device status events
         let (device_status_tx, _) = broadcast::channel(Self::STATUS_BROADCAST_CAPACITY);
@@ -124,6 +141,8 @@ impl AppState {
             message_count: Arc::new(AtomicU64::new(0)),
             last_error: Arc::new(RwLock::new(None)),
             neon_manager,
+            frenz_manager,
+            frenz_process,
             device_status_tx,
         }
     }

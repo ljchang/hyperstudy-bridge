@@ -63,6 +63,11 @@ build/
 Thumbs.db
 desktop.ini
 
+# FRENZ bridge PyApp binary (built separately, bundled at build time)
+src-tauri/resources/frenz-bridge
+src-tauri/resources/frenz-bridge.exe
+python/frenz-bridge/build/
+
 # Rust
 **/*.rs.bk
 *.pdb

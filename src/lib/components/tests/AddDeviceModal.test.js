@@ -75,9 +75,9 @@ describe('AddDeviceModal', () => {
     it('renders device items as interactive elements', () => {
       render(AddDeviceModal, mockProps);
 
-      // Component has 3 built-in devices
+      // Component has 4 built-in devices (TTL, Kernel, Pupil, FRENZ)
       const deviceItems = document.querySelectorAll('.device-item');
-      expect(deviceItems).toHaveLength(3);
+      expect(deviceItems).toHaveLength(4);
 
       // Verify items have role="button" and tabindex for keyboard interaction
       deviceItems.forEach(item => {
@@ -387,7 +387,7 @@ describe('AddDeviceModal', () => {
 
       // Verify that device items have the expected class structure for styling
       const deviceItems = document.querySelectorAll('.device-item');
-      expect(deviceItems.length).toBe(3);
+      expect(deviceItems.length).toBe(4);
 
       // Each item should have proper structure for visual feedback
       deviceItems.forEach(item => {

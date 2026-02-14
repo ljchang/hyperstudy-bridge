@@ -49,6 +49,24 @@ async fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            tauri_plugin_stronghold::Builder::new(|password| {
+                use argon2::{hash_raw, Config, Variant, Version};
+                let config = Config {
+                    lanes: 4,
+                    mem_cost: 10_000,
+                    time_cost: 10,
+                    variant: Variant::Argon2id,
+                    version: Version::Version13,
+                    ..Default::default()
+                };
+                let salt = b"hyperstudy-bridge-vault-salt";
+                hash_raw(password.as_ref(), salt, &config)
+                    .expect("failed to hash password")
+                    .to_vec()
+            })
+            .build(),
+        )
         .setup(move |app| {
             let state = state_clone.clone();
             let app_handle = app.handle().clone();
@@ -175,7 +193,11 @@ async fn main() {
             set_log_level,
             test_ttl_device,
             reset_device,
-            get_app_info
+            get_app_info,
+            start_frenz_bridge,
+            stop_frenz_bridge,
+            get_frenz_bridge_status,
+            check_frenz_bridge_available
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

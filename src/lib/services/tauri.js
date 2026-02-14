@@ -464,6 +464,62 @@ export async function resetPerformanceMetrics(deviceId = null) {
   }
 }
 
+// FRENZ bridge commands
+
+/**
+ * Start the FRENZ Python bridge process.
+ * @param {string} deviceId - FRENZ device ID
+ * @param {string} productKey - FRENZ product key
+ * @returns {Promise<{success: boolean, data?: string, error?: string}>}
+ */
+export async function startFrenzBridge(deviceId, productKey) {
+  try {
+    return await invoke('start_frenz_bridge', { deviceId, productKey });
+  } catch (error) {
+    console.error('Failed to start FRENZ bridge:', error);
+    return { success: false, error: error.message || String(error) };
+  }
+}
+
+/**
+ * Stop the FRENZ Python bridge process.
+ * @returns {Promise<{success: boolean, data?: string, error?: string}>}
+ */
+export async function stopFrenzBridge() {
+  try {
+    return await invoke('stop_frenz_bridge');
+  } catch (error) {
+    console.error('Failed to stop FRENZ bridge:', error);
+    return { success: false, error: error.message || String(error) };
+  }
+}
+
+/**
+ * Get the current status of the FRENZ bridge process.
+ * @returns {Promise<{state: string, message?: string, phase?: string, streams: string[], sample_count: number}>}
+ */
+export async function getFrenzBridgeStatus() {
+  try {
+    return await invoke('get_frenz_bridge_status');
+  } catch (error) {
+    console.error('Failed to get FRENZ bridge status:', error);
+    return { state: 'stopped', streams: [], sample_count: 0 };
+  }
+}
+
+/**
+ * Check if the FRENZ bridge binary is available on this platform.
+ * @returns {Promise<boolean>}
+ */
+export async function checkFrenzBridgeAvailable() {
+  try {
+    return await invoke('check_frenz_bridge_available');
+  } catch (error) {
+    console.error('Failed to check FRENZ bridge availability:', error);
+    return false;
+  }
+}
+
 // LSL-specific commands
 export async function discoverLslStreams() {
   try {
@@ -609,6 +665,11 @@ export const tauriService = {
   setLogLevel,
   getPerformanceMetrics,
   resetPerformanceMetrics,
+  // FRENZ bridge
+  startFrenzBridge,
+  stopFrenzBridge,
+  getFrenzBridgeStatus,
+  checkFrenzBridgeAvailable,
   // LSL functions
   discoverLslStreams,
   connectLslInlet,

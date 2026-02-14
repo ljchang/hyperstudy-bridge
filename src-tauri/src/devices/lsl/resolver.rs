@@ -120,6 +120,52 @@ impl StreamFilter {
             None
         }
     }
+
+    // ====================================================================
+    // FRENZ Brainband stream filters
+    // ====================================================================
+
+    /// Check if a stream name matches a known FRENZ stream suffix.
+    ///
+    /// FRENZ streams are named `{DEVICE_ID}_{suffix}` by the Python LSL bridge.
+    /// Naming is case-inconsistent (e.g., `_EEG_raw` vs `_poas` vs `_POSTURE`),
+    /// so we do case-insensitive matching.
+    pub fn is_frenz_stream(stream_name: &str) -> bool {
+        let lower = stream_name.to_lowercase();
+        super::types::FRENZ_STREAM_SUFFIXES
+            .iter()
+            .any(|suffix| lower.ends_with(&suffix.to_lowercase()))
+    }
+
+    /// Extract the device name prefix from a FRENZ stream name.
+    ///
+    /// For example, "FRENZ_ABC123_EEG_raw" -> "FRENZ_ABC123"
+    pub fn extract_frenz_device_name(stream_name: &str) -> Option<String> {
+        let lower = stream_name.to_lowercase();
+        for suffix in super::types::FRENZ_STREAM_SUFFIXES {
+            let suffix_lower = suffix.to_lowercase();
+            if lower.ends_with(&suffix_lower) {
+                let prefix_len = stream_name.len() - suffix.len();
+                return Some(stream_name[..prefix_len].to_string());
+            }
+        }
+        None
+    }
+
+    /// Extract the stream suffix from a FRENZ stream name.
+    ///
+    /// For example, "FRENZ_ABC123_EEG_raw" -> "_EEG_raw"
+    /// Returns the canonical suffix (from the constant array) to normalize case.
+    pub fn extract_frenz_stream_suffix(stream_name: &str) -> Option<&'static str> {
+        let lower = stream_name.to_lowercase();
+        for suffix in super::types::FRENZ_STREAM_SUFFIXES {
+            let suffix_lower = suffix.to_lowercase();
+            if lower.ends_with(&suffix_lower) {
+                return Some(suffix);
+            }
+        }
+        None
+    }
 }
 
 /// Discovery events

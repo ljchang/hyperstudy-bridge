@@ -1,5 +1,6 @@
 <script>
   import { listTtlDevices } from '../services/tauri.js';
+  import { getSecret, setSecret, removeSecret } from '../services/stronghold.js';
 
   // Use Svelte 5 $props() rune
   let { isOpen = false, device = null, onSave = () => {}, onClose = () => {} } = $props();
@@ -7,6 +8,7 @@
   // Form state using $state rune
   let formData = $state({});
   let lslConfig = $state({});
+  let secureFields = $state({});
   let errors = $state({});
   let isSubmitting = $state(false);
   let activeTab = $state('device'); // 'device' or 'lsl'
@@ -79,6 +81,50 @@
         options: ['normalized', 'pixels', 'degrees'],
         default: 'normalized',
         required: true,
+      },
+    },
+    frenz: {
+      // Credentials (stored in encrypted vault, not in regular config)
+      frenzDeviceId: {
+        label: 'Device ID',
+        type: 'text',
+        placeholder: 'Auto-discovered from LSL streams',
+        secure: true,
+        secretKey: 'frenz_device_id',
+        readOnly: true,
+      },
+      frenzProductKey: {
+        label: 'Product Key',
+        type: 'password',
+        placeholder: 'Enter FRENZ product key',
+        secure: true,
+        secretKey: 'frenz_product_key',
+      },
+      // Raw Signals
+      streamEegRaw: { label: 'EEG Raw (7ch, 125Hz)', type: 'checkbox', default: true },
+      streamPpgRaw: { label: 'PPG Raw (4ch, 25Hz)', type: 'checkbox', default: true },
+      streamImuRaw: { label: 'IMU Raw (4ch, 50Hz)', type: 'checkbox', default: true },
+      // Filtered Signals
+      streamEegFiltered: { label: 'EEG Filtered (4ch, 125Hz)', type: 'checkbox', default: true },
+      streamEogFiltered: { label: 'EOG Filtered (4ch, 125Hz)', type: 'checkbox', default: false },
+      streamEmgFiltered: { label: 'EMG Filtered (4ch, 125Hz)', type: 'checkbox', default: false },
+      // Derived Metrics
+      streamFocus: { label: 'Focus Score (0.5Hz)', type: 'checkbox', default: true },
+      streamSleepStage: { label: 'Sleep Stage (0.2Hz)', type: 'checkbox', default: true },
+      streamPoas: { label: 'PoAS (0.2Hz)', type: 'checkbox', default: false },
+      streamPosture: { label: 'Posture (0.2Hz)', type: 'checkbox', default: false },
+      streamSignalQuality: { label: 'Signal Quality (0.2Hz)', type: 'checkbox', default: true },
+      // Power Bands
+      streamAlpha: { label: 'Alpha Power (5ch, 0.5Hz)', type: 'checkbox', default: false },
+      streamBeta: { label: 'Beta Power (5ch, 0.5Hz)', type: 'checkbox', default: false },
+      streamTheta: { label: 'Theta Power (5ch, 0.5Hz)', type: 'checkbox', default: false },
+      streamGamma: { label: 'Gamma Power (5ch, 0.5Hz)', type: 'checkbox', default: false },
+      streamDelta: { label: 'Delta Power (5ch, 0.5Hz)', type: 'checkbox', default: false },
+      // Marker outlet
+      enableMarkerOutlet: {
+        label: 'Enable Event Marker Outlet',
+        type: 'checkbox',
+        default: true,
       },
     },
     lsl: {
@@ -199,17 +245,28 @@
     if (!config) return;
 
     const newFormData = {};
+    const newSecureFields = {};
     const existingConfig = device.config || {};
 
-    Object.entries(config).forEach(([key, fieldConfig]) => {
-      if (fieldConfig.type === 'checkbox') {
+    for (const [key, fieldConfig] of Object.entries(config)) {
+      if (fieldConfig.secure) {
+        // Load secure fields from stronghold
+        try {
+          const value = await getSecret(fieldConfig.secretKey);
+          newSecureFields[key] = value || '';
+        } catch (e) {
+          console.warn(`Failed to load secure field ${key}:`, e);
+          newSecureFields[key] = '';
+        }
+      } else if (fieldConfig.type === 'checkbox') {
         newFormData[key] = existingConfig[key] ?? fieldConfig.default ?? false;
       } else {
         newFormData[key] = existingConfig[key] ?? fieldConfig.default ?? '';
       }
-    });
+    }
 
     formData = newFormData;
+    secureFields = newSecureFields;
 
     // Auto-detect TTL devices on load
     if (device.id === 'ttl') {
@@ -306,9 +363,21 @@
 
     isSubmitting = true;
     try {
-      // Convert form data to appropriate types
-      const processedConfig = {};
+      // Persist secure fields to stronghold (separate from regular config)
       const config = deviceConfigs[device.id];
+      for (const [key, fieldConfig] of Object.entries(config)) {
+        if (fieldConfig.secure) {
+          const value = secureFields[key];
+          if (value) {
+            await setSecret(fieldConfig.secretKey, value);
+          } else {
+            await removeSecret(fieldConfig.secretKey);
+          }
+        }
+      }
+
+      // Convert form data to appropriate types (excludes secure fields)
+      const processedConfig = {};
 
       Object.entries(formData).forEach(([key, value]) => {
         const fieldConfig = config[key];
@@ -349,6 +418,7 @@
   function handleClose() {
     formData = {};
     lslConfig = {};
+    secureFields = {};
     errors = {};
     isSubmitting = false;
     activeTab = 'device';
@@ -419,9 +489,35 @@
                     {#if fieldConfig.required}
                       <span class="required">*</span>
                     {/if}
+                    {#if fieldConfig.secure}
+                      <span class="secure-badge">Encrypted</span>
+                    {/if}
                   </label>
 
-                  {#if fieldConfig.type === 'select'}
+                  {#if fieldConfig.secure}
+                    <div class="input-with-button">
+                      <input
+                        id={fieldName}
+                        type={fieldConfig.type}
+                        class="form-input"
+                        class:readonly={fieldConfig.readOnly}
+                        placeholder={fieldConfig.placeholder || ''}
+                        value={secureFields[fieldName] || ''}
+                        readonly={fieldConfig.readOnly}
+                        oninput={e => (secureFields[fieldName] = e.target.value)}
+                      />
+                      {#if !fieldConfig.readOnly && secureFields[fieldName]}
+                        <button
+                          type="button"
+                          class="clear-btn"
+                          title="Clear stored key"
+                          onclick={() => (secureFields[fieldName] = '')}
+                        >
+                          Clear
+                        </button>
+                      {/if}
+                    </div>
+                  {:else if fieldConfig.type === 'select'}
                     <select
                       id={fieldName}
                       class="form-input"
@@ -944,6 +1040,42 @@
 
   .input-with-button .form-input {
     flex: 1;
+  }
+
+  .secure-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--color-primary);
+    background: rgba(76, 175, 80, 0.1);
+    padding: 1px 6px;
+    border-radius: 4px;
+    margin-left: 0.5rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .form-input.readonly {
+    opacity: 0.7;
+    cursor: default;
+    background: var(--color-surface-elevated);
+  }
+
+  .clear-btn {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-error);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--color-error);
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 0.813rem;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .clear-btn:hover {
+    background: var(--color-error);
+    color: white;
   }
 
   .detect-btn {

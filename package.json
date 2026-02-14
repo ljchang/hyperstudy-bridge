@@ -68,6 +68,7 @@
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",
     "@tauri-apps/plugin-dialog": "^2.6.0",
+    "@tauri-apps/plugin-stronghold": "^2.0.0",
     "@tauri-apps/plugin-websocket": "^2.4.0",
     "ws": "^8.18.3"
   }

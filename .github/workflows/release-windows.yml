@@ -41,6 +41,22 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Build FRENZ bridge (PyApp)
+        working-directory: python/frenz-bridge
+        shell: pwsh
+        env:
+          PYAPP_PROJECT_PATH: ${{ github.workspace }}/python/frenz-bridge
+          PYAPP_EXEC_CODE: "from frenz_lsl_bridge import main; main()"
+          PYAPP_DISTRIBUTION_EMBED: "1"
+          PYAPP_PYTHON_VERSION: "3.11"
+          PYAPP_PIP_EXTRA_ARGS: "--no-cache-dir"
+        run: |
+          New-Item -ItemType Directory -Force -Path build | Out-Null
+          cargo install pyapp --force --root ./build
+          New-Item -ItemType Directory -Force -Path ../../src-tauri/resources | Out-Null
+          Copy-Item build/bin/pyapp.exe -Destination ../../src-tauri/resources/frenz-bridge.exe
+          Get-ChildItem ../../src-tauri/resources/
+
       - name: Build Tauri app
         run: npm run tauri:build -- --bundles msi
 

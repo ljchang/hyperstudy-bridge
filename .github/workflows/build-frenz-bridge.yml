@@ -1,0 +1,95 @@
+name: Build FRENZ Bridge (PyApp)
+
+# Reusable workflow that builds the PyApp binary for each platform.
+# Called by release workflows to produce the frenz-bridge binary
+# that gets bundled into the Tauri app resources.
+
+on:
+  workflow_call:
+    inputs:
+      target:
+        description: 'Build target (e.g., aarch64-apple-darwin, x86_64-apple-darwin, x86_64-pc-windows-msvc)'
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Build target'
+        required: true
+        type: choice
+        options:
+          - aarch64-apple-darwin
+          - x86_64-apple-darwin
+          - x86_64-pc-windows-msvc
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-pyapp:
+    name: Build PyApp (${{ inputs.target }})
+    runs-on: ${{ contains(inputs.target, 'windows') && 'windows-latest' || 'macos-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ inputs.target }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: pyapp-${{ inputs.target }}
+
+      - name: Build PyApp binary (Unix)
+        if: "!contains(inputs.target, 'windows')"
+        working-directory: python/frenz-bridge
+        env:
+          PYAPP_PROJECT_PATH: ${{ github.workspace }}/python/frenz-bridge
+          PYAPP_EXEC_CODE: "from frenz_lsl_bridge import main; main()"
+          PYAPP_DISTRIBUTION_EMBED: "1"
+          PYAPP_PYTHON_VERSION: "3.11"
+          PYAPP_PIP_EXTRA_ARGS: "--no-cache-dir"
+        run: |
+          mkdir -p build
+          cargo install pyapp --force --root ./build
+          ls -la build/bin/
+
+      - name: Build PyApp binary (Windows)
+        if: contains(inputs.target, 'windows')
+        working-directory: python/frenz-bridge
+        shell: pwsh
+        env:
+          PYAPP_PROJECT_PATH: ${{ github.workspace }}/python/frenz-bridge
+          PYAPP_EXEC_CODE: "from frenz_lsl_bridge import main; main()"
+          PYAPP_DISTRIBUTION_EMBED: "1"
+          PYAPP_PYTHON_VERSION: "3.11"
+          PYAPP_PIP_EXTRA_ARGS: "--no-cache-dir"
+        run: |
+          New-Item -ItemType Directory -Force -Path build | Out-Null
+          cargo install pyapp --force --root ./build
+          Get-ChildItem build/bin/
+
+      - name: Copy binary to resources (Unix)
+        if: "!contains(inputs.target, 'windows')"
+        run: |
+          mkdir -p src-tauri/resources
+          cp python/frenz-bridge/build/bin/pyapp src-tauri/resources/frenz-bridge
+          chmod +x src-tauri/resources/frenz-bridge
+          ls -la src-tauri/resources/
+
+      - name: Copy binary to resources (Windows)
+        if: contains(inputs.target, 'windows')
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path src-tauri/resources | Out-Null
+          Copy-Item python/frenz-bridge/build/bin/pyapp.exe -Destination src-tauri/resources/frenz-bridge.exe
+          Get-ChildItem src-tauri/resources/
+
+      - name: Upload PyApp binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: frenz-bridge-${{ inputs.target }}
+          path: src-tauri/resources/frenz-bridge*
+          retention-days: 7

@@ -1029,6 +1029,73 @@ pub async fn reset_device(
     )))
 }
 
+// FRENZ Python bridge commands
+
+/// Start the FRENZ Python bridge process (PyApp binary).
+///
+/// Credentials are passed from the frontend (read from Stronghold vault)
+/// and forwarded to the child process via stdin.
+#[tauri::command]
+pub async fn start_frenz_bridge(
+    device_id: String,
+    product_key: String,
+    state: State<'_, Arc<AppState>>,
+    app_handle: AppHandle,
+) -> Result<CommandResult<String>, ()> {
+    info!(
+        device = "frenz",
+        "Starting FRENZ bridge for device: {}", device_id
+    );
+
+    match state
+        .frenz_process
+        .start(&device_id, &product_key, &app_handle)
+        .await
+    {
+        Ok(()) => Ok(CommandResult::success(
+            "FRENZ bridge started".to_string(),
+        )),
+        Err(e) => {
+            error!(device = "frenz", "Failed to start FRENZ bridge: {}", e);
+            Ok(CommandResult::error(e))
+        }
+    }
+}
+
+/// Stop the FRENZ Python bridge process.
+#[tauri::command]
+pub async fn stop_frenz_bridge(
+    state: State<'_, Arc<AppState>>,
+) -> Result<CommandResult<String>, ()> {
+    info!(device = "frenz", "Stopping FRENZ bridge");
+
+    match state.frenz_process.stop().await {
+        Ok(()) => Ok(CommandResult::success(
+            "FRENZ bridge stopped".to_string(),
+        )),
+        Err(e) => {
+            error!(device = "frenz", "Failed to stop FRENZ bridge: {}", e);
+            Ok(CommandResult::error(e))
+        }
+    }
+}
+
+/// Get the current status of the FRENZ Python bridge process.
+#[tauri::command]
+pub async fn get_frenz_bridge_status(
+    state: State<'_, Arc<AppState>>,
+) -> Result<crate::devices::lsl::frenz_process::FrenzBridgeStatus, ()> {
+    Ok(state.frenz_process.get_status().await)
+}
+
+/// Check if the FRENZ bridge binary is available on this platform.
+#[tauri::command]
+pub async fn check_frenz_bridge_available(
+    app_handle: AppHandle,
+) -> Result<bool, ()> {
+    Ok(crate::devices::lsl::frenz_process::FrenzProcessManager::check_available(&app_handle))
+}
+
 /// Application metadata from Cargo.toml
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AppInfo {

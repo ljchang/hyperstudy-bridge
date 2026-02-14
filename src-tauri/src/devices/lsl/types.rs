@@ -333,6 +333,104 @@ impl Default for LslConfig {
     }
 }
 
+// ============================================================================
+// Earable FRENZ Brainband LSL Types
+// ============================================================================
+
+/// All known FRENZ LSL stream suffixes.
+/// Streams are named `{DEVICE_ID}_{suffix}` by the Python LSL bridge script.
+pub const FRENZ_STREAM_SUFFIXES: &[&str] = &[
+    "_EEG_raw",
+    "_EEG_filtered",
+    "_EOG_filtered",
+    "_EMG_filtered",
+    "_PPG_raw",
+    "_IMU_raw",
+    "_POSTURE",
+    "_poas",
+    "_sleep_stage",
+    "_focus",
+    "_signal_quality",
+    "_alpha",
+    "_beta",
+    "_theta",
+    "_gamma",
+    "_delta",
+];
+
+/// Category of a FRENZ stream for grouping in the UI
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FrenzStreamCategory {
+    RawPhysiological,
+    FilteredPhysiological,
+    Cardiovascular,
+    Motion,
+    Metrics,
+    Spectral,
+}
+
+impl fmt::Display for FrenzStreamCategory {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FrenzStreamCategory::RawPhysiological => write!(f, "Raw Physiological"),
+            FrenzStreamCategory::FilteredPhysiological => write!(f, "Filtered Physiological"),
+            FrenzStreamCategory::Cardiovascular => write!(f, "Cardiovascular"),
+            FrenzStreamCategory::Motion => write!(f, "Motion"),
+            FrenzStreamCategory::Metrics => write!(f, "Metrics"),
+            FrenzStreamCategory::Spectral => write!(f, "Spectral"),
+        }
+    }
+}
+
+/// Information about a specific FRENZ LSL stream
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FrenzStreamInfo {
+    /// The full LSL stream name (e.g., "FRENZ_ABC123_EEG_raw")
+    pub stream_name: String,
+    /// The suffix identifying the stream type (e.g., "_EEG_raw")
+    pub suffix: String,
+    /// Number of channels
+    pub channel_count: u32,
+    /// Nominal sampling rate in Hz
+    pub nominal_srate: f64,
+    /// Channel data format
+    pub channel_format: ChannelFormat,
+    /// Category for UI grouping
+    pub category: FrenzStreamCategory,
+    /// Stream UID from LSL discovery
+    pub stream_uid: String,
+    /// Whether the stream is currently available on the network
+    pub available: bool,
+}
+
+/// Information about a discovered FRENZ device streaming via LSL
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveredFrenzDevice {
+    /// Device name/ID (extracted from stream name prefix)
+    pub device_name: String,
+    /// Available streams keyed by suffix (e.g., "_EEG_raw" -> FrenzStreamInfo)
+    pub streams: HashMap<String, FrenzStreamInfo>,
+    /// When this device was first discovered
+    pub discovered_at: std::time::SystemTime,
+}
+
+/// Determine the category for a FRENZ stream based on its suffix
+pub fn frenz_stream_category(suffix: &str) -> FrenzStreamCategory {
+    match suffix.to_lowercase().as_str() {
+        "_eeg_raw" => FrenzStreamCategory::RawPhysiological,
+        "_ppg_raw" => FrenzStreamCategory::Cardiovascular,
+        "_imu_raw" => FrenzStreamCategory::Motion,
+        "_eeg_filtered" | "_eog_filtered" | "_emg_filtered" => {
+            FrenzStreamCategory::FilteredPhysiological
+        }
+        "_posture" | "_poas" | "_sleep_stage" | "_focus" | "_signal_quality" => {
+            FrenzStreamCategory::Metrics
+        }
+        "_alpha" | "_beta" | "_theta" | "_gamma" | "_delta" => FrenzStreamCategory::Spectral,
+        _ => FrenzStreamCategory::Metrics,
+    }
+}
+
 /// Errors specific to LSL operations
 #[derive(Debug, thiserror::Error)]
 pub enum LslError {
@@ -368,6 +466,12 @@ pub enum LslError {
 
     #[error("Neon stream not available: {0}")]
     NeonStreamNotAvailable(String),
+
+    #[error("FRENZ device not found: {0}")]
+    FrenzDeviceNotFound(String),
+
+    #[error("FRENZ stream not available: {0}")]
+    FrenzStreamNotAvailable(String),
 }
 
 // ============================================================================

@@ -28,6 +28,31 @@
       connection: 'WebSocket',
       config: { url: 'localhost:8081' },
     },
+    {
+      id: 'frenz',
+      name: 'Earable FRENZ Brainband',
+      type: 'EEG/Biosignals',
+      connection: 'LSL (via Python)',
+      config: {
+        streamEegRaw: true,
+        streamEegFiltered: true,
+        streamEogFiltered: false,
+        streamEmgFiltered: false,
+        streamPpgRaw: true,
+        streamImuRaw: true,
+        streamFocus: true,
+        streamSleepStage: true,
+        streamPoas: false,
+        streamPosture: false,
+        streamSignalQuality: true,
+        streamAlpha: false,
+        streamBeta: false,
+        streamTheta: false,
+        streamGamma: false,
+        streamDelta: false,
+        enableMarkerOutlet: true,
+      },
+    },
   ]);
 
   let selectedDevices = $state(new Set());

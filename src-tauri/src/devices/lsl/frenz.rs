@@ -1,0 +1,756 @@
+//! Earable FRENZ Brainband LSL Integration
+//!
+//! This module provides automatic discovery and data consumption from FRENZ brainband
+//! devices streaming via Lab Streaming Layer (LSL) through the Python `frenztoolkit` bridge.
+//!
+//! # Architecture
+//!
+//! ```text
+//! FRENZ Band ──BLE──> Python (frenztoolkit + pylsl) ──LSL──> HyperStudy Bridge (Rust LSL inlet)
+//!                                                     LSL <── HyperStudy Bridge (marker outlet)
+//! ```
+//!
+//! # FRENZ LSL Streams
+//!
+//! The Python bridge creates up to 16 streams per device, all named `{DEVICE_ID}_{suffix}`:
+//! - Raw signals: `_EEG_raw`, `_PPG_raw`, `_IMU_raw`
+//! - Filtered signals: `_EEG_filtered`, `_EOG_filtered`, `_EMG_filtered`
+//! - Derived metrics: `_focus`, `_sleep_stage`, `_poas`, `_POSTURE`, `_signal_quality`
+//! - Power bands: `_alpha`, `_beta`, `_theta`, `_gamma`, `_delta`
+//!
+//! # Usage
+//!
+//! ```ignore
+//! let manager = FrenzLslManager::new(resolver, inlet_manager, outlet_manager);
+//!
+//! // Discover FRENZ devices
+//! let devices = manager.discover_frenz_devices().await?;
+//!
+//! // Connect to specific streams
+//! let eeg_rx = manager.connect_stream("FRENZ_ABC", "_EEG_raw").await?;
+//!
+//! // Or connect all discovered streams at once
+//! let receivers = manager.connect_all_streams("FRENZ_ABC").await?;
+//! ```
+
+use super::inlet::{InletConfig, InletManager};
+use super::outlet::OutletManager;
+use super::resolver::{StreamFilter, StreamResolver};
+use super::types::{
+    frenz_stream_category, ChannelFormat, DiscoveredFrenzDevice, FrenzStreamInfo, LslError, Sample,
+    SampleData, StreamInfo, StreamType,
+};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::{mpsc, RwLock};
+use tracing::{debug, info, warn};
+
+/// A sample received from a FRENZ LSL stream.
+///
+/// This is the generic data type sent through the channel for all FRENZ streams.
+/// Numeric streams use `values` (Float32 or Float64 converted to f64).
+/// The POSTURE stream uses `string_value`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct FrenzSample {
+    /// LSL timestamp
+    pub timestamp: f64,
+    /// The stream suffix identifying the data type (e.g., "_EEG_raw")
+    pub stream_suffix: String,
+    /// Numeric sample values (empty for string-only streams like POSTURE)
+    pub values: Vec<f64>,
+    /// String value (only populated for POSTURE stream)
+    pub string_value: Option<String>,
+}
+
+/// Handle for an active FRENZ stream reading task
+struct FrenzStreamTask {
+    /// Shutdown flag
+    shutdown: Arc<AtomicBool>,
+    /// Task join handle
+    _handle: tokio::task::JoinHandle<()>,
+}
+
+/// Determine appropriate channel buffer size based on stream sampling rate
+fn buffer_size_for_rate(nominal_srate: f64) -> usize {
+    if nominal_srate >= 100.0 {
+        1000 // 125Hz streams: ~8 seconds buffer
+    } else if nominal_srate >= 25.0 {
+        500 // 25-50Hz streams: ~10-20 seconds buffer
+    } else if nominal_srate >= 1.0 {
+        250 // Low-rate streams
+    } else {
+        50 // Very low rate / irregular streams
+    }
+}
+
+/// FRENZ LSL Manager
+///
+/// Manages discovery and data streaming from Earable FRENZ brainband devices via LSL.
+/// Uses the existing LSL infrastructure (resolver, inlet manager, outlet manager)
+/// with FRENZ-specific discovery patterns and generic stream handling.
+pub struct FrenzLslManager {
+    /// Stream resolver for discovery (shared with Neon manager)
+    resolver: Arc<StreamResolver>,
+    /// Inlet manager for consuming streams (shared with Neon manager)
+    inlet_manager: Arc<InletManager>,
+    /// Outlet manager for creating marker outlets
+    outlet_manager: Arc<OutletManager>,
+    /// Discovered FRENZ devices (device_name -> DiscoveredFrenzDevice)
+    discovered_devices: Arc<RwLock<HashMap<String, DiscoveredFrenzDevice>>>,
+    /// Active stream tasks keyed by (device_name, stream_suffix)
+    stream_tasks: Arc<RwLock<HashMap<(String, String), FrenzStreamTask>>>,
+    /// Marker outlet ID (created once, shared across all FRENZ devices)
+    marker_outlet_id: Arc<RwLock<Option<String>>>,
+}
+
+impl FrenzLslManager {
+    /// Create a new FRENZ LSL manager
+    ///
+    /// # Arguments
+    /// * `resolver` - Stream resolver for LSL discovery (shared to maintain cache)
+    /// * `inlet_manager` - Inlet manager for consuming LSL streams
+    /// * `outlet_manager` - Outlet manager for creating marker outlets
+    pub fn new(
+        resolver: Arc<StreamResolver>,
+        inlet_manager: Arc<InletManager>,
+        outlet_manager: Arc<OutletManager>,
+    ) -> Self {
+        Self {
+            resolver,
+            inlet_manager,
+            outlet_manager,
+            discovered_devices: Arc::new(RwLock::new(HashMap::new())),
+            stream_tasks: Arc::new(RwLock::new(HashMap::new())),
+            marker_outlet_id: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Discover FRENZ devices streaming via LSL
+    ///
+    /// Scans the network for LSL streams matching FRENZ patterns and groups them
+    /// by device name. Returns a list of discovered devices with their available streams.
+    pub async fn discover_frenz_devices(&self) -> Result<Vec<DiscoveredFrenzDevice>, LslError> {
+        info!(device = "frenz", "Discovering FRENZ devices via LSL...");
+
+        // Discover all streams (maintains cache for subsequent connect calls)
+        let all_streams = self.resolver.discover_streams().await?;
+
+        // Filter to only FRENZ streams
+        let frenz_streams: Vec<_> = all_streams
+            .into_iter()
+            .filter(|s| StreamFilter::is_frenz_stream(&s.info.name))
+            .collect();
+
+        // Group streams by device name
+        let mut device_map: HashMap<String, DiscoveredFrenzDevice> = HashMap::new();
+        let now = std::time::SystemTime::now();
+
+        for stream in frenz_streams {
+            let stream_name = &stream.info.name;
+
+            if let (Some(device_name), Some(suffix)) = (
+                StreamFilter::extract_frenz_device_name(stream_name),
+                StreamFilter::extract_frenz_stream_suffix(stream_name),
+            ) {
+                let entry = device_map.entry(device_name.clone()).or_insert_with(|| {
+                    DiscoveredFrenzDevice {
+                        device_name: device_name.clone(),
+                        streams: HashMap::new(),
+                        discovered_at: now,
+                    }
+                });
+
+                let category = frenz_stream_category(suffix);
+
+                entry.streams.insert(
+                    suffix.to_string(),
+                    FrenzStreamInfo {
+                        stream_name: stream_name.clone(),
+                        suffix: suffix.to_string(),
+                        channel_count: stream.info.channel_count,
+                        nominal_srate: stream.info.nominal_srate,
+                        channel_format: stream.info.channel_format,
+                        category,
+                        stream_uid: stream.uid.clone(),
+                        available: true,
+                    },
+                );
+
+                debug!(
+                    device = "frenz",
+                    "Found FRENZ stream: {} ({} ch, {:.1} Hz)",
+                    stream_name,
+                    stream.info.channel_count,
+                    stream.info.nominal_srate
+                );
+            }
+        }
+
+        // Update cache
+        {
+            let mut devices = self.discovered_devices.write().await;
+            *devices = device_map.clone();
+        }
+
+        let device_list: Vec<DiscoveredFrenzDevice> = device_map.into_values().collect();
+        info!(
+            device = "frenz",
+            "Discovered {} FRENZ device(s)",
+            device_list.len()
+        );
+
+        for device in &device_list {
+            info!(
+                device = "frenz",
+                "  - {}: {} streams available",
+                device.device_name,
+                device.streams.len()
+            );
+        }
+
+        Ok(device_list)
+    }
+
+    /// Get a previously discovered FRENZ device by name
+    pub async fn get_device(&self, device_name: &str) -> Option<DiscoveredFrenzDevice> {
+        let devices = self.discovered_devices.read().await;
+        devices.get(device_name).cloned()
+    }
+
+    /// Connect to a single FRENZ LSL stream
+    ///
+    /// Returns a channel receiver that will emit `FrenzSample` data.
+    /// The stream continues until `disconnect_stream` is called.
+    pub async fn connect_stream(
+        &self,
+        device_name: &str,
+        stream_suffix: &str,
+    ) -> Result<mpsc::Receiver<FrenzSample>, LslError> {
+        info!(
+            device = "frenz",
+            "Connecting to FRENZ stream: {}{}", device_name, stream_suffix
+        );
+
+        let task_key = (device_name.to_string(), stream_suffix.to_string());
+
+        // Check if already connected
+        {
+            let tasks = self.stream_tasks.read().await;
+            if tasks.contains_key(&task_key) {
+                return Err(LslError::LslLibraryError(format!(
+                    "Already connected to stream {}{}",
+                    device_name, stream_suffix
+                )));
+            }
+        }
+
+        // Get the device and stream info
+        let device = self.get_device(device_name).await.ok_or_else(|| {
+            LslError::FrenzDeviceNotFound(format!(
+                "Device not found: {}. Run discover_frenz_devices() first.",
+                device_name
+            ))
+        })?;
+
+        let stream_info = device.streams.get(stream_suffix).ok_or_else(|| {
+            LslError::FrenzStreamNotAvailable(format!(
+                "Stream {} not available for device {}",
+                stream_suffix, device_name
+            ))
+        })?;
+
+        let stream_uid = &stream_info.stream_uid;
+
+        // Find the stream in the resolver cache
+        let discovered = self.resolver.get_stream(stream_uid).await.ok_or_else(|| {
+            LslError::StreamNotFound(format!("Stream not in cache: {}", stream_uid))
+        })?;
+
+        // Create inlet
+        let buf_size = buffer_size_for_rate(stream_info.nominal_srate);
+        let inlet_config = InletConfig {
+            buffer_size: buf_size,
+            max_buflen: 360,
+            max_chunklen: 0,
+            recover: true,
+            ..Default::default()
+        };
+
+        self.inlet_manager
+            .create_inlet(discovered.clone(), Some(inlet_config))
+            .await?;
+
+        self.inlet_manager
+            .open_inlet(stream_uid, Duration::from_secs(10))
+            .await?;
+
+        // Create data channel
+        let (tx, rx) = mpsc::channel(buf_size);
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        // Spawn reading task
+        let task_tx = tx.clone();
+        let task_shutdown = shutdown.clone();
+        let task_inlet_manager = self.inlet_manager.clone();
+        let task_uid = stream_uid.clone();
+        let task_device_name = device_name.to_string();
+        let task_suffix = stream_suffix.to_string();
+        let channel_format = stream_info.channel_format;
+
+        // Use a longer poll timeout for low-rate streams
+        let poll_timeout_ms = if stream_info.nominal_srate < 1.0 {
+            1000
+        } else if stream_info.nominal_srate < 10.0 {
+            500
+        } else {
+            100
+        };
+
+        let handle = tokio::spawn(async move {
+            info!(
+                device = "frenz",
+                "FRENZ stream task started: {}{}", task_device_name, task_suffix
+            );
+
+            while !task_shutdown.load(Ordering::Relaxed) {
+                match task_inlet_manager
+                    .pull_sample(&task_uid, Duration::from_millis(poll_timeout_ms))
+                    .await
+                {
+                    Ok(Some(sample)) => {
+                        let frenz_sample = match &sample.data {
+                            SampleData::Float64(data) => FrenzSample {
+                                timestamp: sample.timestamp,
+                                stream_suffix: task_suffix.clone(),
+                                values: data.clone(),
+                                string_value: None,
+                            },
+                            SampleData::Float32(data) => FrenzSample {
+                                timestamp: sample.timestamp,
+                                stream_suffix: task_suffix.clone(),
+                                values: data.iter().map(|&v| v as f64).collect(),
+                                string_value: None,
+                            },
+                            SampleData::String(data) => FrenzSample {
+                                timestamp: sample.timestamp,
+                                stream_suffix: task_suffix.clone(),
+                                values: vec![],
+                                string_value: data.first().cloned(),
+                            },
+                            _ => {
+                                warn!(
+                                    device = "frenz",
+                                    "Unexpected data format for {}{} (format: {:?})",
+                                    task_device_name,
+                                    task_suffix,
+                                    channel_format
+                                );
+                                continue;
+                            }
+                        };
+
+                        if task_tx.send(frenz_sample).await.is_err() {
+                            debug!(
+                                device = "frenz",
+                                "Receiver dropped for {}{}, stopping task",
+                                task_device_name,
+                                task_suffix
+                            );
+                            break;
+                        }
+                    }
+                    Ok(None) => {
+                        // No data available, continue polling
+                    }
+                    Err(e) => {
+                        if !task_shutdown.load(Ordering::Relaxed) {
+                            warn!(
+                                device = "frenz",
+                                "Error pulling sample for {}{}: {}",
+                                task_device_name,
+                                task_suffix,
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+
+            info!(
+                device = "frenz",
+                "FRENZ stream task stopped: {}{}", task_device_name, task_suffix
+            );
+        });
+
+        // Store the task
+        {
+            let mut tasks = self.stream_tasks.write().await;
+            tasks.insert(
+                task_key,
+                FrenzStreamTask {
+                    shutdown,
+                    _handle: handle,
+                },
+            );
+        }
+
+        info!(
+            device = "frenz",
+            "Connected to FRENZ stream: {}{}", device_name, stream_suffix
+        );
+        Ok(rx)
+    }
+
+    /// Connect to all discovered streams for a device.
+    ///
+    /// Returns a map of suffix -> receiver for each connected stream.
+    /// If `selected_suffixes` is non-empty, only connects to those streams.
+    pub async fn connect_streams(
+        &self,
+        device_name: &str,
+        selected_suffixes: &[String],
+    ) -> Result<HashMap<String, mpsc::Receiver<FrenzSample>>, LslError> {
+        let device = self.get_device(device_name).await.ok_or_else(|| {
+            LslError::FrenzDeviceNotFound(format!("Device not found: {}", device_name))
+        })?;
+
+        let suffixes: Vec<String> = if selected_suffixes.is_empty() {
+            device.streams.keys().cloned().collect()
+        } else {
+            selected_suffixes.to_vec()
+        };
+
+        let mut receivers = HashMap::new();
+        for suffix in &suffixes {
+            match self.connect_stream(device_name, suffix).await {
+                Ok(rx) => {
+                    receivers.insert(suffix.clone(), rx);
+                }
+                Err(e) => {
+                    warn!(
+                        device = "frenz",
+                        "Failed to connect stream {}{}: {}", device_name, suffix, e
+                    );
+                }
+            }
+        }
+
+        info!(
+            device = "frenz",
+            "Connected {}/{} streams for {}",
+            receivers.len(),
+            suffixes.len(),
+            device_name
+        );
+
+        Ok(receivers)
+    }
+
+    /// Disconnect from a single FRENZ stream
+    pub async fn disconnect_stream(
+        &self,
+        device_name: &str,
+        stream_suffix: &str,
+    ) -> Result<(), LslError> {
+        let task_key = (device_name.to_string(), stream_suffix.to_string());
+
+        let task = {
+            let mut tasks = self.stream_tasks.write().await;
+            tasks.remove(&task_key)
+        };
+
+        if let Some(task) = task {
+            task.shutdown.store(true, Ordering::Relaxed);
+            let _ = tokio::time::timeout(Duration::from_secs(2), task._handle).await;
+        }
+
+        // Close the inlet
+        if let Some(device) = self.get_device(device_name).await {
+            if let Some(stream_info) = device.streams.get(stream_suffix) {
+                let _ = self
+                    .inlet_manager
+                    .close_inlet(&stream_info.stream_uid)
+                    .await;
+                let _ = self
+                    .inlet_manager
+                    .remove_inlet(&stream_info.stream_uid)
+                    .await;
+            }
+        }
+
+        info!(
+            device = "frenz",
+            "Disconnected FRENZ stream: {}{}", device_name, stream_suffix
+        );
+        Ok(())
+    }
+
+    /// Disconnect all FRENZ streams
+    pub async fn disconnect_all(&self) -> Result<(), LslError> {
+        let task_keys: Vec<(String, String)> = {
+            let tasks = self.stream_tasks.read().await;
+            tasks.keys().cloned().collect()
+        };
+
+        for (device_name, suffix) in task_keys {
+            let _ = self.disconnect_stream(&device_name, &suffix).await;
+        }
+
+        // Also destroy marker outlet if it exists
+        {
+            let mut outlet_id = self.marker_outlet_id.write().await;
+            if let Some(id) = outlet_id.take() {
+                let _ = self.outlet_manager.remove_outlet(&id).await;
+                info!(device = "frenz", "Removed FRENZ marker outlet");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Create an LSL marker outlet for sending event markers alongside FRENZ data.
+    ///
+    /// The outlet is named `HyperStudy_FRENZ_Markers` so LabRecorder can capture
+    /// experiment events time-synced with the FRENZ physiological data.
+    pub async fn create_marker_outlet(&self) -> Result<(), LslError> {
+        {
+            let existing = self.marker_outlet_id.read().await;
+            if existing.is_some() {
+                info!(device = "frenz", "FRENZ marker outlet already exists");
+                return Ok(());
+            }
+        }
+
+        let stream_info = StreamInfo::new(
+            "HyperStudy_FRENZ_Markers".to_string(),
+            StreamType::Markers,
+            1,
+            0.0, // Irregular sampling rate
+            ChannelFormat::String,
+            "hyperstudy-frenz-markers".to_string(),
+        );
+
+        let outlet_id = self.outlet_manager.create_outlet(stream_info, None).await?;
+        self.outlet_manager.start_outlet(&outlet_id).await?;
+
+        {
+            let mut stored_id = self.marker_outlet_id.write().await;
+            *stored_id = Some(outlet_id.clone());
+        }
+
+        info!(
+            device = "frenz",
+            "Created FRENZ marker outlet: {}", outlet_id
+        );
+        Ok(())
+    }
+
+    /// Send an event marker to the FRENZ marker outlet
+    pub async fn send_marker(&self, marker: &str, timestamp: Option<f64>) -> Result<(), LslError> {
+        let outlet_id = {
+            let stored = self.marker_outlet_id.read().await;
+            stored.clone().ok_or_else(|| {
+                LslError::LslLibraryError(
+                    "FRENZ marker outlet not created. Call create_marker_outlet() first."
+                        .to_string(),
+                )
+            })?
+        };
+
+        let sample = Sample {
+            data: SampleData::String(vec![marker.to_string()]),
+            timestamp: timestamp.unwrap_or(0.0),
+        };
+
+        self.outlet_manager.send_sample(&outlet_id, sample).await?;
+
+        debug!(device = "frenz", "Sent FRENZ marker: {}", marker);
+        Ok(())
+    }
+
+    /// Get statistics for all FRENZ streams
+    pub async fn get_stats(&self) -> serde_json::Value {
+        let devices = self.discovered_devices.read().await;
+        let tasks = self.stream_tasks.read().await;
+        let marker_outlet = self.marker_outlet_id.read().await;
+
+        let device_stats: Vec<serde_json::Value> = devices
+            .values()
+            .map(|d| {
+                let stream_stats: Vec<serde_json::Value> = d
+                    .streams
+                    .values()
+                    .map(|s| {
+                        let connected =
+                            tasks.contains_key(&(d.device_name.clone(), s.suffix.clone()));
+                        serde_json::json!({
+                            "suffix": s.suffix,
+                            "channel_count": s.channel_count,
+                            "nominal_srate": s.nominal_srate,
+                            "channel_format": s.channel_format,
+                            "category": s.category.to_string(),
+                            "connected": connected,
+                        })
+                    })
+                    .collect();
+
+                serde_json::json!({
+                    "device_name": d.device_name,
+                    "stream_count": d.streams.len(),
+                    "streams": stream_stats,
+                })
+            })
+            .collect();
+
+        serde_json::json!({
+            "discovered_device_count": devices.len(),
+            "active_stream_count": tasks.len(),
+            "marker_outlet_active": marker_outlet.is_some(),
+            "devices": device_stats,
+        })
+    }
+}
+
+impl std::fmt::Debug for FrenzLslManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FrenzLslManager").finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::devices::lsl::resolver::StreamFilter;
+
+    #[test]
+    fn test_is_frenz_stream() {
+        // All 16 known suffixes should match
+        assert!(StreamFilter::is_frenz_stream("DEVICE123_EEG_raw"));
+        assert!(StreamFilter::is_frenz_stream("DEVICE123_EEG_filtered"));
+        assert!(StreamFilter::is_frenz_stream("DEVICE123_EOG_filtered"));
+        assert!(StreamFilter::is_frenz_stream("DEVICE123_EMG_filtered"));
+        assert!(StreamFilter::is_frenz_stream("DEVICE123_PPG_raw"));
+        assert!(StreamFilter::is_frenz_stream("DEVICE123_IMU_raw"));
+        assert!(StreamFilter::is_frenz_stream("DEVICE123_POSTURE"));
+        assert!(StreamFilter::is_frenz_stream("DEVICE123_poas"));
+        assert!(StreamFilter::is_frenz_stream("DEVICE123_sleep_stage"));
+        assert!(StreamFilter::is_frenz_stream("DEVICE123_focus"));
+        assert!(StreamFilter::is_frenz_stream("DEVICE123_signal_quality"));
+        assert!(StreamFilter::is_frenz_stream("DEVICE123_alpha"));
+        assert!(StreamFilter::is_frenz_stream("DEVICE123_beta"));
+        assert!(StreamFilter::is_frenz_stream("DEVICE123_theta"));
+        assert!(StreamFilter::is_frenz_stream("DEVICE123_gamma"));
+        assert!(StreamFilter::is_frenz_stream("DEVICE123_delta"));
+
+        // Case-insensitive matching
+        assert!(StreamFilter::is_frenz_stream("DEVICE123_eeg_RAW"));
+        assert!(StreamFilter::is_frenz_stream("DEVICE123_POAS"));
+
+        // Non-FRENZ streams should not match
+        assert!(!StreamFilter::is_frenz_stream("MyNeon_Neon Gaze"));
+        assert!(!StreamFilter::is_frenz_stream("SomeOtherStream"));
+        assert!(!StreamFilter::is_frenz_stream("Random_EEG")); // No underscore before suffix
+    }
+
+    #[test]
+    fn test_extract_frenz_device_name() {
+        assert_eq!(
+            StreamFilter::extract_frenz_device_name("FRENZ_ABC123_EEG_raw"),
+            Some("FRENZ_ABC123".to_string())
+        );
+        assert_eq!(
+            StreamFilter::extract_frenz_device_name("MyDevice_focus"),
+            Some("MyDevice".to_string())
+        );
+        assert_eq!(
+            StreamFilter::extract_frenz_device_name("Dev_POSTURE"),
+            Some("Dev".to_string())
+        );
+        assert_eq!(
+            StreamFilter::extract_frenz_device_name("MyNeon_Neon Gaze"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_extract_frenz_stream_suffix() {
+        assert_eq!(
+            StreamFilter::extract_frenz_stream_suffix("FRENZ_ABC_EEG_raw"),
+            Some("_EEG_raw")
+        );
+        assert_eq!(
+            StreamFilter::extract_frenz_stream_suffix("Dev_poas"),
+            Some("_poas")
+        );
+        assert_eq!(
+            StreamFilter::extract_frenz_stream_suffix("Dev_POSTURE"),
+            Some("_POSTURE")
+        );
+        // Case-insensitive should return canonical case
+        assert_eq!(
+            StreamFilter::extract_frenz_stream_suffix("Dev_POAS"),
+            Some("_poas")
+        );
+        assert_eq!(
+            StreamFilter::extract_frenz_stream_suffix("Not_A_Frenz_Stream"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_buffer_size_selection() {
+        // High-rate streams (125Hz)
+        assert_eq!(buffer_size_for_rate(125.0), 1000);
+        // Medium-rate streams (50Hz)
+        assert_eq!(buffer_size_for_rate(50.0), 500);
+        // Low-rate streams (25Hz)
+        assert_eq!(buffer_size_for_rate(25.0), 500);
+        // Very low rate (0.5Hz)
+        assert_eq!(buffer_size_for_rate(0.5), 50);
+        // Sub-Hz (0.2Hz)
+        assert_eq!(buffer_size_for_rate(0.2), 50);
+    }
+
+    #[test]
+    fn test_frenz_manager_creation() {
+        use crate::devices::lsl::inlet::InletManager;
+        use crate::devices::lsl::outlet::OutletManager;
+        use crate::devices::lsl::resolver::StreamResolver;
+        use crate::devices::lsl::sync::TimeSync;
+
+        let time_sync = Arc::new(TimeSync::new(false));
+        let resolver = Arc::new(StreamResolver::new(1.0));
+        let inlet_manager = Arc::new(InletManager::new(time_sync.clone()));
+        let outlet_manager = Arc::new(OutletManager::new(time_sync));
+
+        let manager = FrenzLslManager::new(resolver, inlet_manager, outlet_manager);
+        // Verify creation doesn't panic
+        let _ = format!("{:?}", manager);
+    }
+
+    #[tokio::test]
+    async fn test_frenz_discovery_no_streams() {
+        use crate::devices::lsl::inlet::InletManager;
+        use crate::devices::lsl::outlet::OutletManager;
+        use crate::devices::lsl::resolver::StreamResolver;
+        use crate::devices::lsl::sync::TimeSync;
+
+        let time_sync = Arc::new(TimeSync::new(false));
+        let resolver = Arc::new(StreamResolver::new(0.5));
+        let inlet_manager = Arc::new(InletManager::new(time_sync.clone()));
+        let outlet_manager = Arc::new(OutletManager::new(time_sync));
+
+        let manager = FrenzLslManager::new(resolver, inlet_manager, outlet_manager);
+
+        // Discovery should succeed even with no FRENZ streams on network
+        let devices = manager.discover_frenz_devices().await.unwrap();
+        // We can't guarantee any FRENZ devices are on the network, just verify no panic
+        let stats = manager.get_stats().await;
+        assert_eq!(
+            stats["discovered_device_count"].as_u64().unwrap_or(0),
+            devices.len() as u64
+        );
+    }
+}
