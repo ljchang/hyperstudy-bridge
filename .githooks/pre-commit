@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+#
+# Pre-commit hook: checks Rust and frontend formatting.
+# Install with: git config core.hooksPath .githooks
+
+set -euo pipefail
+
+ERRORS=0
+
+# Check Rust formatting (only if Rust files are staged)
+if git diff --cached --name-only | grep -q '\.rs$'; then
+    echo "Checking Rust formatting..."
+    if ! (cd src-tauri && cargo fmt --all -- --check) 2>/dev/null; then
+        echo "  Fix with: cd src-tauri && cargo fmt --all"
+        ERRORS=1
+    fi
+fi
+
+# Check frontend formatting (only if JS/Svelte files are staged)
+if git diff --cached --name-only | grep -qE '\.(js|svelte)$'; then
+    echo "Checking frontend formatting..."
+    STAGED_FILES=$(git diff --cached --name-only | grep -E '\.(js|svelte)$' || true)
+    if [ -n "$STAGED_FILES" ]; then
+        if ! npx prettier --check $STAGED_FILES 2>/dev/null; then
+            echo "  Fix with: npx prettier --write \"src/**/*.{js,svelte}\""
+            ERRORS=1
+        fi
+    fi
+fi
+
+if [ "$ERRORS" -ne 0 ]; then
+    echo ""
+    echo "Commit blocked: formatting issues found. Fix and re-stage."
+    exit 1
+fi
