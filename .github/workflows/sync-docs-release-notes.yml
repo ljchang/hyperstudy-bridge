@@ -42,6 +42,7 @@ jobs:
           repository: ljchang/hyperstudy-docs
           token: ${{ secrets.DOCS_REPO_TOKEN }}
           path: docs-repo
+          persist-credentials: false
 
       - name: Check if release already exists
         id: check
