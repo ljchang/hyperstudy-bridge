@@ -45,8 +45,9 @@ pub enum CommandAction {
     DiscoverNeon,      // Discover Neon devices streaming via LSL
     ConnectNeonGaze,   // Connect to Neon gaze stream
     ConnectNeonEvents, // Connect to Neon events stream
-    DisconnectNeon,    // Disconnect from Neon streams
-    NeonStatus,        // Get Neon LSL manager status
+    ConnectNeonRest, // Connect Neon REST API by device_name (hostname resolved from discovery cache)
+    DisconnectNeon,  // Disconnect from Neon streams
+    NeonStatus,      // Get Neon LSL manager status
     // FRENZ LSL specific actions
     DiscoverFrenz,       // Discover FRENZ devices streaming via LSL
     ConnectFrenzStreams, // Connect to selected FRENZ streams

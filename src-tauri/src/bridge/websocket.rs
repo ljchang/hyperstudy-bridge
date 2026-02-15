@@ -1059,6 +1059,92 @@ async fn handle_device_command(
                 }
             }
         }
+        CommandAction::ConnectNeonRest => {
+            // Connect the Neon REST API (pupil device) using hostname from discovery cache
+            let device_name = payload
+                .as_ref()
+                .and_then(|p| p.get("device_name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            if device_name.is_empty() {
+                send_response(
+                    tx,
+                    BridgeResponse::device_error(
+                        "neon_lsl".to_string(),
+                        "Missing 'device_name' in payload".to_string(),
+                        id,
+                    ),
+                )
+                .await;
+                return;
+            }
+
+            info!(
+                "ConnectNeonRest: resolving hostname for device '{}'",
+                device_name
+            );
+
+            // Look up device in discovery cache
+            let discovered = state.neon_manager.get_device(device_name).await;
+            let hostname = match discovered {
+                Some(ref dev) => match &dev.hostname {
+                    Some(h) if !h.is_empty() => h.clone(),
+                    _ => {
+                        send_response(
+                            tx,
+                            BridgeResponse::device_error(
+                                "neon_lsl".to_string(),
+                                "No hostname available for device. Use Manual IP.".to_string(),
+                                id,
+                            ),
+                        )
+                        .await;
+                        return;
+                    }
+                },
+                None => {
+                    send_response(
+                        tx,
+                        BridgeResponse::device_error(
+                            "neon_lsl".to_string(),
+                            "Device not found. Run discovery first.".to_string(),
+                            id,
+                        ),
+                    )
+                    .await;
+                    return;
+                }
+            };
+
+            info!(
+                "ConnectNeonRest: connecting to Neon REST API at '{}'",
+                hostname
+            );
+
+            let mut device: Box<dyn crate::devices::Device> = Box::new(PupilDevice::new(hostname));
+
+            match device.connect().await {
+                Ok(_) => {
+                    state.record_connection_attempt("pupil", true).await;
+                    let status = device.get_status();
+                    state.add_device("pupil".to_string(), device).await;
+
+                    send_response(tx, BridgeResponse::status("pupil".to_string(), status, id))
+                        .await;
+                }
+                Err(e) => {
+                    state.record_connection_attempt("pupil", false).await;
+                    state.record_device_error("pupil", &e.to_string()).await;
+
+                    send_response(
+                        tx,
+                        BridgeResponse::device_error("pupil".to_string(), e.to_string(), id),
+                    )
+                    .await;
+                }
+            }
+        }
         CommandAction::DisconnectNeon => {
             let device_name = payload
                 .as_ref()

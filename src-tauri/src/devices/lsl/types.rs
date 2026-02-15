@@ -583,6 +583,8 @@ impl NeonEventData {
 pub struct DiscoveredNeonDevice {
     /// Device name (extracted from stream name prefix, e.g., "MyNeon" from "MyNeon_Neon Gaze")
     pub device_name: String,
+    /// Network hostname of the device (from LSL stream info), used for REST API connection
+    pub hostname: Option<String>,
     /// Whether gaze stream is available
     pub has_gaze_stream: bool,
     /// Whether events stream is available

@@ -135,6 +135,7 @@ impl NeonLslManager {
                         .entry(device_name.clone())
                         .or_insert_with(|| DiscoveredNeonDevice {
                             device_name: device_name.clone(),
+                            hostname: None,
                             has_gaze_stream: false,
                             has_events_stream: false,
                             gaze_channel_count: 0,
@@ -142,6 +143,11 @@ impl NeonLslManager {
                             events_stream_uid: None,
                             discovered_at: now,
                         });
+
+                // Capture hostname from LSL stream info (needed for REST API connection)
+                if entry.hostname.is_none() && !stream.info.hostname.is_empty() {
+                    entry.hostname = Some(stream.info.hostname.clone());
+                }
 
                 if StreamFilter::is_neon_gaze_stream(stream_name) {
                     entry.has_gaze_stream = true;
