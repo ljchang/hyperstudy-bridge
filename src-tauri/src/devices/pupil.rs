@@ -165,7 +165,8 @@ pub struct EventRequest {
 pub struct EventResponse {
     #[serde(default)]
     pub name: String,
-    pub recording_id: String,
+    #[serde(default)]
+    pub recording_id: Option<String>,
     pub timestamp: i64,
 }
 
@@ -986,10 +987,24 @@ mod tests {
         let envelope: ApiResponse<EventResponse> = serde_json::from_value(json).unwrap();
         assert_eq!(
             envelope.result.recording_id,
-            "550e8400-e29b-41d4-a716-446655440000"
+            Some("550e8400-e29b-41d4-a716-446655440000".to_string())
         );
         assert_eq!(envelope.result.timestamp, 1700000000000000000);
         assert_eq!(envelope.result.name, ""); // Not returned by API
+    }
+
+    #[test]
+    fn test_event_response_envelope_no_recording() {
+        let json = serde_json::json!({
+            "message": "Event sent",
+            "result": {
+                "timestamp": 1700000000000000000_i64
+            }
+        });
+
+        let envelope: ApiResponse<EventResponse> = serde_json::from_value(json).unwrap();
+        assert_eq!(envelope.result.recording_id, None);
+        assert_eq!(envelope.result.timestamp, 1700000000000000000);
     }
 
     #[test]
