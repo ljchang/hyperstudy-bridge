@@ -95,6 +95,7 @@ impl NeonStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PhoneInfo {
     pub ip: String,
+    #[serde(default)]
     pub port: u16,
     pub device_id: String,
     pub device_name: String,
@@ -808,7 +809,6 @@ mod tests {
                     "model": "Phone",
                     "data": {
                         "ip": "192.168.1.100",
-                        "port": 8080,
                         "device_id": "abc123",
                         "device_name": "Neon Test",
                         "battery_level": 0.85,
@@ -891,7 +891,6 @@ mod tests {
             model: "Phone".to_string(),
             data: serde_json::json!({
                 "ip": "192.168.1.100",
-                "port": 8080,
                 "device_id": "abc123",
                 "device_name": "Neon Minimal",
                 "battery_level": 0.5,
