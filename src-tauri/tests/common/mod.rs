@@ -238,10 +238,15 @@ impl MemoryTracker {
     }
 
     pub fn get_memory_usage() -> u64 {
-        use sysinfo::System;
-        let mut system = System::new_all();
-        system.refresh_memory();
-        system.used_memory()
+        use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+        let pid = Pid::from_u32(std::process::id());
+        let mut system = System::new();
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[pid]),
+            false,
+            ProcessRefreshKind::nothing().with_memory(),
+        );
+        system.process(pid).map(|p| p.memory()).unwrap_or(0)
     }
 
     pub fn memory_increase(&self) -> u64 {

@@ -120,10 +120,17 @@ pub trait Device: Send + Sync + Debug {
     }
 
     /// Send a device-specific event (for Kernel, Pupil, etc.)
-    async fn send_event(&mut self, event: serde_json::Value) -> Result<(), DeviceError> {
+    ///
+    /// Returns a JSON value with device-specific response data (e.g., recording_id,
+    /// timestamp) that the bridge can forward to the web app.
+    async fn send_event(
+        &mut self,
+        event: serde_json::Value,
+    ) -> Result<serde_json::Value, DeviceError> {
         // Default implementation: serialize and send as bytes
         let data = event.to_string();
-        self.send(data.as_bytes()).await
+        self.send(data.as_bytes()).await?;
+        Ok(serde_json::json!({ "success": true }))
     }
 
     /// Returns a reference to the device as `Any` for downcasting in tests.

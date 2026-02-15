@@ -257,6 +257,7 @@ async fn handle_device_command(
     id: Option<String>,
     tx: &mpsc::Sender<BridgeResponse>,
 ) {
+    let device_id = device_id.to_lowercase();
     info!(
         "Handling device command: device={}, action={:?}",
         device_id, action
@@ -619,16 +620,8 @@ async fn handle_device_command(
             };
 
             match send_result {
-                Some(Ok(_)) => {
-                    send_response(
-                        tx,
-                        BridgeResponse::data(
-                            device_id,
-                            json!({ "success": true, "message": "Event sent" }),
-                            id,
-                        ),
-                    )
-                    .await;
+                Some(Ok(response_data)) => {
+                    send_response(tx, BridgeResponse::data(device_id, response_data, id)).await;
                 }
                 Some(Err(e)) => {
                     send_response(
@@ -1254,6 +1247,7 @@ async fn handle_query(
             json!(devices)
         }
         QueryTarget::Device(device_id) => {
+            let device_id = device_id.to_lowercase();
             if let Some(device_lock) = state.get_device(&device_id).await {
                 let device = device_lock.read().await;
                 json!(device.get_info())

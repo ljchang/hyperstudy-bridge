@@ -760,7 +760,10 @@ impl Device for KernelDevice {
     /// from [`next_event_id`] (with a warning log). If `id` is present, it is preserved.
     ///
     /// For the typed Rust API, prefer [`send_kernel_event()`] or [`send_event_simple()`].
-    async fn send_event(&mut self, event: serde_json::Value) -> Result<(), DeviceError> {
+    async fn send_event(
+        &mut self,
+        event: serde_json::Value,
+    ) -> Result<serde_json::Value, DeviceError> {
         // Extract fields from the incoming JSON and build a proper KernelEvent.
         // The Kernel Tasks SDK requires {id, timestamp, event, value} — if the
         // caller omits `id` (e.g. the frontend), we auto-assign one from
@@ -807,8 +810,13 @@ impl Device for KernelDevice {
             .cloned()
             .unwrap_or(serde_json::Value::String(String::new()));
 
-        let kernel_event = KernelEvent::with_timestamp(id, timestamp, event_name, value);
-        self.send_kernel_event(&kernel_event).await
+        let kernel_event = KernelEvent::with_timestamp(id, timestamp, event_name.clone(), value);
+        self.send_kernel_event(&kernel_event).await?;
+        Ok(serde_json::json!({
+            "success": true,
+            "event_id": id,
+            "event": event_name,
+        }))
     }
 }
 

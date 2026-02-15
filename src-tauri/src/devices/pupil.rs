@@ -472,7 +472,13 @@ impl PupilDevice {
         let mut event_resp = envelope.result;
         event_resp.name = name.to_string();
 
-        debug!(device = "pupil", event = %event_resp.name, "Event sent successfully");
+        info!(
+            device = "pupil",
+            event = %event_resp.name,
+            recording_id = ?event_resp.recording_id,
+            timestamp = event_resp.timestamp,
+            "Neon event sent"
+        );
         Ok(event_resp)
     }
 
@@ -768,7 +774,10 @@ impl Device for PupilDevice {
         }
     }
 
-    async fn send_event(&mut self, event: serde_json::Value) -> Result<(), DeviceError> {
+    async fn send_event(
+        &mut self,
+        event: serde_json::Value,
+    ) -> Result<serde_json::Value, DeviceError> {
         if self.status != DeviceStatus::Connected {
             return Err(DeviceError::NotConnected);
         }
@@ -779,8 +788,13 @@ impl Device for PupilDevice {
             .unwrap_or("unnamed");
         let timestamp = event.get("timestamp").and_then(|v| v.as_i64());
 
-        self.send_neon_event(name, timestamp).await?;
-        Ok(())
+        let resp = self.send_neon_event(name, timestamp).await?;
+        Ok(serde_json::json!({
+            "success": true,
+            "name": resp.name,
+            "recording_id": resp.recording_id,
+            "timestamp": resp.timestamp,
+        }))
     }
 }
 
