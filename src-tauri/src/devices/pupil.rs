@@ -274,6 +274,54 @@ impl PupilDevice {
         (ip_part, base_url)
     }
 
+    /// Resolve `.local` (mDNS) hostnames to IP addresses via the system resolver.
+    ///
+    /// HTTP clients like reqwest/hyper may not resolve mDNS names correctly on
+    /// macOS, even though the system resolver (used by `ping`) handles them fine.
+    /// This pre-resolves `.local` hostnames using `tokio::net::lookup_host` which
+    /// delegates to `getaddrinfo` and the OS mDNS stack (mDNSResponder on macOS).
+    async fn resolve_mdns_if_needed(&mut self) {
+        if !self.device_ip.ends_with(".local") {
+            return;
+        }
+
+        // Extract port from base_url
+        let port = self
+            .base_url
+            .split("://")
+            .nth(1)
+            .and_then(|s| s.split(':').nth(1))
+            .and_then(|s| s.split('/').next())
+            .and_then(|s| s.parse::<u16>().ok())
+            .unwrap_or(DEFAULT_API_PORT);
+
+        let lookup_addr = format!("{}:{}", self.device_ip, port);
+        let resolved = tokio::net::lookup_host(lookup_addr.as_str())
+            .await
+            .ok()
+            .and_then(|mut addrs| addrs.next())
+            .map(|addr| addr.ip().to_string());
+
+        match resolved {
+            Some(resolved_ip) => {
+                info!(
+                    device = "pupil",
+                    hostname = %self.device_ip,
+                    resolved_ip = %resolved_ip,
+                    "Resolved mDNS hostname"
+                );
+                self.base_url = format!("http://{}:{}/api", resolved_ip, port);
+            }
+            None => {
+                warn!(
+                    device = "pupil",
+                    hostname = %self.device_ip,
+                    "Failed to resolve mDNS hostname, will try direct connection"
+                );
+            }
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Public helper methods (convenience wrappers for common REST operations)
     // -----------------------------------------------------------------------
@@ -482,6 +530,10 @@ impl PupilDevice {
 #[async_trait]
 impl Device for PupilDevice {
     async fn connect(&mut self) -> Result<(), DeviceError> {
+        // Resolve .local mDNS hostnames to IP before making HTTP requests,
+        // since reqwest/hyper's DNS resolver may not handle mDNS correctly.
+        self.resolve_mdns_if_needed().await;
+
         info!(
             device = "pupil",
             "Connecting to Neon Companion at {}", self.base_url
