@@ -191,6 +191,7 @@ impl MessageHandler {
             "pupil" => Some(DeviceType::Pupil),
             "lsl" => Some(DeviceType::LSL),
             "neon_lsl" => Some(DeviceType::LSL),  // Neon via LSL
+            "frenz" => Some(DeviceType::LSL),     // FRENZ unified connect
             "frenz_lsl" => Some(DeviceType::LSL), // FRENZ via LSL
             "mock" => Some(DeviceType::Mock),
             _ => None,

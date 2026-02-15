@@ -5,7 +5,6 @@
     sendTtlPulse,
     listTtlDevices,
     startFrenzBridge,
-    stopFrenzBridge,
     getFrenzBridgeStatus,
     checkFrenzBridgeAvailable,
   } from '../services/tauri.js';
@@ -29,8 +28,11 @@
   // FRENZ bridge process status
   let frenzBridgeAvailable = $state(false);
   let frenzBridgeStatus = $state({ state: 'stopped', streams: [], sample_count: 0 });
-  let frenzBridgeLoading = $state(false);
   let unlistenFrenzStatus = null;
+
+  // FRENZ unified connect progress
+  let frenzConnecting = $state(false);
+  let frenzPhaseText = $state('');
 
   // Load TTL devices on mount if this is a TTL device
   // Load FRENZ credential status if this is a FRENZ device
@@ -62,44 +64,6 @@
     unlistenFrenzStatus = await listen('frenz_bridge_status', event => {
       frenzBridgeStatus = event.payload;
     });
-  }
-
-  async function handleStartFrenzBridge() {
-    if (!frenzDeviceId || !frenzKeyConfigured) {
-      alert('Please configure FRENZ credentials first (use Configure button)');
-      return;
-    }
-
-    frenzBridgeLoading = true;
-    try {
-      const productKey = await getSecret('frenz_product_key');
-      if (!productKey) {
-        alert('Product key not found. Please reconfigure FRENZ credentials.');
-        return;
-      }
-      const result = await startFrenzBridge(frenzDeviceId, productKey);
-      if (!result.success) {
-        alert(`Failed to start bridge: ${result.error}`);
-      }
-    } catch (error) {
-      alert(`Error starting bridge: ${error.message || error}`);
-    } finally {
-      frenzBridgeLoading = false;
-    }
-  }
-
-  async function handleStopFrenzBridge() {
-    frenzBridgeLoading = true;
-    try {
-      const result = await stopFrenzBridge();
-      if (!result.success) {
-        alert(`Failed to stop bridge: ${result.error}`);
-      }
-    } catch (error) {
-      alert(`Error stopping bridge: ${error.message || error}`);
-    } finally {
-      frenzBridgeLoading = false;
-    }
   }
 
   function getFrenzBridgeStateLabel(state) {
@@ -209,6 +173,16 @@
 
     console.log(`toggleConnection called! Status: ${currentStatus}`);
 
+    // Route FRENZ to dedicated orchestration handlers
+    if (deviceId === 'frenz') {
+      if (currentStatus !== 'connected' && currentStatus !== 'connecting') {
+        return handleFrenzConnect();
+      } else if (currentStatus === 'connected') {
+        return handleFrenzDisconnect();
+      }
+      return;
+    }
+
     // Allow connection from disconnected, error, or unknown status
     if (currentStatus !== 'connected' && currentStatus !== 'connecting') {
       console.log(`Connecting ${deviceName}...`);
@@ -232,6 +206,91 @@
         console.error(`Failed to disconnect ${deviceName}:`, error);
         alert(`Failed to disconnect: ${error.message || error}`);
       }
+    }
+  }
+
+  // FRENZ orchestrated connect: start bridge → wait for streaming → connect LSL
+  async function handleFrenzConnect() {
+    if (!frenzDeviceId || !frenzKeyConfigured) {
+      alert('Please configure FRENZ credentials first (use Configure button)');
+      return;
+    }
+
+    frenzConnecting = true;
+    frenzPhaseText = 'Starting bridge...';
+
+    try {
+      // Start bridge if not already streaming
+      const status = await getFrenzBridgeStatus();
+      if (status.state !== 'streaming') {
+        const productKey = await getSecret('frenz_product_key');
+        if (!productKey) {
+          throw new Error('Product key not found. Please reconfigure FRENZ credentials.');
+        }
+
+        const result = await startFrenzBridge(frenzDeviceId, productKey);
+        if (!result.success) {
+          throw new Error(result.error || 'Failed to start bridge');
+        }
+
+        // Wait for streaming state (timeout 3 min)
+        await waitForFrenzStreaming(180000);
+      }
+
+      // Connect LSL streams via WebSocket
+      frenzPhaseText = 'Connecting to data streams...';
+      await bridgeStore.connectDevice('frenz', device.config);
+
+      alert('Connected to FRENZ');
+    } catch (error) {
+      alert(`Failed to connect: ${error.message || error}`);
+    } finally {
+      frenzConnecting = false;
+      frenzPhaseText = '';
+    }
+  }
+
+  // Wait for the FRENZ bridge to reach "streaming" state
+  function waitForFrenzStreaming(timeoutMs = 180000) {
+    return new Promise((resolve, reject) => {
+      if (frenzBridgeStatus.state === 'streaming') {
+        resolve();
+        return;
+      }
+
+      const timeoutId = setTimeout(() => {
+        clearInterval(interval);
+        reject(new Error('FRENZ bridge startup timed out'));
+      }, timeoutMs);
+
+      const interval = setInterval(() => {
+        // Update progress text from bridge status
+        if (frenzBridgeStatus.state === 'bootstrapping') {
+          frenzPhaseText = frenzBridgeStatus.message || 'Installing packages...';
+        } else if (frenzBridgeStatus.state === 'connecting') {
+          frenzPhaseText = 'Connecting to headband...';
+        }
+
+        if (frenzBridgeStatus.state === 'streaming') {
+          clearTimeout(timeoutId);
+          clearInterval(interval);
+          resolve();
+        } else if (frenzBridgeStatus.state === 'error') {
+          clearTimeout(timeoutId);
+          clearInterval(interval);
+          reject(new Error(frenzBridgeStatus.message || 'Bridge error'));
+        }
+      }, 200);
+    });
+  }
+
+  // FRENZ disconnect: LSL streams + bridge process
+  async function handleFrenzDisconnect() {
+    try {
+      await bridgeStore.disconnectDevice('frenz');
+      alert('Disconnected from FRENZ');
+    } catch (error) {
+      alert(`Failed to disconnect: ${error.message || error}`);
     }
   }
 
@@ -453,38 +512,27 @@
     {/if}
   </div>
 
+  {#if device.id === 'frenz' && frenzConnecting}
+    <div class="frenz-progress">
+      <div class="progress-bar">
+        <div class="progress-fill indeterminate"></div>
+      </div>
+      <span class="progress-text">{frenzPhaseText}</span>
+    </div>
+  {/if}
+
   <div class="device-actions">
     <button
       class="action-btn connect-btn"
       onclick={toggleConnection}
-      disabled={device.status === 'connecting' || (device.id === 'ttl' && !device.config.port)}
+      disabled={device.status === 'connecting' ||
+        frenzConnecting ||
+        (device.id === 'ttl' && !device.config.port)}
     >
-      {device.status === 'connected' ? 'Disconnect' : 'Connect'}
+      {device.status === 'connected' ? 'Disconnect' : frenzConnecting ? 'Connecting...' : 'Connect'}
     </button>
     {#if device.id === 'ttl' && device.status === 'connected'}
       <button class="action-btn pulse-btn" onclick={sendTestPulse}> Send Pulse </button>
-    {/if}
-    {#if device.id === 'frenz' && frenzBridgeAvailable}
-      {#if frenzBridgeStatus.state === 'stopped' || frenzBridgeStatus.state === 'error'}
-        <button
-          class="action-btn bridge-btn"
-          onclick={handleStartFrenzBridge}
-          disabled={frenzBridgeLoading || !frenzDeviceId || !frenzKeyConfigured}
-          title={!frenzDeviceId || !frenzKeyConfigured
-            ? 'Configure credentials first'
-            : 'Start Python bridge'}
-        >
-          {frenzBridgeLoading ? '...' : 'Start Bridge'}
-        </button>
-      {:else}
-        <button
-          class="action-btn bridge-stop-btn"
-          onclick={handleStopFrenzBridge}
-          disabled={frenzBridgeLoading}
-        >
-          {frenzBridgeLoading ? '...' : 'Stop Bridge'}
-        </button>
-      {/if}
     {/if}
     <button class="action-btn config-btn" onclick={configureDevice}> Configure </button>
   </div>
@@ -751,27 +799,42 @@
     font-style: italic;
   }
 
-  .bridge-btn {
-    background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-    color: white;
-    font-weight: 600;
+  .frenz-progress {
+    margin-bottom: 1rem;
+    padding: 0.5rem 0;
   }
 
-  .bridge-btn:hover:not(:disabled) {
-    background: linear-gradient(135deg, #00f2fe 0%, #4facfe 100%);
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(79, 172, 254, 0.4);
+  .progress-bar {
+    height: 4px;
+    background: var(--color-border);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 0.5rem;
   }
 
-  .bridge-stop-btn {
-    background: var(--color-surface-elevated);
-    color: var(--color-warning);
-    border: 1px solid var(--color-warning);
-    font-weight: 600;
+  .progress-fill {
+    height: 100%;
+    background: var(--color-primary);
+    border-radius: 2px;
+    transition: width 0.3s ease;
   }
 
-  .bridge-stop-btn:hover:not(:disabled) {
-    background: var(--color-warning);
-    color: white;
+  .progress-fill.indeterminate {
+    width: 30%;
+    animation: indeterminate 1.5s infinite ease-in-out;
+  }
+
+  @keyframes indeterminate {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(400%);
+    }
+  }
+
+  .progress-text {
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
   }
 </style>

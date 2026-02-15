@@ -18,6 +18,34 @@ const WS_PORT: u16 = 9000;
 #[allow(dead_code)]
 const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024; // 10MB
 
+/// Maps frontend FRENZ config boolean flags to LSL stream suffixes.
+fn map_frenz_config_to_suffixes(config: &serde_json::Value) -> Vec<String> {
+    let mapping: &[(&str, &str)] = &[
+        ("streamEegRaw", "_EEG_raw"),
+        ("streamEegFiltered", "_EEG_filtered"),
+        ("streamEogFiltered", "_EOG_filtered"),
+        ("streamEmgFiltered", "_EMG_filtered"),
+        ("streamPpgRaw", "_PPG_raw"),
+        ("streamImuRaw", "_IMU_raw"),
+        ("streamFocus", "_focus"),
+        ("streamSleepStage", "_sleep_stage"),
+        ("streamPoas", "_poas"),
+        ("streamPosture", "_POSTURE"),
+        ("streamSignalQuality", "_signal_quality"),
+        ("streamAlpha", "_alpha"),
+        ("streamBeta", "_beta"),
+        ("streamTheta", "_theta"),
+        ("streamGamma", "_gamma"),
+        ("streamDelta", "_delta"),
+    ];
+
+    mapping
+        .iter()
+        .filter(|(key, _)| config.get(key).and_then(|v| v.as_bool()).unwrap_or(false))
+        .map(|(_, suffix)| suffix.to_string())
+        .collect()
+}
+
 /// Helper to send a response with error logging if send fails
 async fn send_response(tx: &mpsc::Sender<BridgeResponse>, response: BridgeResponse) {
     if let Err(e) = tx.send(response).await {
@@ -279,6 +307,116 @@ async fn handle_device_command(
 
             let config = if let Some(p) = payload { p } else { json!({}) };
 
+            // FRENZ: orchestrated connect via FrenzLslManager (not the Device trait)
+            if device_id == "frenz" {
+                let selected_streams = map_frenz_config_to_suffixes(&config);
+
+                // Discover FRENZ devices on the LSL network
+                let devices = match state.frenz_manager.discover_frenz_devices().await {
+                    Ok(d) => d,
+                    Err(e) => {
+                        send_response(
+                            tx,
+                            BridgeResponse::device_error(
+                                device_id,
+                                format!("FRENZ discovery failed: {}", e),
+                                id,
+                            ),
+                        )
+                        .await;
+                        return;
+                    }
+                };
+
+                if devices.is_empty() {
+                    send_response(
+                        tx,
+                        BridgeResponse::device_error(
+                            device_id,
+                            "No FRENZ devices found. Is the FRENZ bridge running?".to_string(),
+                            id,
+                        ),
+                    )
+                    .await;
+                    return;
+                }
+
+                let device_name = &devices[0].device_name;
+                info!("FRENZ connect: using device '{}'", device_name);
+
+                // Create marker outlet if requested
+                let enable_markers = config
+                    .get("enableMarkerOutlet")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+
+                if enable_markers {
+                    if let Err(e) = state.frenz_manager.create_marker_outlet().await {
+                        warn!("Failed to create FRENZ marker outlet: {}", e);
+                    }
+                }
+
+                // Connect to selected streams
+                match state
+                    .frenz_manager
+                    .connect_streams(device_name, &selected_streams)
+                    .await
+                {
+                    Ok(receivers) => {
+                        let connected_count = receivers.len();
+                        info!(
+                            "FRENZ connected {} streams for '{}'",
+                            connected_count, device_name
+                        );
+
+                        // Spawn forwarding tasks for each stream receiver
+                        for (suffix, mut rx) in receivers {
+                            let tx_clone = tx.clone();
+                            let device_name_clone = device_name.to_string();
+                            let suffix_clone = suffix.clone();
+
+                            tokio::spawn(async move {
+                                while let Some(sample) = rx.recv().await {
+                                    let response = BridgeResponse::data(
+                                        format!("frenz_{}", device_name_clone),
+                                        json!({
+                                            "type": "frenz_data",
+                                            "stream": suffix_clone,
+                                            "timestamp": sample.timestamp,
+                                            "values": sample.values,
+                                            "string_value": sample.string_value,
+                                        }),
+                                        None,
+                                    );
+                                    if tx_clone.send(response).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            });
+                        }
+
+                        // Send status response so frontend resolves connectDevice() and updates status dot
+                        send_response(
+                            tx,
+                            BridgeResponse::status(
+                                device_id,
+                                crate::devices::DeviceStatus::Connected,
+                                id,
+                            ),
+                        )
+                        .await;
+                    }
+                    Err(e) => {
+                        send_response(
+                            tx,
+                            BridgeResponse::device_error(device_id, e.to_string(), id),
+                        )
+                        .await;
+                    }
+                }
+                return;
+            }
+
             let mut device: Box<dyn crate::devices::Device> = match device_id.as_str() {
                 "ttl" => {
                     // Require explicit port configuration - no unsafe defaults
@@ -381,6 +519,24 @@ async fn handle_device_command(
             }
         }
         CommandAction::Disconnect => {
+            // FRENZ: disconnect all LSL streams and stop the bridge process
+            if device_id == "frenz" {
+                info!("FRENZ disconnect: disconnecting all streams and stopping bridge");
+                let _ = state.frenz_manager.disconnect_all().await;
+                let _ = state.frenz_process.stop().await;
+
+                send_response(
+                    tx,
+                    BridgeResponse::status(
+                        device_id,
+                        crate::devices::DeviceStatus::Disconnected,
+                        id,
+                    ),
+                )
+                .await;
+                return;
+            }
+
             // Minimize lock duration: acquire lock, do operation, release lock, then send responses
             let disconnect_result = if let Some(device_lock) = state.get_device(&device_id).await {
                 let mut device = device_lock.write().await;
@@ -646,6 +802,25 @@ async fn handle_device_command(
             }
         }
         CommandAction::Status => {
+            // FRENZ: return LSL manager stats
+            if device_id == "frenz" {
+                let stats = state.frenz_manager.get_stats().await;
+
+                send_response(
+                    tx,
+                    BridgeResponse::data(
+                        device_id,
+                        json!({
+                            "type": "status",
+                            "stats": stats
+                        }),
+                        id,
+                    ),
+                )
+                .await;
+                return;
+            }
+
             if device_id == "all" {
                 // Return status for all registered devices
                 let devices = state.list_devices().await;
@@ -716,6 +891,7 @@ async fn handle_device_command(
                         .map(|d| {
                             json!({
                                 "device_name": d.device_name,
+                                "hostname": d.hostname,
                                 "has_gaze_stream": d.has_gaze_stream,
                                 "has_events_stream": d.has_events_stream,
                                 "gaze_channel_count": d.gaze_channel_count,
