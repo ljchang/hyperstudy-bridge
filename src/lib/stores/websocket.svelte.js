@@ -18,7 +18,9 @@ const reconnectDelay = 1000;
 let initialized = false;
 
 // Timeout constants (in milliseconds)
-const CONNECT_TIMEOUT_MS = 5000;
+// Connect timeout is longer to accommodate mDNS (.local) hostname resolution,
+// which can take 5+ seconds on macOS before the actual HTTP request begins.
+const CONNECT_TIMEOUT_MS = 15000;
 const DISCONNECT_TIMEOUT_MS = 5000;
 const COMMAND_TIMEOUT_MS = 5000;
 

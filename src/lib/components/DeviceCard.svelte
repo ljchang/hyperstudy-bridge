@@ -34,6 +34,10 @@
   let frenzConnecting = $state(false);
   let frenzPhaseText = $state('');
 
+  // General device connect progress
+  let isConnecting = $state(false);
+  let connectPhaseText = $state('');
+
   // Load TTL devices on mount if this is a TTL device
   // Load FRENZ credential status if this is a FRENZ device
   onMount(() => {
@@ -188,6 +192,24 @@
       console.log(`Connecting ${deviceName}...`);
       console.log(`Device config:`, deviceConfig);
       console.log(`Device status:`, currentStatus);
+
+      isConnecting = true;
+      let phaseTimeout = null;
+
+      // Show contextual progress phases based on device type
+      if (deviceId === 'pupil' && deviceConfig.url?.includes('.local')) {
+        connectPhaseText = 'Resolving hostname...';
+        phaseTimeout = setTimeout(() => {
+          connectPhaseText = 'Connecting to Neon Companion...';
+        }, 4000);
+      } else if (deviceId === 'pupil') {
+        connectPhaseText = 'Connecting to Neon Companion...';
+      } else if (deviceId === 'kernel') {
+        connectPhaseText = 'Connecting to Kernel Flow2...';
+      } else {
+        connectPhaseText = `Connecting to ${deviceName}...`;
+      }
+
       try {
         const result = await bridgeStore.connectDevice(deviceId, deviceConfig);
         console.log(`Successfully connected ${deviceName}`, result);
@@ -195,6 +217,10 @@
       } catch (error) {
         console.error(`Failed to connect ${deviceName}:`, error);
         alert(`Failed to connect: ${error.message || error}`);
+      } finally {
+        if (phaseTimeout) clearTimeout(phaseTimeout);
+        isConnecting = false;
+        connectPhaseText = '';
       }
     } else if (currentStatus === 'connected') {
       console.log(`Disconnecting ${deviceName}...`);
@@ -512,6 +538,15 @@
     {/if}
   </div>
 
+  {#if isConnecting && device.id !== 'frenz'}
+    <div class="connect-progress">
+      <div class="progress-bar">
+        <div class="progress-fill indeterminate"></div>
+      </div>
+      <span class="progress-text">{connectPhaseText}</span>
+    </div>
+  {/if}
+
   {#if device.id === 'frenz' && frenzConnecting}
     <div class="frenz-progress">
       <div class="progress-bar">
@@ -526,10 +561,15 @@
       class="action-btn connect-btn"
       onclick={toggleConnection}
       disabled={device.status === 'connecting' ||
+        isConnecting ||
         frenzConnecting ||
         (device.id === 'ttl' && !device.config.port)}
     >
-      {device.status === 'connected' ? 'Disconnect' : frenzConnecting ? 'Connecting...' : 'Connect'}
+      {device.status === 'connected'
+        ? 'Disconnect'
+        : isConnecting || frenzConnecting
+          ? 'Connecting...'
+          : 'Connect'}
     </button>
     {#if device.id === 'ttl' && device.status === 'connected'}
       <button class="action-btn pulse-btn" onclick={sendTestPulse}> Send Pulse </button>
@@ -799,6 +839,7 @@
     font-style: italic;
   }
 
+  .connect-progress,
   .frenz-progress {
     margin-bottom: 1rem;
     padding: 0.5rem 0;
