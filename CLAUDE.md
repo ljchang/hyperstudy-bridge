@@ -28,7 +28,7 @@ HyperStudy Bridge is a unified, high-performance desktop application that serves
 - **Connection**: USB Serial (CDC)
 - **Protocol**: Simple text commands over serial
 - **Critical Requirement**: <1ms command-to-pulse latency
-- **Commands**: `PULSE\n` triggers TTL output
+- **Commands**: `PULSE [duration_ms]\n` triggers TTL output, `TIMING\n` queries on-device latency
 - **Implementation**: Using `serialport` crate
 - **Hardware**: See [hyperstudy-ttl repository](https://github.com/ljchang/hyperstudy-ttl) for firmware and setup
 

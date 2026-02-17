@@ -91,6 +91,19 @@ type ResponseType = "status" | "data" | "error" | "device_list";
 }
 ```
 
+The bridge sends `PULSE <duration_ms>\n` to the firmware, using the configured `pulse_duration_ms` (default 10ms). To change the duration, use the configure action:
+
+```json
+{
+  "type": "command",
+  "device": "ttl",
+  "action": "configure",
+  "payload": {
+    "pulse_duration_ms": 5
+  }
+}
+```
+
 **Response:**
 ```json
 {

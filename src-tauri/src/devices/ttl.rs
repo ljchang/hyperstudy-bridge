@@ -10,8 +10,7 @@ use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
-const PULSE_COMMAND: &[u8] = b"PULSE\n";
-const PULSE_DURATION_MS: u64 = 10;
+const DEFAULT_PULSE_DURATION_MS: u64 = 10;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TtlConfig {
@@ -25,7 +24,7 @@ impl Default for TtlConfig {
         Self {
             port_name: String::new(),
             baud_rate: 115200,
-            pulse_duration_ms: PULSE_DURATION_MS,
+            pulse_duration_ms: DEFAULT_PULSE_DURATION_MS,
         }
     }
 }
@@ -282,10 +281,18 @@ impl TtlDevice {
     /// Send a TTL pulse using spawn_blocking to avoid blocking the async runtime.
     ///
     /// Serial I/O is inherently blocking, so we offload it to Tokio's blocking thread pool.
+    /// The command includes the configured pulse duration so the firmware knows
+    /// how long to hold GPIO HIGH (e.g., "PULSE 10\n" for a 10ms pulse).
     async fn send_pulse(&mut self) -> Result<(), DeviceError> {
         if let Some(ref port_arc) = self.port {
             let device_id = self.get_info().id;
             let port_clone = Arc::clone(port_arc);
+            let pulse_duration = self.config.pulse_duration_ms;
+
+            // Format command with duration (firmware parses duration after GPIO toggle)
+            let pulse_command = format!("PULSE {}\n", pulse_duration);
+            let command_len = pulse_command.len() as u64;
+            let command_bytes = pulse_command.into_bytes();
 
             // Measure latency around the blocking operation
             let start = Instant::now();
@@ -300,7 +307,7 @@ impl TtlDevice {
                             "Mutex poisoned - device needs reset".to_string(),
                         )
                     })?;
-                    port.write_all(PULSE_COMMAND)
+                    port.write_all(&command_bytes)
                         .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
                     port.flush()
                         .map_err(|e| DeviceError::CommunicationError(e.to_string()))?;
@@ -332,7 +339,7 @@ impl TtlDevice {
 
             // Record performance metrics
             if let Some(ref callback) = self.performance_callback {
-                callback(&device_id, latency, PULSE_COMMAND.len() as u64, 0);
+                callback(&device_id, latency, command_len, 0);
             }
 
             info!(device = "ttl", "TTL pulse sent with latency: {:?}", latency);
@@ -362,7 +369,7 @@ impl TtlDevice {
 
             result?;
 
-            sleep(Duration::from_millis(self.config.pulse_duration_ms)).await;
+            sleep(Duration::from_millis(pulse_duration)).await;
 
             Ok(())
         } else {
@@ -394,6 +401,11 @@ impl Device for TtlDevice {
                     .map_err(|e| {
                         DeviceError::ConnectionFailed(format!("Failed to open serial port: {}", e))
                     })?;
+
+                // Drain any stale data in the serial buffer before validation
+                // (e.g., unread PULSE responses from a previous session)
+                let mut drain_buf = [0u8; 256];
+                while port.read(&mut drain_buf).unwrap_or(0) > 0 {}
 
                 // Validate connection by sending TEST command
                 port.write_all(b"TEST\n").map_err(|e| {
@@ -493,7 +505,9 @@ impl Device for TtlDevice {
     }
 
     async fn send(&mut self, data: &[u8]) -> Result<(), DeviceError> {
-        if data == PULSE_COMMAND || data == b"PULSE" {
+        // Route any PULSE command (with or without parameters) to send_pulse()
+        // which formats the command with the configured duration
+        if data == b"PULSE" || data == b"PULSE\n" || data.starts_with(b"PULSE ") {
             self.send_pulse().await
         } else if let Some(ref port_arc) = self.port {
             let device_id = self.get_info().id;
