@@ -394,12 +394,24 @@ impl PupilDevice {
             )));
         }
 
-        // Parse envelope to validate response
-        let _envelope: ApiResponse<RecordingStopResponse> = resp.json().await.map_err(|e| {
-            DeviceError::InvalidData(format!("Failed to parse stop response: {}", e))
-        })?;
+        // Read body as text first so we can log it on parse failure.
+        // The HTTP 2xx already confirms the recording was stopped server-side,
+        // so a response-shape mismatch should not be treated as an error.
+        let body_text = resp.text().await.unwrap_or_default();
+        match serde_json::from_str::<ApiResponse<RecordingStopResponse>>(&body_text) {
+            Ok(_envelope) => {
+                info!(device = "pupil", "Recording stopped and saved");
+            }
+            Err(e) => {
+                warn!(
+                    device = "pupil",
+                    body = %body_text,
+                    error = %e,
+                    "Could not parse stop_and_save response (recording was stopped successfully)"
+                );
+            }
+        }
 
-        info!(device = "pupil", "Recording stopped and saved");
         self.recording_id = None;
         Ok(())
     }
@@ -420,12 +432,22 @@ impl PupilDevice {
             )));
         }
 
-        // Parse envelope to validate response
-        let _envelope: ApiResponse<RecordingCancelResponse> = resp.json().await.map_err(|e| {
-            DeviceError::InvalidData(format!("Failed to parse cancel response: {}", e))
-        })?;
+        // Read body as text first — HTTP 2xx confirms cancellation succeeded.
+        let body_text = resp.text().await.unwrap_or_default();
+        match serde_json::from_str::<ApiResponse<RecordingCancelResponse>>(&body_text) {
+            Ok(_envelope) => {
+                info!(device = "pupil", "Recording cancelled");
+            }
+            Err(e) => {
+                warn!(
+                    device = "pupil",
+                    body = %body_text,
+                    error = %e,
+                    "Could not parse cancel response (recording was cancelled successfully)"
+                );
+            }
+        }
 
-        info!(device = "pupil", "Recording cancelled");
         self.recording_id = None;
         Ok(())
     }

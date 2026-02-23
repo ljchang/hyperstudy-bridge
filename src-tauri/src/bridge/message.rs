@@ -54,6 +54,17 @@ pub enum CommandAction {
     DisconnectFrenz,     // Disconnect from FRENZ streams
     FrenzStatus,         // Get FRENZ LSL manager status
     SendFrenzMarker,     // Send event marker to FRENZ marker outlet
+    // EyeLink specific actions
+    ConnectEyeLink,        // Connect to EyeLink tracker
+    DisconnectEyeLink,     // Disconnect from EyeLink tracker
+    StartEyeLinkRecording, // Start EDF recording
+    StopEyeLinkRecording,  // Stop EDF recording
+    CalibrateEyeLink,      // Run calibration/validation loop
+    SendEyeLinkMessage,    // Write marker to EDF file
+    EyeLinkStatus,         // Get EyeLink status
+    ConnectEyeLinkGaze,    // Start gaze data streaming
+    DisconnectEyeLinkGaze, // Stop gaze data streaming
+    CalibrateEyeLinkKey,   // Send key press to calibration (accept/cancel)
     Custom(String),
 }
 
@@ -194,6 +205,7 @@ impl MessageHandler {
             "neon_lsl" => Some(DeviceType::LSL),  // Neon via LSL
             "frenz" => Some(DeviceType::LSL),     // FRENZ unified connect
             "frenz_lsl" => Some(DeviceType::LSL), // FRENZ via LSL
+            "eyelink" => Some(DeviceType::EyeLink),
             "mock" => Some(DeviceType::Mock),
             _ => None,
         }

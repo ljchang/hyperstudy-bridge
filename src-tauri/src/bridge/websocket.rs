@@ -1487,6 +1487,388 @@ async fn handle_device_command(
                 }
             }
         }
+        // ====================================================================
+        // EyeLink commands (feature-gated)
+        // ====================================================================
+        #[cfg(feature = "eyelink")]
+        CommandAction::ConnectEyeLink => {
+            let ip = payload
+                .as_ref()
+                .and_then(|p| p.get("ip"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("100.1.1.1");
+            let sample_rate = payload
+                .as_ref()
+                .and_then(|p| p.get("sample_rate"))
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32);
+            let display_width = payload
+                .as_ref()
+                .and_then(|p| p.get("display_width"))
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32);
+            let display_height = payload
+                .as_ref()
+                .and_then(|p| p.get("display_height"))
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32);
+
+            match state
+                .eyelink_manager
+                .connect(ip, sample_rate, display_width, display_height)
+                .await
+            {
+                Ok(status) => {
+                    send_response(
+                        tx,
+                        BridgeResponse::data(
+                            "eyelink".to_string(),
+                            serde_json::to_value(&status).unwrap_or_default(),
+                            id,
+                        ),
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    send_response(
+                        tx,
+                        BridgeResponse::device_error("eyelink".to_string(), e, id),
+                    )
+                    .await;
+                }
+            }
+        }
+        #[cfg(feature = "eyelink")]
+        CommandAction::DisconnectEyeLink => match state.eyelink_manager.disconnect().await {
+            Ok(()) => {
+                send_response(
+                    tx,
+                    BridgeResponse::status(
+                        "eyelink".to_string(),
+                        crate::devices::DeviceStatus::Disconnected,
+                        id,
+                    ),
+                )
+                .await;
+            }
+            Err(e) => {
+                send_response(
+                    tx,
+                    BridgeResponse::device_error("eyelink".to_string(), e, id),
+                )
+                .await;
+            }
+        },
+        #[cfg(feature = "eyelink")]
+        CommandAction::StartEyeLinkRecording => {
+            match state.eyelink_manager.start_recording().await {
+                Ok(()) => {
+                    send_response(
+                        tx,
+                        BridgeResponse::data(
+                            "eyelink".to_string(),
+                            json!({ "recording": true }),
+                            id,
+                        ),
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    send_response(
+                        tx,
+                        BridgeResponse::device_error("eyelink".to_string(), e, id),
+                    )
+                    .await;
+                }
+            }
+        }
+        #[cfg(feature = "eyelink")]
+        CommandAction::StopEyeLinkRecording => match state.eyelink_manager.stop_recording().await {
+            Ok(()) => {
+                send_response(
+                    tx,
+                    BridgeResponse::data("eyelink".to_string(), json!({ "recording": false }), id),
+                )
+                .await;
+            }
+            Err(e) => {
+                send_response(
+                    tx,
+                    BridgeResponse::device_error("eyelink".to_string(), e, id),
+                )
+                .await;
+            }
+        },
+        #[cfg(feature = "eyelink")]
+        CommandAction::SendEyeLinkMessage => {
+            let message = payload
+                .as_ref()
+                .and_then(|p| p.get("message"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            if message.is_empty() {
+                send_response(
+                    tx,
+                    BridgeResponse::device_error(
+                        "eyelink".to_string(),
+                        "Missing 'message' in payload".to_string(),
+                        id,
+                    ),
+                )
+                .await;
+                return;
+            }
+
+            match state.eyelink_manager.send_message(message.clone()).await {
+                Ok(()) => {
+                    send_response(
+                        tx,
+                        BridgeResponse::data(
+                            "eyelink".to_string(),
+                            json!({ "success": true, "message": message }),
+                            id,
+                        ),
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    send_response(
+                        tx,
+                        BridgeResponse::device_error("eyelink".to_string(), e, id),
+                    )
+                    .await;
+                }
+            }
+        }
+        #[cfg(feature = "eyelink")]
+        CommandAction::CalibrateEyeLink => {
+            info!("Starting EyeLink calibration");
+
+            match state.eyelink_manager.start_calibration().await {
+                Ok((mut cal_rx, cal_handle)) => {
+                    // Spawn a task to forward calibration events to WebSocket.
+                    // Exits when: broadcast channel closes (calibration ends) or WebSocket closes.
+                    let tx_clone = tx.clone();
+                    tokio::spawn(async move {
+                        while let Ok(event) = cal_rx.recv().await {
+                            let response = BridgeResponse::data(
+                                "eyelink".to_string(),
+                                json!({
+                                    "type": "calibration",
+                                    "event": serde_json::to_value(&event).unwrap_or_default(),
+                                }),
+                                None,
+                            );
+                            if tx_clone.send(response).await.is_err() {
+                                // WebSocket closed — send cancel key so calibration loop exits
+                                tracing::debug!(
+                                    "WebSocket closed during calibration, sending cancel"
+                                );
+                                crate::devices::eyelink::calibration::cancel_calibration();
+                                break;
+                            }
+                        }
+                    });
+
+                    // Spawn a task to wait for calibration completion and send the result.
+                    // Exits when: calibration finishes (cal_handle resolves).
+                    let tx_clone = tx.clone();
+                    tokio::spawn(async move {
+                        match cal_handle.await {
+                            Ok(Ok(result)) => {
+                                let _ = tx_clone
+                                    .send(BridgeResponse::data(
+                                        "eyelink".to_string(),
+                                        json!({
+                                            "type": "calibration_complete",
+                                            "result_code": result,
+                                        }),
+                                        None,
+                                    ))
+                                    .await;
+                            }
+                            Ok(Err(e)) => {
+                                let _ = tx_clone
+                                    .send(BridgeResponse::device_error(
+                                        "eyelink".to_string(),
+                                        e,
+                                        None,
+                                    ))
+                                    .await;
+                            }
+                            Err(e) => {
+                                let _ = tx_clone
+                                    .send(BridgeResponse::device_error(
+                                        "eyelink".to_string(),
+                                        format!("Calibration task failed: {}", e),
+                                        None,
+                                    ))
+                                    .await;
+                            }
+                        }
+                    });
+
+                    send_response(
+                        tx,
+                        BridgeResponse::data(
+                            "eyelink".to_string(),
+                            json!({ "calibrating": true }),
+                            id,
+                        ),
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    send_response(
+                        tx,
+                        BridgeResponse::device_error("eyelink".to_string(), e, id),
+                    )
+                    .await;
+                }
+            }
+        }
+        #[cfg(feature = "eyelink")]
+        CommandAction::CalibrateEyeLinkKey => {
+            let key = payload
+                .as_ref()
+                .and_then(|p| p.get("key"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            match key {
+                "accept" | "enter" => {
+                    crate::devices::eyelink::calibration::accept_calibration();
+                    send_response(
+                        tx,
+                        BridgeResponse::data(
+                            "eyelink".to_string(),
+                            json!({ "key_sent": "accept" }),
+                            id,
+                        ),
+                    )
+                    .await;
+                }
+                "cancel" | "escape" => {
+                    crate::devices::eyelink::calibration::cancel_calibration();
+                    send_response(
+                        tx,
+                        BridgeResponse::data(
+                            "eyelink".to_string(),
+                            json!({ "key_sent": "cancel" }),
+                            id,
+                        ),
+                    )
+                    .await;
+                }
+                _ => {
+                    send_response(
+                        tx,
+                        BridgeResponse::device_error(
+                            "eyelink".to_string(),
+                            format!("Unknown key: '{}'. Use 'accept' or 'cancel'", key),
+                            id,
+                        ),
+                    )
+                    .await;
+                }
+            }
+        }
+        #[cfg(feature = "eyelink")]
+        CommandAction::EyeLinkStatus => {
+            let status = state.eyelink_manager.get_status().await;
+            send_response(
+                tx,
+                BridgeResponse::data(
+                    "eyelink".to_string(),
+                    serde_json::to_value(&status).unwrap_or_default(),
+                    id,
+                ),
+            )
+            .await;
+        }
+        #[cfg(feature = "eyelink")]
+        CommandAction::ConnectEyeLinkGaze => {
+            match state.eyelink_manager.start_gaze_stream().await {
+                Ok(mut gaze_rx) => {
+                    // Spawn a task to forward gaze data to WebSocket.
+                    // When the WebSocket closes (tx_clone.send fails), we proactively
+                    // stop the gaze stream to avoid wasting CPU on polling with no consumer.
+                    let tx_clone = tx.clone();
+                    let eyelink_mgr = state.eyelink_manager.clone();
+                    tokio::spawn(async move {
+                        while let Some(gaze) = gaze_rx.recv().await {
+                            let response = BridgeResponse::data(
+                                "eyelink".to_string(),
+                                json!({
+                                    "type": "gaze",
+                                    "timestamp": gaze.timestamp,
+                                    "left_gaze_x": gaze.left_gaze_x,
+                                    "left_gaze_y": gaze.left_gaze_y,
+                                    "right_gaze_x": gaze.right_gaze_x,
+                                    "right_gaze_y": gaze.right_gaze_y,
+                                    "left_pupil": gaze.left_pupil,
+                                    "right_pupil": gaze.right_pupil,
+                                    "ppd_x": gaze.ppd_x,
+                                    "ppd_y": gaze.ppd_y,
+                                    "status": gaze.status,
+                                    "display_width": gaze.display_width,
+                                    "display_height": gaze.display_height,
+                                }),
+                                None,
+                            );
+                            if tx_clone.send(response).await.is_err() {
+                                // WebSocket closed — stop the gaze polling thread
+                                tracing::debug!("WebSocket closed, stopping gaze stream");
+                                let _ = eyelink_mgr.stop_gaze_stream().await;
+                                break;
+                            }
+                        }
+                    });
+
+                    send_response(
+                        tx,
+                        BridgeResponse::data(
+                            "eyelink".to_string(),
+                            json!({ "gaze_streaming": true }),
+                            id,
+                        ),
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    send_response(
+                        tx,
+                        BridgeResponse::device_error("eyelink".to_string(), e, id),
+                    )
+                    .await;
+                }
+            }
+        }
+        #[cfg(feature = "eyelink")]
+        CommandAction::DisconnectEyeLinkGaze => {
+            match state.eyelink_manager.stop_gaze_stream().await {
+                Ok(()) => {
+                    send_response(
+                        tx,
+                        BridgeResponse::data(
+                            "eyelink".to_string(),
+                            json!({ "gaze_streaming": false }),
+                            id,
+                        ),
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    send_response(
+                        tx,
+                        BridgeResponse::device_error("eyelink".to_string(), e, id),
+                    )
+                    .await;
+                }
+            }
+        }
         _ => {
             send_response(
                 tx,

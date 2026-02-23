@@ -85,6 +85,8 @@ harness = false
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+# Enable EyeLink 1000 Plus integration (requires EyeLink Developers Kit)
+eyelink = []
 
 [profile.release]
 panic = "abort"

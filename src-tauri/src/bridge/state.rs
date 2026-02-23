@@ -28,6 +28,9 @@ pub struct AppState {
     pub frenz_manager: Arc<FrenzLslManager>,
     /// FRENZ Python bridge process manager (PyApp lifecycle)
     pub frenz_process: Arc<FrenzProcessManager>,
+    /// EyeLink manager for SR Research EyeLink 1000 Plus eye tracking
+    #[cfg(feature = "eyelink")]
+    pub eyelink_manager: Arc<crate::devices::eyelink::EyeLinkManager>,
     /// Broadcast channel for device status change events
     /// WebSocket connections can subscribe to receive status updates
     device_status_tx: broadcast::Sender<DeviceStatusEvent>,
@@ -87,8 +90,8 @@ impl DeviceStatusEvent {
 
 impl std::fmt::Debug for AppState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AppState")
-            .field("devices", &self.devices)
+        let mut s = f.debug_struct("AppState");
+        s.field("devices", &self.devices)
             .field("connections", &self.connections)
             .field("metrics", &self.metrics)
             .field("start_time", &self.start_time)
@@ -96,12 +99,14 @@ impl std::fmt::Debug for AppState {
             .field("last_error", &self.last_error)
             .field("neon_manager", &self.neon_manager)
             .field("frenz_manager", &self.frenz_manager)
-            .field("frenz_process", &self.frenz_process)
-            .field(
-                "device_status_subscribers",
-                &self.device_status_tx.receiver_count(),
-            )
-            .finish()
+            .field("frenz_process", &self.frenz_process);
+        #[cfg(feature = "eyelink")]
+        s.field("eyelink_manager", &"EyeLinkManager");
+        s.field(
+            "device_status_subscribers",
+            &self.device_status_tx.receiver_count(),
+        )
+        .finish()
     }
 }
 
@@ -129,6 +134,9 @@ impl AppState {
         ));
         let frenz_process = Arc::new(FrenzProcessManager::new());
 
+        #[cfg(feature = "eyelink")]
+        let eyelink_manager = Arc::new(crate::devices::eyelink::EyeLinkManager::new());
+
         // Create broadcast channel for device status events
         let (device_status_tx, _) = broadcast::channel(Self::STATUS_BROADCAST_CAPACITY);
 
@@ -143,6 +151,8 @@ impl AppState {
             neon_manager,
             frenz_manager,
             frenz_process,
+            #[cfg(feature = "eyelink")]
+            eyelink_manager,
             device_status_tx,
         }
     }
