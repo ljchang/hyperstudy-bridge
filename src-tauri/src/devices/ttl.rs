@@ -281,13 +281,17 @@ impl TtlDevice {
     /// Send a TTL pulse using spawn_blocking to avoid blocking the async runtime.
     ///
     /// Serial I/O is inherently blocking, so we offload it to Tokio's blocking thread pool.
-    /// The command includes the configured pulse duration so the firmware knows
-    /// how long to hold GPIO HIGH (e.g., "PULSE 10\n" for a 10ms pulse).
-    async fn send_pulse(&mut self) -> Result<(), DeviceError> {
+    /// The command includes the pulse duration so the firmware knows how long to hold
+    /// GPIO HIGH (e.g., "PULSE 10\n" for a 10ms pulse).
+    ///
+    /// If `duration_override` is provided, it is used instead of the configured default.
+    /// This allows callers (e.g. HyperStudy) to specify a per-pulse duration via
+    /// `PULSE <ms>` without reconfiguring the device.
+    async fn send_pulse(&mut self, duration_override: Option<u64>) -> Result<(), DeviceError> {
         if let Some(ref port_arc) = self.port {
             let device_id = self.get_info().id;
             let port_clone = Arc::clone(port_arc);
-            let pulse_duration = self.config.pulse_duration_ms;
+            let pulse_duration = duration_override.unwrap_or(self.config.pulse_duration_ms);
 
             // Format command with duration (firmware parses duration after GPIO toggle)
             let pulse_command = format!("PULSE {}\n", pulse_duration);
@@ -505,10 +509,17 @@ impl Device for TtlDevice {
     }
 
     async fn send(&mut self, data: &[u8]) -> Result<(), DeviceError> {
-        // Route any PULSE command (with or without parameters) to send_pulse()
-        // which formats the command with the configured duration
-        if data == b"PULSE" || data == b"PULSE\n" || data.starts_with(b"PULSE ") {
-            self.send_pulse().await
+        // Route any PULSE command to send_pulse().
+        // If the caller included an inline duration (e.g. "PULSE 50"), parse and
+        // use it as a one-shot override; otherwise use the configured default.
+        if data == b"PULSE" || data == b"PULSE\n" {
+            self.send_pulse(None).await
+        } else if data.starts_with(b"PULSE ") {
+            let duration_override = std::str::from_utf8(data)
+                .ok()
+                .and_then(|s| s.trim().strip_prefix("PULSE "))
+                .and_then(|d| d.parse::<u64>().ok());
+            self.send_pulse(duration_override).await
         } else if let Some(ref port_arc) = self.port {
             let device_id = self.get_info().id;
             let port_clone = Arc::clone(port_arc);

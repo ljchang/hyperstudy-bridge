@@ -108,7 +108,8 @@ mod tests {
             timeout_ms: 1000,
             custom_settings: serde_json::json!({
                 "port_name": "/dev/ttyUSB1",
-                "baud_rate": 9600
+                "baud_rate": 9600,
+                "pulse_duration_ms": 50
             }),
         };
 
@@ -118,6 +119,25 @@ mod tests {
         // Verify configuration was applied
         assert_eq!(device.config.port_name, "/dev/ttyUSB1");
         assert_eq!(device.config.baud_rate, 9600);
+        assert_eq!(device.config.pulse_duration_ms, 50);
+    }
+
+    #[test]
+    fn test_device_config_pulse_duration_default_preserved() {
+        let mut device = TtlDevice::new("/dev/ttyUSB0".to_string());
+        assert_eq!(device.config.pulse_duration_ms, 10);
+
+        // Configure without pulse_duration_ms — default should be preserved
+        let config = DeviceConfig {
+            custom_settings: serde_json::json!({
+                "port_name": "/dev/ttyUSB1"
+            }),
+            ..Default::default()
+        };
+
+        let result = device.configure(config);
+        assert!(result.is_ok());
+        assert_eq!(device.config.pulse_duration_ms, 10);
     }
 
     #[tokio::test]

@@ -14,13 +14,14 @@ vi.mock('../../stores/websocket.svelte.js', () => ({
 describe('DeviceConfigModal', () => {
   const user = userEvent.setup();
 
-  // TTL device - component only has 'port' field (Serial Port)
+  // TTL device - has 'port' and 'pulse_duration_ms' fields
   const mockTtlDevice = {
     id: 'ttl',
     name: 'TTL Pulse Generator',
     type: 'Adafruit RP2040',
     config: {
       port: '/dev/ttyUSB0',
+      pulse_duration_ms: 10,
     },
   };
 
@@ -86,6 +87,12 @@ describe('DeviceConfigModal', () => {
       render(DeviceConfigModal, mockProps);
 
       expect(screen.getByText('Serial Port')).toBeInTheDocument();
+    });
+
+    it('displays Pulse Duration field', () => {
+      render(DeviceConfigModal, mockProps);
+
+      expect(screen.getByText('Pulse Duration (ms)')).toBeInTheDocument();
     });
 
     it('validates TTL port format', async () => {

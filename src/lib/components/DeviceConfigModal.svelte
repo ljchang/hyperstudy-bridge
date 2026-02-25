@@ -29,6 +29,15 @@
         pattern: '^(/dev/(tty\\.|cu\\.|ttyUSB)|COM\\d+)',
         errorMessage: 'Invalid port format. Expected /dev/cu.*, /dev/tty.*, /dev/ttyUSB*, or COM*',
       },
+      pulse_duration_ms: {
+        label: 'Pulse Duration (ms)',
+        type: 'number',
+        min: 1,
+        max: 1000,
+        default: 10,
+        required: false,
+        errorMessage: 'Pulse duration must be between 1-1000 ms',
+      },
     },
     kernel: {
       ip: {

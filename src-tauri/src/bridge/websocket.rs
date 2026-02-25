@@ -1,5 +1,6 @@
 use crate::bridge::message::{CommandAction, QueryTarget};
 use crate::bridge::{AppState, BridgeCommand, BridgeResponse, MessageHandler};
+use crate::devices::Device;
 use crate::devices::{kernel::KernelDevice, mock::MockDevice, pupil::PupilDevice, ttl::TtlDevice};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
@@ -435,7 +436,16 @@ async fn handle_device_command(
                             return;
                         }
                     };
-                    Box::new(TtlDevice::new(port.to_string()))
+                    let mut ttl_device = TtlDevice::new(port.to_string());
+                    if let Some(duration) = config.get("pulse_duration_ms").and_then(|v| v.as_u64())
+                    {
+                        let device_config = crate::devices::DeviceConfig {
+                            custom_settings: serde_json::json!({ "pulse_duration_ms": duration }),
+                            ..Default::default()
+                        };
+                        let _ = ttl_device.configure(device_config);
+                    }
+                    Box::new(ttl_device)
                 }
                 "kernel" => {
                     // Require explicit IP configuration - no unsafe defaults

@@ -346,7 +346,7 @@
 
     try {
       console.log('Sending test pulse to:', device.config.port);
-      const pulseResult = await sendTtlPulse(device.config.port);
+      const pulseResult = await sendTtlPulse(device.config.port, device.config.pulse_duration_ms);
       console.log('Pulse result:', pulseResult);
       const { result, latency } = pulseResult;
       console.log('Result:', result, 'Latency:', latency);

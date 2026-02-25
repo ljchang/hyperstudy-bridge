@@ -73,10 +73,10 @@ export async function sendDeviceCommand(deviceId, command) {
 }
 
 // TTL-specific commands for low-latency operations
-export async function sendTtlPulse(port) {
+export async function sendTtlPulse(port, pulseDurationMs) {
   try {
     const startTime = performance.now();
-    const result = await invoke('send_ttl_pulse', { port });
+    const result = await invoke('send_ttl_pulse', { port, pulseDurationMs });
     const latency = performance.now() - startTime;
 
     console.log(`TTL pulse sent in ${latency.toFixed(2)}ms`);

@@ -140,7 +140,15 @@ pub async fn connect_device(
             // Note: Performance callback is set up AFTER successful connection
             // to avoid race conditions where the callback fires before the device
             // is registered in state
-            Box::new(TtlDevice::new(port.to_string()))
+            let mut ttl_device = TtlDevice::new(port.to_string());
+            if let Some(duration) = config.get("pulse_duration_ms").and_then(|v| v.as_u64()) {
+                let device_config = crate::devices::DeviceConfig {
+                    custom_settings: json!({ "pulse_duration_ms": duration }),
+                    ..Default::default()
+                };
+                let _ = ttl_device.configure(device_config);
+            }
+            Box::new(ttl_device)
         }
         "kernel" => {
             let ip = config
@@ -313,6 +321,7 @@ pub async fn send_device_command(
 #[tauri::command]
 pub async fn send_ttl_pulse(
     port: Option<String>,
+    pulse_duration_ms: Option<u64>,
     state: State<'_, Arc<AppState>>,
     app_handle: AppHandle,
 ) -> Result<CommandResult<u64>, ()> {
@@ -323,6 +332,16 @@ pub async fn send_ttl_pulse(
 
     if let Some(device_lock) = state.get_device(&device_id).await {
         let mut device = device_lock.write().await;
+        // Apply pulse duration to the already-connected device if provided,
+        // so the test pulse respects the current frontend config even if it
+        // changed after the device was connected.
+        if let Some(duration) = pulse_duration_ms {
+            let device_config = crate::devices::DeviceConfig {
+                custom_settings: json!({ "pulse_duration_ms": duration }),
+                ..Default::default()
+            };
+            let _ = device.configure(device_config);
+        }
         match device.send(b"PULSE\n").await {
             Ok(_) => {
                 let latency_us = start_time.elapsed().as_micros() as u64;
@@ -357,6 +376,13 @@ pub async fn send_ttl_pulse(
             port
         );
         let mut device = TtlDevice::new(port.clone());
+        if let Some(duration) = pulse_duration_ms {
+            let device_config = crate::devices::DeviceConfig {
+                custom_settings: json!({ "pulse_duration_ms": duration }),
+                ..Default::default()
+            };
+            let _ = device.configure(device_config);
+        }
         match device.connect().await {
             Ok(_) => match device.send(b"PULSE\n").await {
                 Ok(_) => {
