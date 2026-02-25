@@ -75,6 +75,41 @@
         errorMessage: 'Invalid URL format. Expected hostname:port',
       },
     },
+    eyelink: {
+      ip: {
+        label: 'IP Address',
+        type: 'text',
+        placeholder: '100.1.1.1',
+        required: true,
+        pattern: '^((25[0-5]|(2[0-4]|1\\d|[1-9]|)\\d)\\.?\\b){4}$',
+        errorMessage: 'Invalid IP address format',
+      },
+      sample_rate: {
+        label: 'Sample Rate (Hz)',
+        type: 'select',
+        options: [250, 500, 1000, 2000],
+        default: 1000,
+        required: true,
+      },
+      display_width: {
+        label: 'Display Width (px)',
+        type: 'number',
+        min: 1,
+        max: 7680,
+        default: 1920,
+        required: false,
+        errorMessage: 'Display width must be between 1-7680',
+      },
+      display_height: {
+        label: 'Display Height (px)',
+        type: 'number',
+        min: 1,
+        max: 4320,
+        default: 1080,
+        required: false,
+        errorMessage: 'Display height must be between 1-4320',
+      },
+    },
     frenz: {
       // Credentials (stored in encrypted vault, not in regular config)
       frenzDeviceId: {
@@ -377,6 +412,9 @@
           processedConfig[key] = value === '' ? fieldConfig.default : Number(value);
         } else if (fieldConfig.type === 'checkbox') {
           processedConfig[key] = Boolean(value);
+        } else if (fieldConfig.type === 'select' && typeof fieldConfig.options?.[0] === 'number') {
+          // Select elements always return strings; convert back to number for numeric options
+          processedConfig[key] = value === '' ? fieldConfig.default : Number(value);
         } else {
           processedConfig[key] = value;
         }

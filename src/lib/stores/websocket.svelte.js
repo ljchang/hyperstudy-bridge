@@ -270,6 +270,7 @@ function getDeviceName(deviceId) {
     kernel: 'Kernel Flow2',
     pupil: 'Pupil Labs Neon',
     lsl: 'Lab Streaming Layer',
+    eyelink: 'EyeLink 1000 Plus',
     mock: 'Mock Device',
   };
   return names[deviceId] || deviceId;
@@ -353,6 +354,79 @@ export async function connectDevice(deviceId, config = {}) {
         reject(new Error(`Request timeout for ${deviceId}`));
       }
     }, CONNECT_TIMEOUT_MS);
+  });
+}
+
+export async function connectEyeLink(config = {}) {
+  return new Promise((resolve, reject) => {
+    const id = generateId();
+    let timeoutId = null;
+
+    requestCallbacks.set(id, (success, message) => {
+      if (timeoutId) clearTimeout(timeoutId);
+      if (success) {
+        resolve(message);
+      } else {
+        reject(new Error(message || 'Failed to connect EyeLink'));
+      }
+    });
+
+    const sent = send({
+      type: 'command',
+      device: 'eyelink',
+      action: 'connect_eye_link',
+      payload: config,
+      id,
+    });
+
+    if (!sent) {
+      requestCallbacks.delete(id);
+      reject(new Error('Failed to send command'));
+      return;
+    }
+
+    timeoutId = setTimeout(() => {
+      if (requestCallbacks.has(id)) {
+        requestCallbacks.delete(id);
+        reject(new Error('Request timeout for EyeLink'));
+      }
+    }, CONNECT_TIMEOUT_MS);
+  });
+}
+
+export async function disconnectEyeLink() {
+  return new Promise((resolve, reject) => {
+    const id = generateId();
+    let timeoutId = null;
+
+    requestCallbacks.set(id, (success, message) => {
+      if (timeoutId) clearTimeout(timeoutId);
+      if (success) {
+        resolve(message);
+      } else {
+        reject(new Error(message || 'Failed to disconnect EyeLink'));
+      }
+    });
+
+    const sent = send({
+      type: 'command',
+      device: 'eyelink',
+      action: 'disconnect_eye_link',
+      id,
+    });
+
+    if (!sent) {
+      requestCallbacks.delete(id);
+      reject(new Error('Failed to send command'));
+      return;
+    }
+
+    timeoutId = setTimeout(() => {
+      if (requestCallbacks.has(id)) {
+        requestCallbacks.delete(id);
+        reject(new Error('Disconnect timeout for EyeLink'));
+      }
+    }, DISCONNECT_TIMEOUT_MS);
   });
 }
 

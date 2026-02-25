@@ -45,6 +45,16 @@ describe('DeviceConfigModal', () => {
     },
   };
 
+  const mockEyeLinkDevice = {
+    id: 'eyelink',
+    name: 'EyeLink 1000 Plus',
+    type: 'Eye Tracker',
+    config: {
+      ip: '100.1.1.1',
+      sample_rate: 1000,
+    },
+  };
+
   const mockProps = {
     isOpen: true,
     device: mockTtlDevice,
@@ -186,6 +196,20 @@ describe('DeviceConfigModal', () => {
       await waitFor(() => {
         expect(screen.getByText(/Invalid URL format/)).toBeInTheDocument();
       });
+    });
+  });
+
+  describe('EyeLink Device Configuration', () => {
+    it('displays IP Address field for eyelink', () => {
+      render(DeviceConfigModal, { ...mockProps, device: mockEyeLinkDevice });
+
+      expect(screen.getByText('IP Address')).toBeInTheDocument();
+    });
+
+    it('displays Sample Rate field for eyelink', () => {
+      render(DeviceConfigModal, { ...mockProps, device: mockEyeLinkDevice });
+
+      expect(screen.getByText('Sample Rate (Hz)')).toBeInTheDocument();
     });
   });
 
