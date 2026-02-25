@@ -28,7 +28,9 @@ use serde::{Deserialize, Serialize};
 use std::os::raw::c_short;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::time::timeout;
 use tracing::{info, warn};
 
 use calibration::CalibrationEvent;
@@ -79,6 +81,26 @@ pub struct EyeLinkStatus {
     pub calibrating: bool,
 }
 
+/// Verify the EyeLink Host PC is reachable via TCP before attempting FFI calls.
+///
+/// Opens a TCP connection to `ip:4000` (the EyeLink control port) with a 2-second
+/// timeout. The connection is dropped immediately — we only check reachability.
+/// This prevents the C library from segfaulting when the host is unreachable.
+async fn check_eyelink_reachable(ip: &str) -> Result<(), String> {
+    let addr = format!("{}:{}", ip, ffi::EYELINK_HOST_PORT);
+    match timeout(Duration::from_secs(2), TcpStream::connect(&addr)).await {
+        Ok(Ok(_stream)) => Ok(()),
+        Ok(Err(e)) => Err(format!(
+            "EyeLink Host PC not reachable at {} ({}). Check that the EyeLink is powered on and the network cable is connected.",
+            addr, e
+        )),
+        Err(_) => Err(format!(
+            "EyeLink Host PC not reachable at {} (connection timed out). Check that the EyeLink is powered on and the IP address is correct.",
+            addr
+        )),
+    }
+}
+
 impl EyeLinkManager {
     pub fn new() -> Self {
         Self {
@@ -119,14 +141,33 @@ impl EyeLinkManager {
 
         info!(device = "eyelink", "Connecting to EyeLink at {}", ip);
 
-        // Phase 2: Blocking FFI calls (no lock held)
+        // Phase 2: Verify host is reachable before touching the C library.
+        // The eyelink_core FFI can segfault/abort if the host is unreachable,
+        // so we do a lightweight TCP probe first.
+        check_eyelink_reachable(ip).await?;
+
+        // Phase 2b: Blocking FFI calls with timeout safety net (no lock held)
         let ip_owned = ip.to_string();
-        tokio::task::spawn_blocking(move || {
-            ffi::set_address(&ip_owned)?;
-            ffi::connect(ffi::CONNECT_NORMAL)
-        })
-        .await
-        .map_err(|e| format!("Connect task panicked: {}", e))??;
+        let ffi_result = timeout(
+            Duration::from_secs(10),
+            tokio::task::spawn_blocking(move || {
+                ffi::set_address(&ip_owned)?;
+                ffi::connect(ffi::CONNECT_NORMAL)
+            }),
+        )
+        .await;
+
+        match ffi_result {
+            Ok(join_result) => {
+                join_result.map_err(|e| format!("Connect task panicked: {}", e))??;
+            }
+            Err(_) => {
+                return Err(
+                    "EyeLink SDK connection timed out after 10 seconds. The Host PC may be unresponsive."
+                        .to_string(),
+                );
+            }
+        }
 
         let (version_num, version_str) = tokio::task::spawn_blocking(ffi::get_tracker_version)
             .await

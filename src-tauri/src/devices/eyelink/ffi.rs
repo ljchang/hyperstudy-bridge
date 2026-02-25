@@ -28,6 +28,9 @@ pub const RIGHT_EYE: usize = 1;
 pub const CONNECT_NORMAL: c_short = 0;
 pub const CONNECT_DUMMY: c_short = -1;
 
+/// Default port for EyeLink Host PC TCP control connection
+pub const EYELINK_HOST_PORT: u16 = 4000;
+
 /// Return values
 pub const OK_RESULT: c_short = 0;
 
