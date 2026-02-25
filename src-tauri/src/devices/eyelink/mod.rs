@@ -13,10 +13,12 @@
 //!
 //! Instead, `EyeLinkManager` lives directly on `AppState` (like `NeonLslManager`).
 //!
-//! ## Feature Gate
+//! ## Runtime SDK Loading
 //!
-//! This module is gated behind the `eyelink` Cargo feature so the Bridge
-//! builds without the EyeLink Developers Kit when not needed.
+//! The eyelink_core shared library is loaded at runtime via `libloading`.
+//! No build-time SDK installation is needed — the app starts fine without it,
+//! and returns a clear error message when EyeLink operations are attempted
+//! without the SDK installed.
 
 pub mod calibration;
 pub mod ffi;
@@ -119,20 +121,16 @@ impl EyeLinkManager {
 
         // Phase 2: Blocking FFI calls (no lock held)
         let ip_owned = ip.to_string();
-        let connect_result = tokio::task::spawn_blocking(move || {
-            ffi::set_address(&ip_owned);
+        tokio::task::spawn_blocking(move || {
+            ffi::set_address(&ip_owned)?;
             ffi::connect(ffi::CONNECT_NORMAL)
         })
         .await
-        .map_err(|e| format!("Connect task panicked: {}", e))?;
+        .map_err(|e| format!("Connect task panicked: {}", e))??;
 
-        if let Err(code) = connect_result {
-            return Err(format!("EyeLink connection failed with code: {}", code));
-        }
-
-        let (version_num, version_str) = tokio::task::spawn_blocking(|| ffi::get_tracker_version())
+        let (version_num, version_str) = tokio::task::spawn_blocking(ffi::get_tracker_version)
             .await
-            .map_err(|e| format!("Version query panicked: {}", e))?;
+            .map_err(|e| format!("Version query panicked: {}", e))??;
 
         info!(
             device = "eyelink",
@@ -160,14 +158,15 @@ impl EyeLinkManager {
         }; // Write lock dropped here
 
         // Phase 4: Configure tracker via blocking FFI (no lock held)
-        tokio::task::spawn_blocking(move || {
-            let _ = ffi::send_command(&format!("sample_rate {}", rate));
-            let _ = ffi::send_command(&format!("screen_pixel_coords = 0 0 {} {}", w - 1, h - 1));
-            let _ = ffi::send_command("link_sample_data = LEFT,RIGHT,GAZE,AREA,STATUS");
-            let _ = ffi::send_command("file_sample_data = LEFT,RIGHT,GAZE,AREA,STATUS");
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            ffi::send_command(&format!("sample_rate {}", rate))?;
+            ffi::send_command(&format!("screen_pixel_coords = 0 0 {} {}", w - 1, h - 1))?;
+            ffi::send_command("link_sample_data = LEFT,RIGHT,GAZE,AREA,STATUS")?;
+            ffi::send_command("file_sample_data = LEFT,RIGHT,GAZE,AREA,STATUS")?;
+            Ok(())
         })
         .await
-        .map_err(|e| format!("Configuration panicked: {}", e))?;
+        .map_err(|e| format!("Configuration panicked: {}", e))??;
 
         // Phase 5: Return status
         let state = self.state.read().await;
@@ -202,15 +201,15 @@ impl EyeLinkManager {
 
         // Phase 3: Stop recording via blocking FFI (no lock held)
         if was_recording {
-            tokio::task::spawn_blocking(|| ffi::end_recording())
+            tokio::task::spawn_blocking(ffi::end_recording)
                 .await
-                .map_err(|e| format!("Stop recording panicked: {}", e))?;
+                .map_err(|e| format!("Stop recording panicked: {}", e))??;
         }
 
         // Phase 4: Disconnect via blocking FFI (no lock held)
-        tokio::task::spawn_blocking(|| ffi::disconnect())
+        tokio::task::spawn_blocking(ffi::disconnect)
             .await
-            .map_err(|e| format!("Disconnect panicked: {}", e))?;
+            .map_err(|e| format!("Disconnect panicked: {}", e))??;
 
         // Phase 5: Update final state under a brief write lock
         {
@@ -241,8 +240,7 @@ impl EyeLinkManager {
 
         tokio::task::spawn_blocking(|| ffi::begin_recording(true, true, true, true))
             .await
-            .map_err(|e| format!("Start recording panicked: {}", e))?
-            .map_err(|code| format!("start_recording failed with code: {}", code))?;
+            .map_err(|e| format!("Start recording panicked: {}", e))??;
 
         let mut state = self.state.write().await;
         state.recording = true;
@@ -259,9 +257,9 @@ impl EyeLinkManager {
             }
         } // Drop lock before blocking FFI
 
-        tokio::task::spawn_blocking(|| ffi::end_recording())
+        tokio::task::spawn_blocking(ffi::end_recording)
             .await
-            .map_err(|e| format!("Stop recording panicked: {}", e))?;
+            .map_err(|e| format!("Stop recording panicked: {}", e))??;
 
         let mut state = self.state.write().await;
         state.recording = false;
@@ -283,8 +281,7 @@ impl EyeLinkManager {
 
         tokio::task::spawn_blocking(move || ffi::send_message(&msg))
             .await
-            .map_err(|e| format!("Send message panicked: {}", e))?
-            .map_err(|code| format!("eyemsg_printf failed with code: {}", code))?;
+            .map_err(|e| format!("Send message panicked: {}", e))??;
 
         Ok(())
     }
@@ -300,8 +297,7 @@ impl EyeLinkManager {
 
         tokio::task::spawn_blocking(move || ffi::send_command(&cmd))
             .await
-            .map_err(|e| format!("Send command panicked: {}", e))?
-            .map_err(|code| format!("eyecmd_printf failed with code: {}", code))?;
+            .map_err(|e| format!("Send command panicked: {}", e))??;
 
         Ok(())
     }
@@ -462,7 +458,7 @@ impl EyeLinkManager {
             calibrating: state
                 .calibration_task
                 .as_ref()
-                .map_or(false, |t| !t.is_finished()),
+                .is_some_and(|t| !t.is_finished()),
         }
     }
 }

@@ -49,6 +49,13 @@ HyperStudy Bridge is a unified, high-performance desktop application that serves
 - **Protocol**: Time-synced data streams
 - **Implementation**: Using `lsl` crate
 
+### 5. EyeLink 1000 Plus Eye Tracker
+- **Connection**: Ethernet TCP/IP (default: 100.1.1.1)
+- **Protocol**: eyelink_core C library via runtime FFI (libloading)
+- **Features**: Gaze data streaming, calibration, EDF recording, event markers
+- **Requirement**: SR Research EyeLink Developers Kit (detected at runtime)
+- **Implementation**: Runtime dynamic loading via `libloading` crate — no build-time SDK needed
+
 ## WebSocket Bridge Protocol
 
 The bridge exposes a WebSocket server on `ws://localhost:9000` for HyperStudy communication.

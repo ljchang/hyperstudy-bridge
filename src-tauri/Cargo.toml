@@ -62,6 +62,9 @@ uuid = { version = "1", features = ["v4"] }
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "migrate"] }
 base64 = "0.22"
 
+# Runtime dynamic loading (for optional SDK integration, e.g. EyeLink)
+libloading = "0.8"
+
 # Testing utilities
 rand = "0.9"
 
@@ -85,8 +88,6 @@ harness = false
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
-# Enable EyeLink 1000 Plus integration (requires EyeLink Developers Kit)
-eyelink = []
 
 [profile.release]
 panic = "abort"

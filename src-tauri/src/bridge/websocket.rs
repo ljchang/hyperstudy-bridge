@@ -1498,9 +1498,8 @@ async fn handle_device_command(
             }
         }
         // ====================================================================
-        // EyeLink commands (feature-gated)
+        // EyeLink commands (SDK loaded at runtime via libloading)
         // ====================================================================
-        #[cfg(feature = "eyelink")]
         CommandAction::ConnectEyeLink => {
             let ip = payload
                 .as_ref()
@@ -1548,7 +1547,6 @@ async fn handle_device_command(
                 }
             }
         }
-        #[cfg(feature = "eyelink")]
         CommandAction::DisconnectEyeLink => match state.eyelink_manager.disconnect().await {
             Ok(()) => {
                 send_response(
@@ -1569,7 +1567,6 @@ async fn handle_device_command(
                 .await;
             }
         },
-        #[cfg(feature = "eyelink")]
         CommandAction::StartEyeLinkRecording => {
             match state.eyelink_manager.start_recording().await {
                 Ok(()) => {
@@ -1592,7 +1589,6 @@ async fn handle_device_command(
                 }
             }
         }
-        #[cfg(feature = "eyelink")]
         CommandAction::StopEyeLinkRecording => match state.eyelink_manager.stop_recording().await {
             Ok(()) => {
                 send_response(
@@ -1609,7 +1605,6 @@ async fn handle_device_command(
                 .await;
             }
         },
-        #[cfg(feature = "eyelink")]
         CommandAction::SendEyeLinkMessage => {
             let message = payload
                 .as_ref()
@@ -1652,7 +1647,6 @@ async fn handle_device_command(
                 }
             }
         }
-        #[cfg(feature = "eyelink")]
         CommandAction::CalibrateEyeLink => {
             info!("Starting EyeLink calibration");
 
@@ -1739,7 +1733,6 @@ async fn handle_device_command(
                 }
             }
         }
-        #[cfg(feature = "eyelink")]
         CommandAction::CalibrateEyeLinkKey => {
             let key = payload
                 .as_ref()
@@ -1785,7 +1778,6 @@ async fn handle_device_command(
                 }
             }
         }
-        #[cfg(feature = "eyelink")]
         CommandAction::EyeLinkStatus => {
             let status = state.eyelink_manager.get_status().await;
             send_response(
@@ -1798,7 +1790,6 @@ async fn handle_device_command(
             )
             .await;
         }
-        #[cfg(feature = "eyelink")]
         CommandAction::ConnectEyeLinkGaze => {
             match state.eyelink_manager.start_gaze_stream().await {
                 Ok(mut gaze_rx) => {
@@ -1856,7 +1847,6 @@ async fn handle_device_command(
                 }
             }
         }
-        #[cfg(feature = "eyelink")]
         CommandAction::DisconnectEyeLinkGaze => {
             match state.eyelink_manager.stop_gaze_stream().await {
                 Ok(()) => {

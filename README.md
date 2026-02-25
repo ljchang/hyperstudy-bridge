@@ -41,7 +41,10 @@ HyperStudy Bridge provides a reliable, low-latency communication layer between t
 | [hyperstudy-ttl](https://github.com/ljchang/hyperstudy-ttl) | TTL Pulse Generator | USB Serial | Supported |
 | Kernel Flow2 | fNIRS | TCP Socket | Supported |
 | Pupil Labs Neon | Eye Tracker | WebSocket | Supported |
+| EyeLink 1000 Plus | Eye Tracker | Ethernet (TCP) | Supported* |
 | Lab Streaming Layer | Various | LSL Protocol | Supported |
+
+_*Requires the SR Research EyeLink Developers Kit installed on the host machine._
 
 ## Quick Start
 
@@ -67,6 +70,14 @@ HyperStudy Bridge provides a reliable, low-latency communication layer between t
    chmod +x HyperStudy-Bridge-*.AppImage
    ./HyperStudy-Bridge-*.AppImage
    ```
+
+### EyeLink Setup
+
+The EyeLink 1000 Plus integration requires the SR Research EyeLink Developers Kit:
+
+1. Download and install the [EyeLink Developers Kit](https://www.sr-research.com/support) for your platform
+2. The bridge auto-detects the SDK at runtime — no special build flags needed
+3. If the SDK is not installed, the app runs normally; EyeLink operations return a clear error message
 
 ### Usage
 

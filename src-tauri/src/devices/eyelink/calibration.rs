@@ -345,8 +345,13 @@ pub fn setup_calibration_hooks() -> broadcast::Sender<CalibrationEvent> {
 
     // Register hook functions with eyelink_core (pointer is allocated once, reused)
     let hooks = get_hook_functions();
-    unsafe {
-        ffi::register_hooks(hooks);
+    // SAFETY: hooks pointer is valid for process lifetime (allocated once via OnceLock)
+    if let Err(e) = unsafe { ffi::register_hooks(hooks) } {
+        tracing::error!(
+            device = "eyelink",
+            "Failed to register calibration hooks: {}",
+            e
+        );
     }
 
     info!(
@@ -364,23 +369,23 @@ pub fn setup_calibration_hooks() -> broadcast::Sender<CalibrationEvent> {
 /// Cleanup (sender clear + key queue drain) is guaranteed by a drop guard,
 /// even if the blocking task panics.
 pub async fn run_calibration() -> Result<c_short, String> {
-    let result = tokio::task::spawn_blocking(|| {
+    let result = tokio::task::spawn_blocking(|| -> Result<c_short, String> {
         // CalibrationCleanupGuard ensures cleanup_calibration() runs
         // even if do_tracker_setup() panics and the thread unwinds.
         let _guard = CalibrationCleanupGuard;
 
         info!(device = "eyelink", "Starting do_tracker_setup()");
-        let result = unsafe { ffi::do_tracker_setup() };
+        let result = ffi::do_tracker_setup()?;
         info!(
             device = "eyelink",
             "do_tracker_setup() returned: {}", result
         );
 
         // _guard drops here, calling cleanup_calibration()
-        result
+        Ok(result)
     })
     .await
-    .map_err(|e| format!("Calibration task panicked: {}", e))?;
+    .map_err(|e| format!("Calibration task panicked: {}", e))??;
 
     Ok(result)
 }

@@ -211,6 +211,28 @@ describe('DeviceConfigModal', () => {
 
       expect(screen.getByText('Sample Rate (Hz)')).toBeInTheDocument();
     });
+
+    it('displays Display Width and Height fields for eyelink', () => {
+      render(DeviceConfigModal, { ...mockProps, device: mockEyeLinkDevice });
+
+      expect(screen.getByText('Display Width (px)')).toBeInTheDocument();
+      expect(screen.getByText('Display Height (px)')).toBeInTheDocument();
+    });
+
+    it('validates EyeLink IP address format (invalid IP rejected)', async () => {
+      render(DeviceConfigModal, { ...mockProps, device: mockEyeLinkDevice });
+
+      const ipInput = screen.getByDisplayValue('100.1.1.1');
+      await user.clear(ipInput);
+      await user.type(ipInput, '999.999.999.999');
+
+      const saveButton = screen.getByText('Save Configuration');
+      await user.click(saveButton);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Invalid IP address format/)).toBeInTheDocument();
+      });
+    });
   });
 
   describe('Modal Actions', () => {

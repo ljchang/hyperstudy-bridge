@@ -2222,6 +2222,7 @@ dependencies = [
  "dashmap",
  "futures-util",
  "histogram",
+ "libloading 0.8.8",
  "lsl",
  "metrics",
  "metrics-exporter-prometheus",

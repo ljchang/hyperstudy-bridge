@@ -29,7 +29,6 @@ pub struct AppState {
     /// FRENZ Python bridge process manager (PyApp lifecycle)
     pub frenz_process: Arc<FrenzProcessManager>,
     /// EyeLink manager for SR Research EyeLink 1000 Plus eye tracking
-    #[cfg(feature = "eyelink")]
     pub eyelink_manager: Arc<crate::devices::eyelink::EyeLinkManager>,
     /// Broadcast channel for device status change events
     /// WebSocket connections can subscribe to receive status updates
@@ -99,9 +98,8 @@ impl std::fmt::Debug for AppState {
             .field("last_error", &self.last_error)
             .field("neon_manager", &self.neon_manager)
             .field("frenz_manager", &self.frenz_manager)
-            .field("frenz_process", &self.frenz_process);
-        #[cfg(feature = "eyelink")]
-        s.field("eyelink_manager", &"EyeLinkManager");
+            .field("frenz_process", &self.frenz_process)
+            .field("eyelink_manager", &"EyeLinkManager");
         s.field(
             "device_status_subscribers",
             &self.device_status_tx.receiver_count(),
@@ -134,7 +132,6 @@ impl AppState {
         ));
         let frenz_process = Arc::new(FrenzProcessManager::new());
 
-        #[cfg(feature = "eyelink")]
         let eyelink_manager = Arc::new(crate::devices::eyelink::EyeLinkManager::new());
 
         // Create broadcast channel for device status events
@@ -151,7 +148,6 @@ impl AppState {
             neon_manager,
             frenz_manager,
             frenz_process,
-            #[cfg(feature = "eyelink")]
             eyelink_manager,
             device_status_tx,
         }
