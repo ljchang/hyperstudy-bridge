@@ -39,7 +39,7 @@ jobs:
       - name: Checkout hyperstudy-docs
         uses: actions/checkout@v4
         with:
-          repository: ljchang/hyperstudy-docs
+          repository: hyperstudyio/hyperstudy-docs
           token: ${{ secrets.DOCS_REPO_TOKEN }}
           path: docs-repo
           persist-credentials: false
@@ -104,13 +104,13 @@ jobs:
           TAG="${{ steps.release.outputs.tag }}"
 
           # Get the current file SHA (required for updates)
-          FILE_SHA=$(gh api "repos/ljchang/hyperstudy-docs/contents/${FILE_PATH}" --jq '.sha')
+          FILE_SHA=$(gh api "repos/hyperstudyio/hyperstudy-docs/contents/${FILE_PATH}" --jq '.sha')
 
           # Base64-encode the updated file content
           CONTENT_B64=$(base64 -w 0 "docs-repo/${FILE_PATH}")
 
           # Push via the Contents API
-          gh api --method PUT "repos/ljchang/hyperstudy-docs/contents/${FILE_PATH}" \
+          gh api --method PUT "repos/hyperstudyio/hyperstudy-docs/contents/${FILE_PATH}" \
             -f message="Update HyperStudy Bridge release notes for ${TAG}" \
             -f content="${CONTENT_B64}" \
             -f sha="${FILE_SHA}" \
