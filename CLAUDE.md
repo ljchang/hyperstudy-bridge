@@ -24,13 +24,13 @@ HyperStudy Bridge is a unified, high-performance desktop application that serves
 
 ## Device Specifications
 
-### 1. TTL Pulse Generator ([hyperstudy-ttl](https://github.com/ljchang/hyperstudy-ttl))
+### 1. TTL Pulse Generator ([hyperstudy-ttl](https://github.com/hyperstudyio/hyperstudy-ttl))
 - **Connection**: USB Serial (CDC)
 - **Protocol**: Simple text commands over serial
 - **Critical Requirement**: <1ms command-to-pulse latency
 - **Commands**: `PULSE [duration_ms]\n` triggers TTL output, `TIMING\n` queries on-device latency
 - **Implementation**: Using `serialport` crate
-- **Hardware**: See [hyperstudy-ttl repository](https://github.com/ljchang/hyperstudy-ttl) for firmware and setup
+- **Hardware**: See [hyperstudy-ttl repository](https://github.com/hyperstudyio/hyperstudy-ttl) for firmware and setup
 
 ### 2. Kernel Flow2 fNIRS
 - **Connection**: TCP socket on port 6767
@@ -372,7 +372,7 @@ Creating a release triggers GitHub Actions workflows:
 - **Update README Download Links** - Updates download links in README.md
 - **CI** - Runs tests on the tagged commit
 
-Monitor build progress at: https://github.com/ljchang/hyperstudy-bridge/actions
+Monitor build progress at: https://github.com/hyperstudyio/hyperstudy-bridge/actions
 
 ### Release Notes Template
 

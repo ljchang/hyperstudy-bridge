@@ -594,7 +594,7 @@ If issues persist:
 
 1. **TTL on macOS**
    - Some USB-Serial adapters have higher latency
-   - Recommended: [hyperstudy-ttl](https://github.com/ljchang/hyperstudy-ttl)
+   - Recommended: [hyperstudy-ttl](https://github.com/hyperstudyio/hyperstudy-ttl)
 
 2. **LSL on Windows**
    - Firewall may block stream discovery

@@ -4,18 +4,18 @@ A unified, high-performance desktop application for bridging HyperStudy web expe
 
 <div align="center">
 
-[![Release](https://img.shields.io/github/v/release/ljchang/hyperstudy-bridge?include_prereleases&style=for-the-badge)](https://github.com/ljchang/hyperstudy-bridge/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/ljchang/hyperstudy-bridge/total?style=for-the-badge)](https://github.com/ljchang/hyperstudy-bridge/releases)
-[![License](https://img.shields.io/github/license/ljchang/hyperstudy-bridge?style=for-the-badge)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/hyperstudyio/hyperstudy-bridge?include_prereleases&style=for-the-badge)](https://github.com/hyperstudyio/hyperstudy-bridge/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/hyperstudyio/hyperstudy-bridge/total?style=for-the-badge)](https://github.com/hyperstudyio/hyperstudy-bridge/releases)
+[![License](https://img.shields.io/github/license/hyperstudyio/hyperstudy-bridge?style=for-the-badge)](LICENSE)
 
-### [Download Latest Release](https://github.com/ljchang/hyperstudy-bridge/releases/latest)
+### [Download Latest Release](https://github.com/hyperstudyio/hyperstudy-bridge/releases/latest)
 
 | Platform | Download |
 |----------|----------|
-| **macOS (Apple Silicon)** | [Apple Silicon](https://github.com/ljchang/hyperstudy-bridge/releases/download/v0.8.13/HyperStudy-Bridge-v0.8.13-aarch64-apple-darwin.dmg) |
-| **macOS (Intel)** | [Intel](https://github.com/ljchang/hyperstudy-bridge/releases/download/v0.8.13/HyperStudy-Bridge-v0.8.13-x86_64-apple-darwin.dmg) |
-| **Windows** | [Windows Installer](https://github.com/ljchang/hyperstudy-bridge/releases/download/v0.8.13/HyperStudy-Bridge-v0.8.13-x86_64-windows.msi) |
-| **Linux** | [Linux AppImage](https://github.com/ljchang/hyperstudy-bridge/releases/download/v0.8.13/HyperStudy-Bridge-v0.8.13-x86_64-linux.AppImage) |
+| **macOS (Apple Silicon)** | [Apple Silicon](https://github.com/hyperstudyio/hyperstudy-bridge/releases/download/v0.8.13/HyperStudy-Bridge-v0.8.13-aarch64-apple-darwin.dmg) |
+| **macOS (Intel)** | [Intel](https://github.com/hyperstudyio/hyperstudy-bridge/releases/download/v0.8.13/HyperStudy-Bridge-v0.8.13-x86_64-apple-darwin.dmg) |
+| **Windows** | [Windows Installer](https://github.com/hyperstudyio/hyperstudy-bridge/releases/download/v0.8.13/HyperStudy-Bridge-v0.8.13-x86_64-windows.msi) |
+| **Linux** | [Linux AppImage](https://github.com/hyperstudyio/hyperstudy-bridge/releases/download/v0.8.13/HyperStudy-Bridge-v0.8.13-x86_64-linux.AppImage) |
 
 _macOS builds are signed and notarized by Apple. Windows builds are unsigned (see note below)._
 
@@ -38,7 +38,7 @@ HyperStudy Bridge provides a reliable, low-latency communication layer between t
 
 | Device | Type | Connection | Status |
 |--------|------|------------|--------|
-| [hyperstudy-ttl](https://github.com/ljchang/hyperstudy-ttl) | TTL Pulse Generator | USB Serial | Supported |
+| [hyperstudy-ttl](https://github.com/hyperstudyio/hyperstudy-ttl) | TTL Pulse Generator | USB Serial | Supported |
 | Kernel Flow2 | fNIRS | TCP Socket | Supported |
 | Pupil Labs Neon | Eye Tracker | WebSocket | Supported |
 | EyeLink 1000 Plus | Eye Tracker | Ethernet (TCP) | Supported* |

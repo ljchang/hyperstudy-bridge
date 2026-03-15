@@ -13,7 +13,7 @@ The connection flow between HyperStudy web app and HyperStudy Bridge has been fi
 
 ### 1. Download and Install the New Bridge App
 Once the GitHub Actions workflow completes (approximately 10-15 minutes):
-1. Go to: https://github.com/ljchang/hyperstudy-bridge/releases/tag/v0.7.0-beta.3
+1. Go to: https://github.com/hyperstudyio/hyperstudy-bridge/releases/tag/v0.7.0-beta.3
 2. Download `HyperStudy.Bridge_0.7.0-beta.3_aarch64.dmg` (for Apple Silicon) or `_x64.dmg` (for Intel)
 3. Install the app on your Mac
 

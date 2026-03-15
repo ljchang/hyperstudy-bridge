@@ -54,7 +54,7 @@ git push origin v1.0.0
 ```
 
 ### Method 3: GitHub UI
-1. Go to https://github.com/ljchang/hyperstudy-bridge/actions
+1. Go to https://github.com/hyperstudyio/hyperstudy-bridge/actions
 2. Click on "Create Release" workflow
 3. Click "Run workflow"
 4. Enter version (e.g., v1.0.0)
@@ -88,7 +88,7 @@ git push origin v1.0.0
 
 ## GitHub Release Page
 
-Releases appear at: https://github.com/ljchang/hyperstudy-bridge/releases
+Releases appear at: https://github.com/hyperstudyio/hyperstudy-bridge/releases
 
 Each release includes:
 - Release notes (auto-generated from commits)

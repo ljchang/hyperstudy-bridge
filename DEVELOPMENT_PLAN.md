@@ -81,7 +81,7 @@ This document tracks development progress across all agents. Each agent should u
 
 ## Phase 4: Device Module Implementation
 
-### TTL Agent Tasks ([hyperstudy-ttl](https://github.com/ljchang/hyperstudy-ttl))
+### TTL Agent Tasks ([hyperstudy-ttl](https://github.com/hyperstudyio/hyperstudy-ttl))
 - [x] Implement serial port enumeration
 - [x] Create serial connection management
 - [x] Implement PULSE command handler

@@ -203,7 +203,7 @@ The microcontroller firmware must implement:
 4. **Timing Precision**: Microsecond-accurate pulse duration
 5. **Buffer Management**: Handle rapid command sequences
 
-See the [hyperstudy-ttl](https://github.com/ljchang/hyperstudy-ttl) repository for the production firmware (PlatformIO-based, v1.4.0+).
+See the [hyperstudy-ttl](https://github.com/hyperstudyio/hyperstudy-ttl) repository for the production firmware (PlatformIO-based, v1.4.0+).
 
 Key firmware features:
 - **Zero polling delay**: No `delay()` in main loop — tight polling for minimum latency

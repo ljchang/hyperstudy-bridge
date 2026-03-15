@@ -14,7 +14,7 @@
 HyperStudy Bridge is a desktop application that connects your HyperStudy web experiments with research hardware devices. It provides a unified interface for managing and controlling various neuroscience and physiological monitoring equipment.
 
 ### Supported Devices
-- **TTL Pulse Generator** ([hyperstudy-ttl](https://github.com/ljchang/hyperstudy-ttl)) - For triggering external equipment
+- **TTL Pulse Generator** ([hyperstudy-ttl](https://github.com/hyperstudyio/hyperstudy-ttl)) - For triggering external equipment
 - **Kernel Flow2** - fNIRS brain imaging
 - **Pupil Labs Neon** - Eye tracking
 - **Lab Streaming Layer (LSL)** - Universal data streaming
@@ -77,9 +77,9 @@ HyperStudy Bridge is a desktop application that connects your HyperStudy web exp
 ### TTL Pulse Generator Setup
 
 **Hardware Requirements:**
-- [hyperstudy-ttl](https://github.com/ljchang/hyperstudy-ttl) device (or compatible Arduino)
+- [hyperstudy-ttl](https://github.com/hyperstudyio/hyperstudy-ttl) device (or compatible Arduino)
 - USB cable
-- Programmed with TTL pulse firmware (see [hyperstudy-ttl repository](https://github.com/ljchang/hyperstudy-ttl))
+- Programmed with TTL pulse firmware (see [hyperstudy-ttl repository](https://github.com/hyperstudyio/hyperstudy-ttl))
 
 **Steps:**
 1. Connect the device via USB
