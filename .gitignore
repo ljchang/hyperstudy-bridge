@@ -71,7 +71,6 @@ python/frenz-bridge/build/
 # Rust
 **/*.rs.bk
 *.pdb
-Cargo.lock
 
 # Database files
 *.sqlite

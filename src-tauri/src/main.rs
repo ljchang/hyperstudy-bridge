@@ -12,6 +12,7 @@ mod storage;
 mod usb_monitor;
 
 use std::sync::Arc;
+use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{Emitter, Manager};
 use tracing::{error, info, warn};
 use tracing_subscriber::prelude::*;
@@ -49,6 +50,8 @@ async fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(
             tauri_plugin_stronghold::Builder::new(|password| {
                 use argon2::{hash_raw, Config, Variant, Version};
@@ -152,6 +155,66 @@ async fn main() {
                             }
                         }
                     }
+                }
+            });
+
+            // Build native menu bar with "Check for Updates..." item
+            let check_updates_item =
+                MenuItemBuilder::with_id("check_for_updates", "Check for Updates...")
+                    .build(app)?;
+
+            #[cfg(target_os = "macos")]
+            {
+                let app_submenu = SubmenuBuilder::new(app, "HyperStudy Bridge")
+                    .about(None)
+                    .item(&check_updates_item)
+                    .separator()
+                    .services()
+                    .separator()
+                    .hide()
+                    .hide_others()
+                    .show_all()
+                    .separator()
+                    .quit()
+                    .build()?;
+
+                let edit_submenu = SubmenuBuilder::new(app, "Edit")
+                    .undo()
+                    .redo()
+                    .separator()
+                    .cut()
+                    .copy()
+                    .paste()
+                    .select_all()
+                    .build()?;
+
+                let window_submenu = SubmenuBuilder::new(app, "Window")
+                    .minimize()
+                    .close_window()
+                    .build()?;
+
+                let menu = MenuBuilder::new(app)
+                    .items(&[&app_submenu, &edit_submenu, &window_submenu])
+                    .build()?;
+
+                app.set_menu(menu)?;
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            {
+                let help_submenu = SubmenuBuilder::new(app, "Help")
+                    .item(&check_updates_item)
+                    .build()?;
+
+                let menu = MenuBuilder::new(app).items(&[&help_submenu]).build()?;
+
+                app.set_menu(menu)?;
+            }
+
+            // Handle menu events — forward to frontend via Tauri event
+            app.on_menu_event(move |app_handle, event| {
+                if event.id().as_ref() == "check_for_updates" {
+                    let _ = app_handle.emit("menu-check-for-updates", ());
                 }
             });
 

@@ -57,6 +57,9 @@ jobs:
         run: npm ci
 
       - name: Build Tauri app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri:build -- --bundles appimage
 
       - name: Prepare artifacts
@@ -80,4 +83,39 @@ jobs:
         with:
           name: linux-appimage
           path: ${{ steps.artifacts.outputs.appimage_path }}
+          retention-days: 7
+
+      - name: Prepare updater artifacts
+        id: updater_artifacts
+        run: |
+          # Find the .AppImage.tar.gz updater artifact
+          TARGZ_PATH=$(find src-tauri/target/release/bundle/appimage -name "*.AppImage.tar.gz" -type f | head -1)
+          SIG_PATH="${TARGZ_PATH}.sig"
+
+          if [ -n "$TARGZ_PATH" ] && [ -f "$TARGZ_PATH" ]; then
+            TARGZ_NAME="HyperStudy-Bridge-${{ inputs.version }}-x86_64-linux.AppImage.tar.gz"
+            SIG_NAME="${TARGZ_NAME}.sig"
+            cp "$TARGZ_PATH" "$TARGZ_NAME"
+
+            if [ -f "$SIG_PATH" ]; then
+              cp "$SIG_PATH" "$SIG_NAME"
+              echo "sig_path=$SIG_NAME" >> $GITHUB_OUTPUT
+            else
+              echo "Warning: No .sig file found for updater artifact"
+            fi
+
+            echo "targz_path=$TARGZ_NAME" >> $GITHUB_OUTPUT
+            echo "Updater artifact: $TARGZ_NAME"
+          else
+            echo "Warning: No updater .AppImage.tar.gz artifact found"
+          fi
+
+      - name: Upload updater artifact
+        if: steps.updater_artifacts.outputs.targz_path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: updater-linux
+          path: |
+            ${{ steps.updater_artifacts.outputs.targz_path }}
+            ${{ steps.updater_artifacts.outputs.sig_path }}
           retention-days: 7

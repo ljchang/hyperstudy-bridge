@@ -108,6 +108,7 @@ jobs:
     uses: ./.github/workflows/release-linux.yml
     with:
       version: ${{ needs.create-release.outputs.version }}
+    secrets: inherit
 
   build-windows:
     name: Build Windows Release
@@ -115,6 +116,7 @@ jobs:
     uses: ./.github/workflows/release-windows.yml
     with:
       version: ${{ needs.create-release.outputs.version }}
+    secrets: inherit
 
   upload-assets:
     name: Upload Release Assets
@@ -139,4 +141,78 @@ jobs:
             *.dmg
             *.AppImage
             *.msi
+            *.app.tar.gz
+            *.app.tar.gz.sig
+            *.AppImage.tar.gz
+            *.AppImage.tar.gz.sig
+            *.msi.zip
+            *.msi.zip.sig
           fail_on_unmatched_files: false
+
+  generate-update-manifest:
+    name: Generate Update Manifest
+    needs: [create-release, upload-assets]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download updater artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: updater-*
+          merge-multiple: true
+
+      - name: List updater artifacts
+        run: |
+          echo "Updater artifacts:"
+          ls -la
+
+      - name: Generate latest.json
+        run: |
+          VERSION="${{ needs.create-release.outputs.version }}"
+          SEMVER="${VERSION#v}"
+          PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          BASE_URL="https://github.com/hyperstudyio/hyperstudy-bridge/releases/download/${VERSION}"
+
+          # Build platforms object with jq, including only platforms that built successfully
+          PLATFORMS='{}'
+
+          add_platform() {
+            local key="$1" sig_file="$2" url="$3"
+            if [ -f "$sig_file" ]; then
+              PLATFORMS=$(echo "$PLATFORMS" | jq --arg k "$key" --arg sig "$(cat "$sig_file")" --arg url "$url" \
+                '. + {($k): {signature: $sig, url: $url}}')
+            fi
+          }
+
+          add_platform "darwin-aarch64" \
+            "HyperStudy-Bridge-${VERSION}-aarch64-apple-darwin.app.tar.gz.sig" \
+            "${BASE_URL}/HyperStudy-Bridge-${VERSION}-aarch64-apple-darwin.app.tar.gz"
+
+          add_platform "darwin-x86_64" \
+            "HyperStudy-Bridge-${VERSION}-x86_64-apple-darwin.app.tar.gz.sig" \
+            "${BASE_URL}/HyperStudy-Bridge-${VERSION}-x86_64-apple-darwin.app.tar.gz"
+
+          add_platform "linux-x86_64" \
+            "HyperStudy-Bridge-${VERSION}-x86_64-linux.AppImage.tar.gz.sig" \
+            "${BASE_URL}/HyperStudy-Bridge-${VERSION}-x86_64-linux.AppImage.tar.gz"
+
+          add_platform "windows-x86_64" \
+            "HyperStudy-Bridge-${VERSION}-x86_64-windows.msi.zip.sig" \
+            "${BASE_URL}/HyperStudy-Bridge-${VERSION}-x86_64-windows.msi.zip"
+
+          # Assemble final manifest
+          jq -n \
+            --arg version "$SEMVER" \
+            --arg notes "See release notes at https://github.com/hyperstudyio/hyperstudy-bridge/releases/tag/${VERSION}" \
+            --arg pub_date "$PUB_DATE" \
+            --argjson platforms "$PLATFORMS" \
+            '{version: $version, notes: $notes, pub_date: $pub_date, platforms: $platforms}' \
+            > latest.json
+
+          echo "Generated latest.json:"
+          cat latest.json
+
+      - name: Upload latest.json to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.create-release.outputs.version }}
+          files: latest.json

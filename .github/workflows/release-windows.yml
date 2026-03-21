@@ -69,6 +69,9 @@ jobs:
           Get-ChildItem ../../src-tauri/resources/
 
       - name: Build Tauri app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri:build -- --bundles msi
 
       - name: Prepare artifacts
@@ -96,4 +99,39 @@ jobs:
         with:
           name: windows-msi
           path: ${{ steps.artifacts.outputs.msi_path }}
+          retention-days: 7
+
+      - name: Prepare updater artifacts
+        id: updater_artifacts
+        shell: pwsh
+        run: |
+          # Find the .msi.zip updater artifact
+          $zipPath = Get-ChildItem -Path "src-tauri/target/release/bundle/msi" -Filter "*.msi.zip" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+
+          if ($null -ne $zipPath) {
+            $zipName = "HyperStudy-Bridge-${{ inputs.version }}-x86_64-windows.msi.zip"
+            $sigName = "${zipName}.sig"
+            Copy-Item $zipPath.FullName -Destination $zipName
+            echo "zip_path=$zipName" >> $env:GITHUB_OUTPUT
+            Write-Host "Updater artifact: $zipName"
+
+            $sigPath = Get-ChildItem -Path "src-tauri/target/release/bundle/msi" -Filter "*.msi.zip.sig" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($null -ne $sigPath) {
+              Copy-Item $sigPath.FullName -Destination $sigName
+              echo "sig_path=$sigName" >> $env:GITHUB_OUTPUT
+            } else {
+              Write-Host "Warning: No .sig file found for updater artifact"
+            }
+          } else {
+            Write-Host "Warning: No updater .msi.zip artifact found"
+          }
+
+      - name: Upload updater artifact
+        if: steps.updater_artifacts.outputs.zip_path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: updater-windows
+          path: |
+            ${{ steps.updater_artifacts.outputs.zip_path }}
+            ${{ steps.updater_artifacts.outputs.sig_path }}
           retention-days: 7

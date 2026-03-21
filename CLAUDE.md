@@ -316,7 +316,7 @@ pub struct AppState {
 ## Development Workflow
 
 1. **Branch Strategy**: Feature branches off main
-2. **Commit Messages**: Conventional commits format
+2. **Commit Messages**: Conventional commits format. Do not include Co-Authored-By or AI attribution lines.
 3. **PR Process**: Requires coordinator review
 4. **Testing**: All tests must pass before merge
 5. **Documentation**: Update docs with code changes
@@ -324,18 +324,22 @@ pub struct AppState {
 ## Creating Releases
 
 ### Version Files
-Both of these files must be updated with the new version number:
+All three of these files must be updated with the new version number:
 - `src-tauri/Cargo.toml` - Rust package version
 - `package.json` - Node package version
+- `src-tauri/tauri.conf.json` - Tauri app version (used by the in-app updater to detect new versions)
 
 ### Release Process
 
-1. **Update version numbers** in both files:
+1. **Update version numbers** in all three files:
    ```bash
    # Edit src-tauri/Cargo.toml
    version = "X.Y.Z"
 
    # Edit package.json
+   "version": "X.Y.Z"
+
+   # Edit src-tauri/tauri.conf.json
    "version": "X.Y.Z"
    ```
 
@@ -346,7 +350,7 @@ Both of these files must be updated with the new version number:
 
 3. **Commit the version bump**:
    ```bash
-   git add src-tauri/Cargo.toml src-tauri/Cargo.lock package.json
+   git add src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json package.json
    git commit -m "chore: Bump version to X.Y.Z"
    ```
 
@@ -369,8 +373,11 @@ Both of these files must be updated with the new version number:
 
 Creating a release triggers GitHub Actions workflows:
 - **Create Release** - Builds macOS binaries (ARM64 and Intel), signs and notarizes them, then attaches to the release
+- **Generate Update Manifest** - Creates `latest.json` for in-app auto-updates and attaches updater artifacts (`.tar.gz`, `.msi.zip`, `.sig` files)
 - **Update README Download Links** - Updates download links in README.md
 - **CI** - Runs tests on the tagged commit
+
+**Required secrets for releases**: `TAURI_SIGNING_PRIVATE_KEY` must be set in GitHub repository secrets for the in-app updater to work. The private key is stored at `~/.tauri/hyperstudy-bridge.key` locally.
 
 Monitor build progress at: https://github.com/hyperstudyio/hyperstudy-bridge/actions
 
