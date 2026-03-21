@@ -92,6 +92,7 @@ jobs:
           body_path: release_notes.md
           draft: false
           prerelease: ${{ contains(steps.get_version.outputs.version, '-beta') || contains(steps.get_version.outputs.version, '-alpha') || contains(steps.get_version.outputs.version, '-rc') }}
+          make_latest: ${{ !(contains(steps.get_version.outputs.version, '-beta') || contains(steps.get_version.outputs.version, '-alpha') || contains(steps.get_version.outputs.version, '-rc')) }}
           generate_release_notes: false
 
   build-macos:
