@@ -119,19 +119,17 @@
             { label: 'Later', onClick: toastId => toastStore.removeToast(toastId) },
           ],
         });
+      } else if (result.error && isManual) {
+        toastStore.addToast({
+          type: 'error',
+          title: 'Update check failed',
+          message: result.error,
+        });
       } else if (isManual) {
         toastStore.addToast({
           type: 'success',
           title: "You're up to date",
           message: `HyperStudy Bridge v${appVersion} is the latest version.`,
-        });
-      }
-
-      if (result.error && isManual) {
-        toastStore.addToast({
-          type: 'error',
-          title: 'Update check failed',
-          message: result.error,
         });
       }
     } finally {
