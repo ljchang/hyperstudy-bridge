@@ -2047,9 +2047,9 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "histogram"
-version = "0.11.5"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "099d45a031296a7a40e01137b56c0c552f2a545568ef6058e47d674046def0db"
+checksum = "496e8d7bf5d092f03dd57ca671cc0d4f401a95c156522f8ea5c79e4ada79dd9c"
 dependencies = [
  "thiserror 2.0.18",
 ]
