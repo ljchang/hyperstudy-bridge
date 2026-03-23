@@ -63,7 +63,7 @@ sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "migrate"] }
 base64 = "0.22"
 
 # Runtime dynamic loading (for optional SDK integration, e.g. EyeLink)
-libloading = "0.8"
+libloading = "0.9"
 
 # Testing utilities
 rand = "0.9"
