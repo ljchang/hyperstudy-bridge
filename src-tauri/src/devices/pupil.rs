@@ -1,8 +1,8 @@
 use super::{Device, DeviceConfig, DeviceError, DeviceInfo, DeviceStatus, DeviceType};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
-use tokio::time::timeout;
+use std::time::{Duration, Instant};
+use tokio::time::{sleep, timeout};
 use tracing::{debug, error, info, warn};
 
 /// Default API port for Neon Companion App REST API.
@@ -10,6 +10,13 @@ const DEFAULT_API_PORT: u16 = 8080;
 
 /// Default timeout for HTTP requests (milliseconds).
 const DEFAULT_HTTP_TIMEOUT_MS: u64 = 5000;
+
+/// How long to wait after `recording:start` for GET /api/status to report the
+/// new recording as active before giving up and letting events flow anyway.
+const RECORDING_ACTIVE_TIMEOUT_MS: u64 = 3000;
+
+/// Poll interval while waiting for the recording to become active.
+const RECORDING_ACTIVE_POLL_MS: u64 = 100;
 
 // ---------------------------------------------------------------------------
 // Neon REST API response types (matching OpenAPI spec v2.1.0)
@@ -108,16 +115,20 @@ pub struct PhoneInfo {
 }
 
 /// Hardware information (glasses/camera serials).
+///
+/// The Companion app sends these as explicit `null` when no glasses/module is
+/// plugged into the phone, so every field must be `Option` — `#[serde(default)]`
+/// alone only covers a *missing* key, not a `null` value.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HardwareInfo {
     #[serde(default)]
-    pub version: String,
+    pub version: Option<String>,
     #[serde(default)]
-    pub glasses_serial: String,
+    pub glasses_serial: Option<String>,
     #[serde(default)]
-    pub world_camera_serial: String,
+    pub world_camera_serial: Option<String>,
     #[serde(default)]
-    pub module_serial: String,
+    pub module_serial: Option<String>,
 }
 
 /// Sensor connection information.
@@ -373,9 +384,61 @@ impl PupilDevice {
             DeviceError::InvalidData(format!("Failed to parse recording response: {}", e))
         })?;
 
-        self.recording_id = Some(envelope.result.id.clone());
-        info!(device = "pupil", recording_id = %envelope.result.id, "Recording started");
-        Ok(envelope.result.id)
+        let id = envelope.result.id;
+        self.recording_id = Some(id.clone());
+        info!(device = "pupil", recording_id = %id, "Recording started");
+
+        self.wait_for_recording_active(&id).await;
+        Ok(id)
+    }
+
+    /// Poll GET /api/status until the Companion app reports `id` as the active
+    /// recording.
+    ///
+    /// `recording:start` returns before the phone has actually opened the
+    /// recording. Events POSTed in that window (0.4–0.9 s in the field) come back
+    /// attributed to the *previous* recording or to none at all — which is exactly
+    /// where HyperStudy's `experiment_start` and `trigger` sync markers land.
+    /// Best-effort: on timeout we warn and return so a slow phone can't stall the
+    /// experiment start indefinitely.
+    async fn wait_for_recording_active(&mut self, id: &str) {
+        let started = Instant::now();
+        let deadline = started + Duration::from_millis(RECORDING_ACTIVE_TIMEOUT_MS);
+
+        loop {
+            match self.get_neon_status().await {
+                Ok(status) if status.recording.as_ref().map(|r| r.id.as_str()) == Some(id) => {
+                    info!(
+                        device = "pupil",
+                        recording_id = %id,
+                        elapsed_ms = started.elapsed().as_millis() as u64,
+                        "Recording confirmed active"
+                    );
+                    return;
+                }
+                Ok(status) => {
+                    debug!(
+                        device = "pupil",
+                        reported = ?status.recording.as_ref().map(|r| &r.id),
+                        "Recording not yet reported active"
+                    );
+                }
+                Err(e) => {
+                    debug!(device = "pupil", error = %e, "Status poll failed while waiting for recording");
+                }
+            }
+
+            if Instant::now() >= deadline {
+                warn!(
+                    device = "pupil",
+                    recording_id = %id,
+                    "Recording not reported active after {}ms; events sent now may not be attached to it",
+                    RECORDING_ACTIVE_TIMEOUT_MS
+                );
+                return;
+            }
+            sleep(Duration::from_millis(RECORDING_ACTIVE_POLL_MS)).await;
+        }
     }
 
     /// Stop the current recording and save it.
@@ -493,6 +556,30 @@ impl PupilDevice {
         // The Neon API does not return the event name — inject it manually
         let mut event_resp = envelope.result;
         event_resp.name = name.to_string();
+
+        // Cross-check the recording the phone attached this event to against the
+        // one this bridge started. A mismatch means something else is driving the
+        // phone — e.g. a second bridge whose `neon.local` resolved to the same
+        // device — or our recording was stopped out from under us. Either way the
+        // event is not in the recording HyperStudy thinks it is, so shout.
+        if let Some(expected) = self.recording_id.as_deref() {
+            match event_resp.recording_id.as_deref() {
+                Some(actual) if actual == expected => {}
+                Some(actual) => warn!(
+                    device = "pupil",
+                    event = %name,
+                    expected_recording_id = %expected,
+                    actual_recording_id = %actual,
+                    "Neon event attached to a different recording than the one this bridge started — is another client controlling this phone?"
+                ),
+                None => warn!(
+                    device = "pupil",
+                    event = %name,
+                    expected_recording_id = %expected,
+                    "Neon event not attached to any recording although this bridge started one — was the recording stopped externally?"
+                ),
+            }
+        }
 
         info!(
             device = "pupil",
@@ -953,12 +1040,51 @@ mod tests {
         assert_eq!(status.phone.device_name, "Neon Test");
         assert_eq!(status.phone.battery_level, 0.85);
         assert!(status.hardware.is_some());
-        assert_eq!(status.hardware.unwrap().glasses_serial, "GL-001");
+        assert_eq!(
+            status.hardware.unwrap().glasses_serial.as_deref(),
+            Some("GL-001")
+        );
         assert_eq!(status.sensors.len(), 2);
         assert_eq!(status.sensors[0].sensor, "world");
         assert!(status.sensors[0].connected);
         assert!(status.recording.is_some());
         assert_eq!(status.recording.unwrap().action, "START");
+    }
+
+    #[test]
+    fn test_neon_status_hardware_nulls_when_glasses_unplugged() {
+        // The Companion app reports Hardware with explicit nulls when no glasses
+        // or module is attached. This used to fail to parse and block connect.
+        let items = vec![
+            StatusItem {
+                model: "Phone".to_string(),
+                data: serde_json::json!({
+                    "ip": "192.168.1.100",
+                    "device_id": "abc123",
+                    "device_name": "Neon Companion",
+                    "battery_level": 0.9,
+                    "battery_state": "OK",
+                    "memory": 2000000000_u64,
+                    "memory_state": "OK"
+                }),
+            },
+            StatusItem {
+                model: "Hardware".to_string(),
+                data: serde_json::json!({
+                    "version": null,
+                    "glasses_serial": null,
+                    "world_camera_serial": null,
+                    "module_serial": null
+                }),
+            },
+        ];
+
+        let status = NeonStatus::from_status_items(items).unwrap();
+        let hw = status
+            .hardware
+            .expect("hardware item should still be present");
+        assert!(hw.glasses_serial.is_none());
+        assert!(hw.module_serial.is_none());
     }
 
     #[test]
