@@ -288,23 +288,9 @@ impl NeonLslManager {
             "Connecting to Neon gaze stream: {}", device_name
         );
 
-        // Hold the task registry lock for the WHOLE connect — duplicate checks,
-        // inlet creation, task registration. Inlets are keyed by stream uid, and
-        // a disconnect closes the inlet by uid after stopping its task; if a
-        // connect could interleave, the disconnect would close the inlet the
-        // connect just installed for the same stream. Connects and disconnects
-        // of gaze streams are therefore strictly serialized.
-        let mut tasks = self.gaze_tasks.write().await;
-
-        // Check if already connected
-        if tasks.contains_key(device_name) {
-            return Err(LslError::LslLibraryError(format!(
-                "Already connected to gaze stream for device: {}",
-                device_name
-            )));
-        }
-
-        // Get the device info
+        // Get the device info. Lock order: `discovered_devices` is never taken
+        // while a task-registry lock is held (get_stats takes them the other
+        // way round), so resolve everything from discovery BEFORE locking.
         let device = self.get_device(device_name).await.ok_or_else(|| {
             LslError::NeonDeviceNotFound(format!(
                 "Device not found: {}. Run discover_neon_devices() first.",
@@ -322,6 +308,23 @@ impl NeonLslManager {
         let gaze_uid = device.gaze_stream_uid.ok_or_else(|| {
             LslError::NeonStreamNotAvailable("Gaze stream UID not found".to_string())
         })?;
+
+        // Hold the task registry lock for the WHOLE connect — duplicate checks,
+        // inlet creation, task registration. Inlets are keyed by stream uid, and
+        // a disconnect closes the inlet by uid after stopping its task; if a
+        // connect could interleave, the disconnect would close the inlet the
+        // connect just installed for the same stream. Connects and disconnects
+        // of gaze streams are therefore strictly serialized. Nothing awaited
+        // below takes `discovered_devices`.
+        let mut tasks = self.gaze_tasks.write().await;
+
+        // Check if already connected
+        if tasks.contains_key(device_name) {
+            return Err(LslError::LslLibraryError(format!(
+                "Already connected to gaze stream for device: {}",
+                device_name
+            )));
+        }
 
         // Refuse to open the same LSL stream twice under different labels
         // (discovery re-keys same-named phones by host, changing the label).
@@ -458,19 +461,7 @@ impl NeonLslManager {
             "Connecting to Neon events stream: {}", device_name
         );
 
-        // Serialized against disconnects for the whole connect — see
-        // connect_gaze_stream for why.
-        let mut tasks = self.event_tasks.write().await;
-
-        // Check if already connected
-        if tasks.contains_key(device_name) {
-            return Err(LslError::LslLibraryError(format!(
-                "Already connected to events stream for device: {}",
-                device_name
-            )));
-        }
-
-        // Get the device info
+        // Get the device info (before locking — see connect_gaze_stream)
         let device = self.get_device(device_name).await.ok_or_else(|| {
             LslError::NeonDeviceNotFound(format!(
                 "Device not found: {}. Run discover_neon_devices() first.",
@@ -488,6 +479,18 @@ impl NeonLslManager {
         let events_uid = device.events_stream_uid.ok_or_else(|| {
             LslError::NeonStreamNotAvailable("Events stream UID not found".to_string())
         })?;
+
+        // Serialized against disconnects for the whole connect — see
+        // connect_gaze_stream for why.
+        let mut tasks = self.event_tasks.write().await;
+
+        // Check if already connected
+        if tasks.contains_key(device_name) {
+            return Err(LslError::LslLibraryError(format!(
+                "Already connected to events stream for device: {}",
+                device_name
+            )));
+        }
 
         if let Some((existing, _)) = tasks.iter().find(|(_, t)| t.stream_uid == events_uid) {
             return Err(LslError::LslLibraryError(format!(
@@ -636,6 +639,12 @@ impl NeonLslManager {
         device_name: &str,
         owner: Option<u64>,
     ) -> Result<(), LslError> {
+        // Resolve the discovery fallback before locking (lock order: never
+        // take `discovered_devices` while holding a task-registry lock).
+        let fallback_uid = self
+            .get_device(device_name)
+            .await
+            .and_then(|d| d.gaze_stream_uid);
         // The registry lock is held across task removal, shutdown AND inlet
         // close so no connect can install a fresh inlet for the same stream
         // uid in between (connect holds the same lock for its whole duration).
@@ -669,11 +678,7 @@ impl NeonLslManager {
             }
             // No task under this label: only close an inlet that no other task
             // (under a re-keyed label) is still reading.
-            None => self
-                .get_device(device_name)
-                .await
-                .and_then(|d| d.gaze_stream_uid)
-                .filter(|uid| !tasks.values().any(|t| &t.stream_uid == uid)),
+            None => fallback_uid.filter(|uid| !tasks.values().any(|t| &t.stream_uid == uid)),
         };
         if let Some(uid) = uid {
             let _ = self.inlet_manager.close_inlet(&uid).await;
@@ -709,6 +714,10 @@ impl NeonLslManager {
         device_name: &str,
         owner: Option<u64>,
     ) -> Result<(), LslError> {
+        let fallback_uid = self
+            .get_device(device_name)
+            .await
+            .and_then(|d| d.events_stream_uid);
         let mut tasks = self.event_tasks.write().await;
         if let Some(owner) = owner {
             match tasks.get(device_name) {
@@ -736,11 +745,7 @@ impl NeonLslManager {
                 let _ = tokio::time::timeout(Duration::from_secs(2), task._handle).await;
                 Some(uid)
             }
-            None => self
-                .get_device(device_name)
-                .await
-                .and_then(|d| d.events_stream_uid)
-                .filter(|uid| !tasks.values().any(|t| &t.stream_uid == uid)),
+            None => fallback_uid.filter(|uid| !tasks.values().any(|t| &t.stream_uid == uid)),
         };
         if let Some(uid) = uid {
             let _ = self.inlet_manager.close_inlet(&uid).await;

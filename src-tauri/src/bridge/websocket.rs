@@ -2,7 +2,7 @@ use crate::bridge::device_queues::{
     CommandHandler, DeviceQueues, Dispatch, QueuedCommand, DEVICE_QUEUE_CAPACITY, MAX_DEVICE_QUEUES,
 };
 use crate::bridge::message::{CommandAction, QueryTarget};
-use crate::bridge::state::DeviceStatusEvent;
+use crate::bridge::state::{DeviceStatusEvent, DisconnectTarget};
 use crate::bridge::{AppState, BridgeCommand, BridgeResponse, MessageHandler};
 use crate::devices::{kernel::KernelDevice, mock::MockDevice, pupil::PupilDevice, ttl::TtlDevice};
 use crate::devices::{Device, DeviceError};
@@ -628,33 +628,57 @@ async fn handle_device_command(
                     .await
                 {
                     Ok(receivers) => {
+                        if conn.closed.load(Ordering::Relaxed) {
+                            // The client went away while we were connecting: don't
+                            // leave streams running against a dead channel.
+                            info!("Connection closed while connecting FRENZ; rolling back");
+                            let _ = state.frenz_manager.disconnect_all().await;
+                            let _ = state.frenz_process.stop().await;
+                            return;
+                        }
                         let connected_count = receivers.len();
                         info!(
                             "FRENZ connected {} streams for '{}'",
                             connected_count, device_name
                         );
 
-                        // Spawn forwarding tasks for each stream receiver
+                        // Spawn forwarding tasks for each stream receiver. They stop
+                        // when the client is gone (send failure, or the closed flag
+                        // for a quiet stream); the streams themselves are released by
+                        // the next explicit FRENZ connect/disconnect.
                         for (suffix, mut rx) in receivers {
                             let tx_clone = tx.clone();
                             let device_name_clone = device_name.to_string();
                             let suffix_clone = suffix.clone();
+                            let closed = conn.closed.clone();
 
                             tokio::spawn(async move {
-                                while let Some(sample) = rx.recv().await {
-                                    let response = BridgeResponse::data(
-                                        format!("frenz_{}", device_name_clone),
-                                        json!({
-                                            "type": "frenz_data",
-                                            "stream": suffix_clone,
-                                            "timestamp": sample.timestamp,
-                                            "values": sample.values,
-                                            "string_value": sample.string_value,
-                                        }),
-                                        None,
-                                    );
-                                    if tx_clone.send(response).await.is_err() {
-                                        break;
+                                loop {
+                                    tokio::select! {
+                                        item = rx.recv() => match item {
+                                            Some(sample) => {
+                                                let response = BridgeResponse::data(
+                                                    format!("frenz_{}", device_name_clone),
+                                                    json!({
+                                                        "type": "frenz_data",
+                                                        "stream": suffix_clone,
+                                                        "timestamp": sample.timestamp,
+                                                        "values": sample.values,
+                                                        "string_value": sample.string_value,
+                                                    }),
+                                                    None,
+                                                );
+                                                if tx_clone.send(response).await.is_err() {
+                                                    break;
+                                                }
+                                            }
+                                            None => break,
+                                        },
+                                        _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                                            if closed.load(Ordering::Relaxed) {
+                                                break;
+                                            }
+                                        }
                                     }
                                 }
                             });
@@ -953,26 +977,35 @@ async fn handle_device_command(
             // A disconnect from a connection whose connect has since been
             // superseded (the page reloaded and reconnected before the server
             // observed the old socket close) must not remove the newer device.
-            if state.is_stale_disconnect(&device_id, conn.connect_ticket(&device_id)) {
-                info!(
-                    "Stale disconnect for {}: a newer connect owns the device; ignoring",
-                    device_id
-                );
-                send_response(
-                    tx,
-                    BridgeResponse::device_error(
-                        device_id,
-                        "Device was reconnected by a newer connection; disconnect ignored"
-                            .to_string(),
-                        id,
-                    ),
-                )
+            // The check and the device selection are one atomic step (see
+            // AppState::device_for_disconnect).
+            let target = state
+                .device_for_disconnect(&device_id, conn.connect_ticket(&device_id))
                 .await;
-                return;
-            }
+            let device_lock = match target {
+                DisconnectTarget::Stale => {
+                    info!(
+                        "Stale disconnect for {}: a newer connect owns the device; ignoring",
+                        device_id
+                    );
+                    send_response(
+                        tx,
+                        BridgeResponse::device_error(
+                            device_id,
+                            "Device was reconnected by a newer connection; disconnect ignored"
+                                .to_string(),
+                            id,
+                        ),
+                    )
+                    .await;
+                    return;
+                }
+                DisconnectTarget::Absent => None,
+                DisconnectTarget::Device(lock) => Some(lock),
+            };
 
             // Minimize lock duration: acquire lock, do operation, release lock, then send responses
-            let disconnect_result = if let Some(device_lock) = state.get_device(&device_id).await {
+            let disconnect_result = if let Some(device_lock) = device_lock {
                 let mut device = device_lock.write().await;
                 let device_type = device.get_info().device_type;
                 let result = device.disconnect().await;
@@ -2126,6 +2159,13 @@ async fn handle_device_command(
                 .await
             {
                 Ok(status) => {
+                    if conn.closed.load(Ordering::Relaxed) {
+                        // Nobody is waiting for this connect any more; a newer
+                        // connection will connect on its own terms.
+                        info!("Connection closed while connecting EyeLink; rolling back");
+                        let _ = state.eyelink_manager.disconnect().await;
+                        return;
+                    }
                     send_response(
                         tx,
                         BridgeResponse::data(
@@ -2391,13 +2431,33 @@ async fn handle_device_command(
         CommandAction::ConnectEyeLinkGaze => {
             match state.eyelink_manager.start_gaze_stream().await {
                 Ok(mut gaze_rx) => {
+                    if conn.closed.load(Ordering::Relaxed) {
+                        let _ = state.eyelink_manager.stop_gaze_stream().await;
+                        return;
+                    }
                     // Spawn a task to forward gaze data to WebSocket.
-                    // When the WebSocket closes (tx_clone.send fails), we proactively
-                    // stop the gaze stream to avoid wasting CPU on polling with no consumer.
+                    // When the WebSocket closes (tx_clone.send fails, or the closed
+                    // flag is seen while the stream is quiet), we proactively stop
+                    // the gaze stream to avoid wasting CPU on polling with no consumer.
                     let tx_clone = tx.clone();
                     let eyelink_mgr = state.eyelink_manager.clone();
+                    let closed = conn.closed.clone();
                     tokio::spawn(async move {
-                        while let Some(gaze) = gaze_rx.recv().await {
+                        loop {
+                            let gaze = tokio::select! {
+                                item = gaze_rx.recv() => match item {
+                                    Some(gaze) => gaze,
+                                    None => break,
+                                },
+                                _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                                    if closed.load(Ordering::Relaxed) {
+                                        tracing::debug!("WebSocket closed (quiet stream), stopping gaze stream");
+                                        let _ = eyelink_mgr.stop_gaze_stream().await;
+                                        break;
+                                    }
+                                    continue;
+                                }
+                            };
                             let response = BridgeResponse::data(
                                 "eyelink".to_string(),
                                 json!({

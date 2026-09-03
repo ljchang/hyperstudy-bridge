@@ -15,6 +15,16 @@ use tokio::sync::{broadcast, RwLock};
 use tracing::{info, warn};
 
 #[derive(Clone)]
+/// Outcome of `AppState::device_for_disconnect`.
+pub enum DisconnectTarget {
+    /// A newer connect registered the device; the caller must not touch it.
+    Stale,
+    /// Nothing is registered under that id.
+    Absent,
+    /// The device the caller may disconnect (compare with `remove_device_if_same`).
+    Device(Arc<RwLock<BoxedDevice>>),
+}
+
 pub struct AppState {
     pub devices: Arc<RwLock<HashMap<String, Arc<RwLock<BoxedDevice>>>>>,
     pub connections: Arc<DashMap<String, ConnectionInfo>>,
@@ -258,9 +268,15 @@ impl AppState {
         let _ = self.device_status_tx.send(event);
     }
 
+    /// Register `device` under `id` unconditionally (native/Tauri paths). Takes
+    /// a fresh connect ticket so that any WebSocket connection whose connect
+    /// registered the previous device is no longer considered its owner.
     pub async fn add_device(&self, id: String, device: BoxedDevice) {
         let mut devices = self.devices.write().await;
+        let ticket = self.issue_ticket_locked(&id);
         devices.insert(id.clone(), Arc::new(RwLock::new(device)));
+        self.registered_tickets.insert(id.clone(), ticket);
+        drop(devices);
 
         // Add device to performance monitoring
         self.performance_monitor.add_device(id).await;
@@ -275,10 +291,20 @@ impl AppState {
         if devices.contains_key(&id) {
             return false;
         }
+        let ticket = self.issue_ticket_locked(&id);
         devices.insert(id.clone(), Arc::new(RwLock::new(device)));
+        self.registered_tickets.insert(id.clone(), ticket);
         drop(devices);
         self.performance_monitor.add_device(id).await;
         true
+    }
+
+    /// Next connect ticket for `id`. Callers must hold the `devices` write lock
+    /// so ticket issuance is ordered with registrations.
+    fn issue_ticket_locked(&self, id: &str) -> u64 {
+        let mut entry = self.connect_tickets.entry(id.to_string()).or_insert(0);
+        *entry += 1;
+        *entry
     }
 
     /// Track which Neon recording this bridge owns, from a Pupil device's
@@ -310,9 +336,7 @@ impl AppState {
     /// await in the connect path.
     pub async fn begin_connect(&self, id: &str) -> u64 {
         let _registry = self.devices.write().await;
-        let mut entry = self.connect_tickets.entry(id.to_string()).or_insert(0);
-        *entry += 1;
-        *entry
+        self.issue_ticket_locked(id)
     }
 
     /// Ticket of the connect that registered the device currently under `id`.
@@ -329,6 +353,26 @@ impl AppState {
         match (own_ticket, self.registered_ticket(id)) {
             (Some(own), Some(registered)) => registered > own,
             _ => false,
+        }
+    }
+
+    /// Select the device a connection may disconnect. The staleness check and
+    /// the device selection happen together under the registry lock, so a
+    /// newer connect cannot register between "you may disconnect" and "here
+    /// is the device" — registrations take the write lock and update
+    /// `registered_tickets` while holding it.
+    pub async fn device_for_disconnect(
+        &self,
+        id: &str,
+        own_ticket: Option<u64>,
+    ) -> DisconnectTarget {
+        let devices = self.devices.read().await;
+        if self.is_stale_disconnect(id, own_ticket) {
+            return DisconnectTarget::Stale;
+        }
+        match devices.get(id) {
+            Some(device) => DisconnectTarget::Device(device.clone()),
+            None => DisconnectTarget::Absent,
         }
     }
 
@@ -736,15 +780,65 @@ mod device_identity_tests {
             .await
             .unwrap();
         // A's queued disconnect is now stale: it must not touch B's device.
-        assert!(state.is_stale_disconnect("kernel", Some(a_ticket)));
-        assert!(!state.is_stale_disconnect("kernel", Some(b_ticket)));
-        // A connection that never connected the kernel may still disconnect it.
-        assert!(!state.is_stale_disconnect("kernel", None));
+        assert!(matches!(
+            state.device_for_disconnect("kernel", Some(a_ticket)).await,
+            DisconnectTarget::Stale
+        ));
+        // B itself, and a connection that never connected the kernel, get B's device.
+        let b_device = match state.device_for_disconnect("kernel", Some(b_ticket)).await {
+            DisconnectTarget::Device(d) => d,
+            _ => panic!("B may disconnect its own device"),
+        };
+        assert_eq!(b_device.read().await.get_info().name, "from-b");
+        assert!(matches!(
+            state.device_for_disconnect("kernel", None).await,
+            DisconnectTarget::Device(_)
+        ));
         // Once B's device is gone there is nothing to be stale against.
-        let b_device = state.get_device("kernel").await.unwrap();
         assert!(state.remove_device_if_same("kernel", &b_device).await);
-        assert!(!state.is_stale_disconnect("kernel", Some(a_ticket)));
+        assert!(matches!(
+            state.device_for_disconnect("kernel", Some(a_ticket)).await,
+            DisconnectTarget::Absent
+        ));
         assert!(state.registered_ticket("kernel").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_native_replacement_makes_the_websocket_connects_disconnect_stale() {
+        let state = AppState::new();
+        let open = AtomicBool::new(false);
+        let ws_ticket = state.begin_connect("kernel").await;
+        state
+            .add_device_if_latest("kernel".into(), mock("from-ws"), ws_ticket, &open)
+            .await
+            .unwrap();
+        // The Tauri UI replaces the device through the unconditional path.
+        state.add_device("kernel".into(), mock("from-ui")).await;
+        assert!(matches!(
+            state.device_for_disconnect("kernel", Some(ws_ticket)).await,
+            DisconnectTarget::Stale
+        ));
+        // And an in-flight WebSocket connect that started before it is refused.
+        assert!(state
+            .add_device_if_latest("kernel".into(), mock("late"), ws_ticket, &open)
+            .await
+            .is_err());
+        // The auto-connect path also takes ownership when it registers.
+        let ui = state.get_device("kernel").await.unwrap();
+        state.remove_device_if_same("kernel", &ui).await;
+        assert!(
+            state
+                .add_device_if_absent("kernel".into(), mock("auto"))
+                .await
+        );
+        assert!(matches!(
+            state.device_for_disconnect("kernel", Some(ws_ticket)).await,
+            DisconnectTarget::Stale
+        ));
+        assert!(matches!(
+            state.device_for_disconnect("kernel", None).await,
+            DisconnectTarget::Device(_)
+        ));
     }
 
     #[tokio::test]
