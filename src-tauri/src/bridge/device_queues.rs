@@ -154,9 +154,9 @@ impl DeviceQueues {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
     use std::time::Duration;
     use tokio::sync::Notify;
+    use tokio::time::timeout;
 
     fn cmd(device: &str, action: CommandAction, id: &str) -> QueuedCommand {
         QueuedCommand {
@@ -167,14 +167,15 @@ mod tests {
         }
     }
 
-    /// Handler that records ids in completion order and optionally blocks on a
-    /// per-device gate so tests can control interleaving.
-    fn recording_handler(
-        log: Arc<Mutex<Vec<String>>>,
+    /// Handler that reports each completed command id on a channel (so tests
+    /// wait for completions instead of sleeping) and can block commands for one
+    /// device behind a gate to control interleaving.
+    fn reporting_handler(
+        done: mpsc::UnboundedSender<String>,
         gate: Option<(String, Arc<Notify>)>,
     ) -> CommandHandler {
         Arc::new(move |c: QueuedCommand| {
-            let log = log.clone();
+            let done = done.clone();
             let gate = gate.clone();
             Box::pin(async move {
                 if let Some((device, notify)) = gate {
@@ -182,16 +183,26 @@ mod tests {
                         notify.notified().await;
                     }
                 }
-                log.lock().unwrap().push(c.id.unwrap_or_default());
+                let _ = done.send(c.id.unwrap_or_default());
             })
         })
     }
 
-    async fn settle() {
-        for _ in 0..20 {
-            tokio::task::yield_now().await;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
+    async fn next_done(rx: &mut mpsc::UnboundedReceiver<String>) -> String {
+        timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("command did not complete in time")
+            .expect("channel closed")
+    }
+
+    /// Negative check: nothing completes within a short window.
+    async fn assert_nothing_done(rx: &mut mpsc::UnboundedReceiver<String>) {
+        assert!(
+            timeout(Duration::from_millis(100), rx.recv())
+                .await
+                .is_err(),
+            "a command completed that should still be blocked"
+        );
     }
 
     #[test]
@@ -216,10 +227,10 @@ mod tests {
 
     #[tokio::test]
     async fn commands_for_one_device_run_in_arrival_order() {
-        let log = Arc::new(Mutex::new(Vec::new()));
+        let (done, mut rx) = mpsc::unbounded_channel();
         let mut q = DeviceQueues::new(
             Arc::new(AtomicBool::new(false)),
-            recording_handler(log.clone(), None),
+            reporting_handler(done, None),
         );
         for i in 0..5 {
             assert!(matches!(
@@ -232,66 +243,68 @@ mod tests {
             q.dispatch(cmd("kernel", CommandAction::Disconnect, "k-disc")),
             Dispatch::Queued
         ));
-        settle().await;
-        assert_eq!(
-            *log.lock().unwrap(),
-            vec!["k0", "k1", "k2", "k3", "k4", "k-disc"]
-        );
+        let mut seen = Vec::new();
+        for _ in 0..6 {
+            seen.push(next_done(&mut rx).await);
+        }
+        assert_eq!(seen, vec!["k0", "k1", "k2", "k3", "k4", "k-disc"]);
     }
 
     #[tokio::test]
     async fn a_stalled_device_does_not_delay_another() {
-        let log = Arc::new(Mutex::new(Vec::new()));
+        let (done, mut rx) = mpsc::unbounded_channel();
         let gate = Arc::new(Notify::new());
         let mut q = DeviceQueues::new(
             Arc::new(AtomicBool::new(false)),
-            recording_handler(log.clone(), Some(("kernel".to_string(), gate.clone()))),
+            reporting_handler(done, Some(("kernel".to_string(), gate.clone()))),
         );
         q.dispatch(cmd("kernel", CommandAction::SendEvent, "k0"));
         q.dispatch(cmd("pupil", CommandAction::SendEvent, "p0"));
         q.dispatch(cmd("pupil", CommandAction::SendEvent, "p1"));
-        settle().await;
-        // Kernel is blocked on its gate; pupil markers must have gone through.
-        assert_eq!(*log.lock().unwrap(), vec!["p0", "p1"]);
+        // Kernel is blocked on its gate; pupil markers go through regardless.
+        assert_eq!(next_done(&mut rx).await, "p0");
+        assert_eq!(next_done(&mut rx).await, "p1");
+        assert_nothing_done(&mut rx).await;
         gate.notify_one();
-        settle().await;
-        assert_eq!(*log.lock().unwrap(), vec!["p0", "p1", "k0"]);
+        assert_eq!(next_done(&mut rx).await, "k0");
     }
 
     #[tokio::test]
     async fn queued_commands_are_dropped_once_the_connection_closes() {
-        let log = Arc::new(Mutex::new(Vec::new()));
+        let (done, mut rx) = mpsc::unbounded_channel();
         let gate = Arc::new(Notify::new());
         let closed = Arc::new(AtomicBool::new(false));
         let mut q = DeviceQueues::new(
             closed.clone(),
-            recording_handler(log.clone(), Some(("pupil".to_string(), gate.clone()))),
+            reporting_handler(done, Some(("pupil".to_string(), gate.clone()))),
         );
         q.dispatch(cmd("pupil", CommandAction::SendEvent, "in-flight"));
         q.dispatch(cmd("pupil", CommandAction::SendEvent, "queued-1"));
         q.dispatch(cmd("pupil", CommandAction::SendEvent, "queued-2"));
-        settle().await;
-        // The first command is in flight (blocked on the gate); the socket closes.
+        assert_nothing_done(&mut rx).await; // first is parked on the gate
+                                            // The socket closes while the first command is in flight.
         closed.store(true, Ordering::Relaxed);
         gate.notify_one();
-        settle().await;
-        // The in-flight command finished; the ones still queued were dropped, so
-        // a reconnecting client that retries them cannot produce duplicates.
-        assert_eq!(*log.lock().unwrap(), vec!["in-flight"]);
+        assert_eq!(next_done(&mut rx).await, "in-flight");
+        // The commands still queued must be dropped, never executed — a
+        // reconnecting client that retries them cannot produce duplicates.
+        gate.notify_one();
+        gate.notify_one();
+        assert_nothing_done(&mut rx).await;
     }
 
     #[tokio::test]
     async fn a_full_queue_rejects_the_new_command_and_keeps_order_of_accepted_ones() {
-        let log = Arc::new(Mutex::new(Vec::new()));
+        let (done, mut rx) = mpsc::unbounded_channel();
         let gate = Arc::new(Notify::new());
         let mut q = DeviceQueues::with_limits(
             Arc::new(AtomicBool::new(false)),
-            recording_handler(log.clone(), Some(("kernel".to_string(), gate.clone()))),
+            reporting_handler(done, Some(("kernel".to_string(), gate.clone()))),
             2,
             MAX_DEVICE_QUEUES,
         );
-        q.dispatch(cmd("kernel", CommandAction::SendEvent, "k0")); // taken by the worker, blocked
-        settle().await;
+        q.dispatch(cmd("kernel", CommandAction::SendEvent, "k0"));
+        assert_nothing_done(&mut rx).await; // k0 taken by the worker and parked
         assert!(matches!(
             q.dispatch(cmd("kernel", CommandAction::SendEvent, "k1")),
             Dispatch::Queued
@@ -304,22 +317,20 @@ mod tests {
             Dispatch::Full(rejected) => assert_eq!(rejected.id.as_deref(), Some("k3")),
             other => panic!("expected Full, got {other:?}"),
         }
-        // Release the worker: everything accepted still runs in order.
-        gate.notify_one();
-        settle().await;
-        gate.notify_one();
-        settle().await;
-        gate.notify_one();
-        settle().await;
-        assert_eq!(*log.lock().unwrap(), vec!["k0", "k1", "k2"]);
+        // Release the worker one command at a time: accepted work runs in order.
+        for expected in ["k0", "k1", "k2"] {
+            gate.notify_one();
+            assert_eq!(next_done(&mut rx).await, expected);
+        }
+        assert_nothing_done(&mut rx).await;
     }
 
     #[tokio::test]
     async fn the_number_of_queues_is_bounded() {
-        let log = Arc::new(Mutex::new(Vec::new()));
+        let (done, _rx) = mpsc::unbounded_channel();
         let mut q = DeviceQueues::with_limits(
             Arc::new(AtomicBool::new(false)),
-            recording_handler(log.clone(), None),
+            reporting_handler(done, None),
             DEVICE_QUEUE_CAPACITY,
             2,
         );

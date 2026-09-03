@@ -301,6 +301,10 @@ async fn handle_connection<R: Runtime>(
                 _ => {}
             }
         }
+        // Set here, on every exit path of the reader (peer Close, error,
+        // should_stop), not only in the outer select! after this task is
+        // joined — otherwise a queued command could still start in between.
+        connection_closed_for_workers.store(true, Ordering::Relaxed);
     });
 
     // Wait for either task to complete, then shut down the others.
@@ -318,8 +322,16 @@ async fn handle_connection<R: Runtime>(
             // then let the command in flight finish.
             connection_closed.store(true, Ordering::Relaxed);
             should_stop.store(true, Ordering::Relaxed);
-            // Let the current handle_command finish (up to 10s)
-            let _ = tokio::time::timeout(Duration::from_secs(10), receive_task).await;
+            // Let the current handle_command finish (up to 10s). If the reader is
+            // still parked in ws_receiver.next() after that, abort it — a detached
+            // reader would keep the queues, their workers and the response
+            // channel alive until a frame happened to arrive.
+            if tokio::time::timeout(Duration::from_secs(10), &mut receive_task)
+                .await
+                .is_err()
+            {
+                receive_task.abort();
+            }
             status_task.abort();
         },
         result = &mut receive_task => {
@@ -801,22 +813,25 @@ async fn handle_device_command(
 
             match device.connect().await {
                 Ok(_) => {
-                    // Record successful connection attempt
-                    state.record_connection_attempt(&device_id, true).await;
-
-                    if connection_closed.load(Ordering::Relaxed) {
-                        info!(
-                            "Connection closed while connecting {}; not registering the device",
-                            device_id
-                        );
-                        let _ = device.disconnect().await;
-                        return;
-                    }
                     if device_id == "pupil" {
                         reclaim_pupil_recording(state, &mut device);
                     }
                     let info = device.get_info();
-                    state.add_device(device_id.clone(), device).await;
+                    // Register only while this connection is alive — decided under
+                    // the registry lock so a stale connect can never overwrite the
+                    // device a newer connection registered meanwhile.
+                    if let Err(mut orphan) = state
+                        .add_device_if_open(device_id.clone(), device, connection_closed)
+                        .await
+                    {
+                        info!(
+                            "Connection closed while connecting {}; device not registered",
+                            device_id
+                        );
+                        let _ = orphan.disconnect().await;
+                        return;
+                    }
+                    state.record_connection_attempt(&device_id, true).await;
                     state.remember_connect_config(&device_id, config.clone());
 
                     // Tell every client, not just the requester. HyperStudy tracks
@@ -880,19 +895,30 @@ async fn handle_device_command(
                 let device_type = device.get_info().device_type;
                 let result = device.disconnect().await;
                 drop(device); // Explicitly release lock before async response handling
-                Some((device_type, result))
+                Some((device_type, result, device_lock))
             } else {
                 None
             };
 
             match disconnect_result {
-                Some((device_type, Ok(_))) => {
-                    state.remove_device(&device_id).await;
-                    state.broadcast_device_status(DeviceStatusEvent::disconnected(
-                        device_id.clone(),
-                        device_type,
-                        "disconnected",
-                    ));
+                Some((device_type, Ok(_), disconnected_lock)) => {
+                    // Unregister only the device we actually disconnected; if a
+                    // newer connection registered a replacement meanwhile, leave it.
+                    if state
+                        .remove_device_if_same(&device_id, &disconnected_lock)
+                        .await
+                    {
+                        state.broadcast_device_status(DeviceStatusEvent::disconnected(
+                            device_id.clone(),
+                            device_type,
+                            "disconnected",
+                        ));
+                    } else {
+                        info!(
+                            "{} was re-registered while disconnecting; leaving the newer device",
+                            device_id
+                        );
+                    }
 
                     send_response(
                         tx,
@@ -904,7 +930,7 @@ async fn handle_device_command(
                     )
                     .await;
                 }
-                Some((_, Err(e))) => {
+                Some((_, Err(e), _)) => {
                     send_response(tx, BridgeResponse::device_error_from(device_id, &e, id)).await;
                 }
                 None => {
@@ -1339,6 +1365,13 @@ async fn handle_device_command(
 
             match state.neon_manager.connect_gaze_stream(device_name).await {
                 Ok(mut gaze_rx) => {
+                    if connection_closed.load(Ordering::Relaxed) {
+                        // Nobody is listening any more; don't leave a live inlet and
+                        // task registered under this label for the next client to
+                        // trip over as "already connected".
+                        let _ = state.neon_manager.disconnect_gaze_stream(device_name).await;
+                        return;
+                    }
                     // Spawn a task to forward gaze data to WebSocket
                     let tx_clone = tx.clone();
                     let device_name_clone = device_name.to_string();
@@ -1408,6 +1441,13 @@ async fn handle_device_command(
 
             match state.neon_manager.connect_events_stream(device_name).await {
                 Ok(mut events_rx) => {
+                    if connection_closed.load(Ordering::Relaxed) {
+                        let _ = state
+                            .neon_manager
+                            .disconnect_events_stream(device_name)
+                            .await;
+                        return;
+                    }
                     // Spawn a task to forward event data to WebSocket
                     let tx_clone = tx.clone();
                     let device_name_clone = device_name.to_string();
@@ -1518,15 +1558,17 @@ async fn handle_device_command(
 
             match device.connect().await {
                 Ok(_) => {
-                    state.record_connection_attempt("pupil", true).await;
-                    if connection_closed.load(Ordering::Relaxed) {
-                        info!("Connection closed while connecting pupil via discovery; not registering");
-                        let _ = device.disconnect().await;
-                        return;
-                    }
                     reclaim_pupil_recording(state, &mut device);
                     let info = device.get_info();
-                    state.add_device("pupil".to_string(), device).await;
+                    if let Err(mut orphan) = state
+                        .add_device_if_open("pupil".to_string(), device, connection_closed)
+                        .await
+                    {
+                        info!("Connection closed while connecting pupil via discovery; not registered");
+                        let _ = orphan.disconnect().await;
+                        return;
+                    }
+                    state.record_connection_attempt("pupil", true).await;
 
                     state.broadcast_device_status(DeviceStatusEvent::connected_with_info(
                         "pupil".to_string(),

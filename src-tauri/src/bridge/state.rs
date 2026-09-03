@@ -7,6 +7,7 @@ use crate::performance::PerformanceMonitor;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -286,6 +287,46 @@ impl AppState {
     /// The recording id this bridge started on `phone`, if still remembered.
     pub fn owned_recording(&self, phone: &str) -> Option<String> {
         self.owned_recordings.get(phone).map(|v| v.value().clone())
+    }
+
+    /// Register `device` under `id` unless `closed` is set — checked under the
+    /// registry lock, so a connect that finished after its WebSocket died can
+    /// never overwrite the device a newer connection registered in between.
+    /// Returns the device back on refusal so the caller can release it.
+    pub async fn add_device_if_open(
+        &self,
+        id: String,
+        device: BoxedDevice,
+        closed: &AtomicBool,
+    ) -> Result<(), BoxedDevice> {
+        let mut devices = self.devices.write().await;
+        if closed.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(device);
+        }
+        devices.insert(id.clone(), Arc::new(RwLock::new(device)));
+        drop(devices);
+        self.performance_monitor.add_device(id).await;
+        Ok(())
+    }
+
+    /// Remove the registration for `id` only if it is still `expected` — the
+    /// exact device a caller disconnected — so a slow disconnect from an old
+    /// connection cannot unregister the fresh device a newer one registered.
+    pub async fn remove_device_if_same(
+        &self,
+        id: &str,
+        expected: &Arc<RwLock<BoxedDevice>>,
+    ) -> bool {
+        let mut devices = self.devices.write().await;
+        match devices.get(id) {
+            Some(current) if Arc::ptr_eq(current, expected) => {
+                devices.remove(id);
+                drop(devices);
+                self.performance_monitor.remove_device(id).await;
+                true
+            }
+            _ => false,
+        }
     }
 
     pub async fn remove_device(&self, id: &str) -> Option<Arc<RwLock<BoxedDevice>>> {
