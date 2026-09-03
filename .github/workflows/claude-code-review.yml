@@ -1,7 +1,8 @@
 name: Claude Code Review
 
 # Automatic PR review by Claude. Requires the Claude GitHub App to be installed
-# on the repo and the ANTHROPIC_API_KEY repository secret to be set.
+# on the repo and the CLAUDE_CODE_OAUTH_TOKEN repository secret to be set
+# (generated with `claude setup-token` — uses the Claude Max subscription).
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
@@ -26,7 +27,7 @@ jobs:
       - name: Run Claude Code Review
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
