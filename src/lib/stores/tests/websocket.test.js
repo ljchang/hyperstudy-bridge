@@ -284,8 +284,8 @@ describe('WebSocket Store', () => {
 
         const promise = websocketStore.connectDevice('ttl', {});
 
-        // Fast-forward past the CONNECT_TIMEOUT_MS (5000ms)
-        vi.advanceTimersByTime(5100);
+        // Fast-forward past CONNECT_TIMEOUT_MS (15000ms in the store)
+        vi.advanceTimersByTime(15100);
 
         await expect(promise).rejects.toThrow('Request timeout for ttl');
 

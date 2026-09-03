@@ -285,6 +285,12 @@ jobs:
         run: npm run tauri:build -- --target ${{ matrix.target }}
         env:
           CI: true
+          # tauri.conf.json has createUpdaterArtifacts enabled, so `tauri build`
+          # refuses to run without the updater signing key. The release
+          # workflows pass these; CI never did, which is why every Build
+          # Application job has failed since the updater shipped.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && secrets.APPLE_SIGNING_IDENTITY || '' }}
           APPLE_ID: ${{ runner.os == 'macOS' && secrets.APPLE_ID || '' }}
           APPLE_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_ID_PASSWORD || '' }}
@@ -317,17 +323,21 @@ jobs:
           key: cargo-audit-${{ runner.os }}
 
       - name: Install cargo-audit
+        # 0.20 cannot parse the current advisory-db format (TOML parse error on
+        # RUSTSEC-2026-*), which made every run report "audit failed" without
+        # auditing anything. Track the latest 0.22 line.
         run: |
-          cargo install cargo-audit --version ^0.20 --force
+          cargo install cargo-audit --version ^0.22 --locked --force
 
       - name: Run cargo audit
+        # Ignores live in src-tauri/.cargo/audit.toml so local and CI runs agree.
         run: |
           cd src-tauri
-          cargo audit --ignore RUSTSEC-2020-0071 || echo "Cargo audit failed - may be due to Cargo.lock v4 format"
+          cargo audit
 
       - name: Run npm audit
         run: |
-          npm audit --audit-level=high --omit=dev
+          npm audit --audit-level=high
           npm audit --audit-level=moderate || true
 
   dependency-check:
@@ -342,4 +352,8 @@ jobs:
         uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: moderate
-          allow-licenses: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD
+          # No license allow-list: the Rust tree legitimately includes
+          # Unicode-3.0, Zlib, MPL-2.0 and ISC/OpenSSL (aws-lc) crates that the
+          # old MIT/Apache-only list would reject on every PR now that the
+          # dependency graph is enabled. Vulnerability gating is the point here.
+          comment-summary-in-pr: on-failure

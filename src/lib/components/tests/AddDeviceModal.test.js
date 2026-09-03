@@ -67,17 +67,17 @@ describe('AddDeviceModal', () => {
       expect(screen.getByText('fNIRS')).toBeInTheDocument();
       expect(screen.getByText('TCP Socket')).toBeInTheDocument();
 
-      // Check Pupil device
-      expect(screen.getByText('Eye Tracker')).toBeInTheDocument();
-      expect(screen.getByText('WebSocket')).toBeInTheDocument();
+      // Pupil Neon and EyeLink are both eye trackers
+      expect(screen.getAllByText('Eye Tracker')).toHaveLength(2);
+      expect(screen.getByText('REST API + LSL')).toBeInTheDocument();
     });
 
     it('renders device items as interactive elements', () => {
       render(AddDeviceModal, mockProps);
 
-      // Component has 4 built-in devices (TTL, Kernel, Pupil, FRENZ)
+      // Component has 5 built-in devices (TTL, Kernel, Pupil, FRENZ, EyeLink)
       const deviceItems = document.querySelectorAll('.device-item');
-      expect(deviceItems).toHaveLength(4);
+      expect(deviceItems).toHaveLength(5);
 
       // Verify items have role="button" and tabindex for keyboard interaction
       deviceItems.forEach(item => {
@@ -387,7 +387,7 @@ describe('AddDeviceModal', () => {
 
       // Verify that device items have the expected class structure for styling
       const deviceItems = document.querySelectorAll('.device-item');
-      expect(deviceItems.length).toBe(4);
+      expect(deviceItems.length).toBe(5);
 
       // Each item should have proper structure for visual feedback
       deviceItems.forEach(item => {

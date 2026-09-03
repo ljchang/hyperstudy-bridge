@@ -1,0 +1,9 @@
+# cargo-audit configuration (used by `cargo audit` locally and in CI).
+[advisories]
+ignore = [
+    # rsa 0.9 Marvin timing side-channel. Transitive (pulled in through the
+    # Tauri / stronghold dependency tree), no patched release exists upstream,
+    # and the bridge never performs RSA operations on attacker-controlled input.
+    # Re-check when the rsa crate publishes a fix.
+    "RUSTSEC-2023-0071",
+]
