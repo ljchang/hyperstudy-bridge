@@ -281,21 +281,34 @@ jobs:
           # Clean up
           rm -f $CERTIFICATE_PATH
 
-      - name: Build Tauri app
-        # tauri.conf.json has createUpdaterArtifacts enabled, so `tauri build`
-        # refuses to run without the updater signing key — which is why every
-        # Build Application job failed since the updater shipped.
-        #   push (main/develop): sign with the key, exactly like the release
-        #     workflows.
-        #   pull_request: never expose the key to PR-authored code; build with
-        #     updater artifacts disabled instead (a CI build artifact, not an
-        #     update anyone installs).
-        run: npm run tauri:build -- --target ${{ matrix.target }} $TAURI_EXTRA_ARGS
+      # tauri.conf.json has createUpdaterArtifacts enabled, so `tauri build`
+      # refuses to run without the updater signing key — which is why every
+      # Build Application job failed since the updater shipped. Two explicit
+      # steps rather than env-string tricks: an empty TAURI_SIGNING_PRIVATE_KEY
+      # is still "a key" to tauri (decode error), and Windows runners use
+      # PowerShell, where bash-style $VAR expansion silently does nothing.
+      - name: Build Tauri app (signed, push)
+        # push to main/develop: sign with the key, exactly like the release workflows.
+        if: github.event_name == 'push'
+        shell: bash
+        run: npm run tauri:build -- --target ${{ matrix.target }}
         env:
           CI: true
-          TAURI_EXTRA_ARGS: ${{ github.event_name == 'pull_request' && '--config {"bundle":{"createUpdaterArtifacts":false}}' || '' }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ github.event_name == 'push' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ github.event_name == 'push' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && secrets.APPLE_SIGNING_IDENTITY || '' }}
+          APPLE_ID: ${{ runner.os == 'macOS' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_ID_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
+
+      - name: Build Tauri app (unsigned, pull request)
+        # Never expose the updater key to PR-authored code: build with updater
+        # artifacts disabled (a CI build artifact, not an update anyone installs).
+        if: github.event_name != 'push'
+        shell: bash
+        run: npm run tauri:build -- --target ${{ matrix.target }} --config '{"bundle":{"createUpdaterArtifacts":false}}'
+        env:
+          CI: true
           APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && secrets.APPLE_SIGNING_IDENTITY || '' }}
           APPLE_ID: ${{ runner.os == 'macOS' && secrets.APPLE_ID || '' }}
           APPLE_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_ID_PASSWORD || '' }}
