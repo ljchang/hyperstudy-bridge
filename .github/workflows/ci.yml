@@ -350,6 +350,9 @@ jobs:
     name: Dependency Review
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write # comment-summary-in-pr
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -363,4 +366,9 @@ jobs:
           # crates the Rust tree legitimately contains; what we actually want
           # to keep out is copyleft and source-available licensing.
           deny-licenses: GPL-2.0, GPL-3.0, AGPL-3.0, LGPL-2.1, LGPL-3.0, SSPL-1.0, BUSL-1.1
+          # Dual/triple-licensed crates that the action flags because one of
+          # the OR alternatives is copyleft; both are consumed under MIT.
+          #   r-efi:     MIT OR Apache-2.0 OR LGPL-2.1-or-later
+          #   unescaper: GPL-3.0/MIT
+          allow-dependencies-licenses: pkg:cargo/r-efi, pkg:cargo/unescaper
           comment-summary-in-pr: on-failure
