@@ -282,15 +282,20 @@ jobs:
           rm -f $CERTIFICATE_PATH
 
       - name: Build Tauri app
-        run: npm run tauri:build -- --target ${{ matrix.target }}
+        # tauri.conf.json has createUpdaterArtifacts enabled, so `tauri build`
+        # refuses to run without the updater signing key — which is why every
+        # Build Application job failed since the updater shipped.
+        #   push (main/develop): sign with the key, exactly like the release
+        #     workflows.
+        #   pull_request: never expose the key to PR-authored code; build with
+        #     updater artifacts disabled instead (a CI build artifact, not an
+        #     update anyone installs).
+        run: npm run tauri:build -- --target ${{ matrix.target }} $TAURI_EXTRA_ARGS
         env:
           CI: true
-          # tauri.conf.json has createUpdaterArtifacts enabled, so `tauri build`
-          # refuses to run without the updater signing key. The release
-          # workflows pass these; CI never did, which is why every Build
-          # Application job has failed since the updater shipped.
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_EXTRA_ARGS: ${{ github.event_name == 'pull_request' && '--config {"bundle":{"createUpdaterArtifacts":false}}' || '' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ github.event_name == 'push' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ github.event_name == 'push' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
           APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && secrets.APPLE_SIGNING_IDENTITY || '' }}
           APPLE_ID: ${{ runner.os == 'macOS' && secrets.APPLE_ID || '' }}
           APPLE_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_ID_PASSWORD || '' }}
@@ -308,8 +313,9 @@ jobs:
 
   security-audit:
     name: Security Audit
+    # Gating: a high-severity npm advisory or an un-ignored RUSTSEC advisory
+    # fails CI. Moderate npm findings stay informational (|| true below).
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -352,8 +358,9 @@ jobs:
         uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: moderate
-          # No license allow-list: the Rust tree legitimately includes
-          # Unicode-3.0, Zlib, MPL-2.0 and ISC/OpenSSL (aws-lc) crates that the
-          # old MIT/Apache-only list would reject on every PR now that the
-          # dependency graph is enabled. Vulnerability gating is the point here.
+          # License policy as a deny-list. The old MIT/Apache-only allow-list
+          # would reject Unicode-3.0, Zlib, MPL-2.0 and ISC/OpenSSL (aws-lc)
+          # crates the Rust tree legitimately contains; what we actually want
+          # to keep out is copyleft and source-available licensing.
+          deny-licenses: GPL-2.0, GPL-3.0, AGPL-3.0, LGPL-2.1, LGPL-3.0, SSPL-1.0, BUSL-1.1
           comment-summary-in-pr: on-failure

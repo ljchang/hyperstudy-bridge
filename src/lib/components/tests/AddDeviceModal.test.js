@@ -50,7 +50,7 @@ describe('AddDeviceModal', () => {
     it('displays all available device types', () => {
       render(AddDeviceModal, mockProps);
 
-      // Component has 3 built-in devices: TTL, Kernel, and Pupil
+      // Component has 5 built-in devices: TTL, Kernel, Pupil, FRENZ, EyeLink
       expect(screen.getByText('TTL Pulse Generator')).toBeInTheDocument();
       expect(screen.getByText('Kernel Flow2')).toBeInTheDocument();
       expect(screen.getByText('Pupil Labs Neon')).toBeInTheDocument();
