@@ -43,6 +43,12 @@ pub struct AppState {
     /// disconnect/reconnect or bridge restart, after which the bridge's own
     /// recording reads as "busy" / "not owned" until someone passes force.
     pub owned_recordings: Arc<DashMap<String, String>>,
+    /// Per device id, the ticket of the most recently *started* connect. A
+    /// connect may only register its device if it still holds the latest
+    /// ticket, so a slow connect from an older connection can never overwrite
+    /// what a newer connect registered — regardless of whether the server has
+    /// observed the old socket's close yet.
+    pub connect_tickets: Arc<DashMap<String, u64>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -216,6 +222,7 @@ impl AppState {
             connections: Arc::new(DashMap::new()),
             last_connect_configs: Arc::new(DashMap::new()),
             owned_recordings: Arc::new(DashMap::new()),
+            connect_tickets: Arc::new(DashMap::new()),
             metrics: Arc::new(RwLock::new(Metrics::default())),
             performance_monitor: Arc::new(PerformanceMonitor::new()),
             start_time: Instant::now(),
@@ -289,18 +296,31 @@ impl AppState {
         self.owned_recordings.get(phone).map(|v| v.value().clone())
     }
 
-    /// Register `device` under `id` unless `closed` is set — checked under the
-    /// registry lock, so a connect that finished after its WebSocket died can
-    /// never overwrite the device a newer connection registered in between.
-    /// Returns the device back on refusal so the caller can release it.
-    pub async fn add_device_if_open(
+    /// Start a connect for `id`: returns a ticket that identifies this attempt
+    /// as the newest. Call before any await in the connect path.
+    pub fn begin_connect(&self, id: &str) -> u64 {
+        let mut entry = self.connect_tickets.entry(id.to_string()).or_insert(0);
+        *entry += 1;
+        *entry
+    }
+
+    /// Register `device` under `id` only if `ticket` is still the newest connect
+    /// for that id and the owning connection has not closed. Decided under the
+    /// registry lock. Overlapping connections are ordered by ticket, not by
+    /// when the server happened to notice a socket close: a connect started
+    /// later always wins over one started earlier, even if the earlier one
+    /// finishes last. Returns the device back on refusal so the caller can
+    /// release it.
+    pub async fn add_device_if_latest(
         &self,
         id: String,
         device: BoxedDevice,
+        ticket: u64,
         closed: &AtomicBool,
     ) -> Result<(), BoxedDevice> {
         let mut devices = self.devices.write().await;
-        if closed.load(std::sync::atomic::Ordering::Relaxed) {
+        let latest = self.connect_tickets.get(&id).map(|v| *v).unwrap_or(0);
+        if closed.load(std::sync::atomic::Ordering::Relaxed) || ticket != latest {
             return Err(device);
         }
         devices.insert(id.clone(), Arc::new(RwLock::new(device)));
@@ -622,7 +642,75 @@ impl AppState {
 #[cfg(test)]
 mod device_identity_tests {
     use super::*;
+    use crate::devices::mock::MockDevice;
     use serde_json::json;
+
+    fn mock(name: &str) -> BoxedDevice {
+        Box::new(MockDevice::new(name.to_string(), name.to_string()))
+    }
+
+    #[tokio::test]
+    async fn a_later_connect_wins_even_if_an_earlier_one_finishes_last() {
+        let state = AppState::new();
+        let open = AtomicBool::new(false);
+        // Old connection starts connecting first, new connection second.
+        let old_ticket = state.begin_connect("pupil");
+        let new_ticket = state.begin_connect("pupil");
+        // The newer connect finishes first and registers phone B.
+        assert!(state
+            .add_device_if_latest("pupil".into(), mock("phone-b"), new_ticket, &open)
+            .await
+            .is_ok());
+        // The older connect finishes last: refused, device handed back.
+        let refused = state
+            .add_device_if_latest("pupil".into(), mock("phone-a"), old_ticket, &open)
+            .await;
+        assert!(refused.is_err());
+        let registered = state
+            .get_device("pupil")
+            .await
+            .expect("phone-b stays registered");
+        assert_eq!(registered.read().await.get_info().name, "phone-b");
+    }
+
+    #[tokio::test]
+    async fn a_closed_connection_cannot_register_even_with_the_latest_ticket() {
+        let state = AppState::new();
+        let closed = AtomicBool::new(true);
+        let ticket = state.begin_connect("kernel");
+        assert!(state
+            .add_device_if_latest("kernel".into(), mock("k"), ticket, &closed)
+            .await
+            .is_err());
+        assert!(state.get_device("kernel").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn disconnect_removes_only_the_exact_device_it_disconnected() {
+        let state = AppState::new();
+        let open = AtomicBool::new(false);
+        let t1 = state.begin_connect("kernel");
+        state
+            .add_device_if_latest("kernel".into(), mock("first"), t1, &open)
+            .await
+            .unwrap();
+        let first = state.get_device("kernel").await.unwrap();
+        // A newer connection replaces it.
+        let t2 = state.begin_connect("kernel");
+        state
+            .add_device_if_latest("kernel".into(), mock("second"), t2, &open)
+            .await
+            .unwrap();
+        // The old connection's slow disconnect must not remove the replacement.
+        assert!(!state.remove_device_if_same("kernel", &first).await);
+        let second = state
+            .get_device("kernel")
+            .await
+            .expect("second stays registered");
+        assert_eq!(second.read().await.get_info().name, "second");
+        assert!(state.remove_device_if_same("kernel", &second).await);
+        assert!(state.get_device("kernel").await.is_none());
+    }
 
     #[test]
     fn recording_state_is_read_from_pupil_metadata() {

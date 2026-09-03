@@ -322,10 +322,13 @@ async fn handle_connection<R: Runtime>(
             // then let the command in flight finish.
             connection_closed.store(true, Ordering::Relaxed);
             should_stop.store(true, Ordering::Relaxed);
-            // Let the current handle_command finish (up to 10s). If the reader is
-            // still parked in ws_receiver.next() after that, abort it — a detached
-            // reader would keep the queues, their workers and the response
-            // channel alive until a frame happened to arrive.
+            // Give the reader up to 10 s to notice should_stop; if it is still
+            // parked in ws_receiver.next() after that, abort it — a detached
+            // reader would keep the queues and the response channel alive until
+            // a frame happened to arrive. (A device command already running in
+            // a queue worker is not cancelled: device I/O cannot be safely
+            // interrupted mid-operation; it finishes on its own and its response
+            // is dropped.)
             if tokio::time::timeout(Duration::from_secs(10), &mut receive_task)
                 .await
                 .is_err()
@@ -511,6 +514,9 @@ async fn handle_device_command(
     match action {
         CommandAction::Connect => {
             info!("Processing connect for device: {}", device_id);
+            // Ticket first, before any await: whichever connect STARTED last is
+            // the one allowed to register (see AppState::add_device_if_latest).
+            let connect_ticket = state.begin_connect(&device_id);
             let device_type = MessageHandler::validate_device_type(&device_id);
 
             if device_type.is_none() {
@@ -821,11 +827,16 @@ async fn handle_device_command(
                     // the registry lock so a stale connect can never overwrite the
                     // device a newer connection registered meanwhile.
                     if let Err(mut orphan) = state
-                        .add_device_if_open(device_id.clone(), device, connection_closed)
+                        .add_device_if_latest(
+                            device_id.clone(),
+                            device,
+                            connect_ticket,
+                            connection_closed,
+                        )
                         .await
                     {
                         info!(
-                            "Connection closed while connecting {}; device not registered",
+                            "Connect for {} superseded (newer connect or connection closed); device not registered",
                             device_id
                         );
                         let _ = orphan.disconnect().await;
@@ -1372,28 +1383,55 @@ async fn handle_device_command(
                         let _ = state.neon_manager.disconnect_gaze_stream(device_name).await;
                         return;
                     }
-                    // Spawn a task to forward gaze data to WebSocket
+                    // Spawn a task to forward gaze data to WebSocket. It also watches
+                    // the connection's closed flag (a quiet stream would otherwise
+                    // never notice the client is gone) and releases the stream when
+                    // the client disappears, so the next client is not refused as
+                    // "already connected".
                     let tx_clone = tx.clone();
                     let device_name_clone = device_name.to_string();
+                    let closed = connection_closed.clone();
+                    let teardown_state = state.clone();
 
                     tokio::spawn(async move {
-                        while let Some(gaze) = gaze_rx.recv().await {
-                            // Streaming data doesn't need request ID (it's unsolicited)
-                            let response = BridgeResponse::data(
-                                format!("neon_{}", device_name_clone),
-                                json!({
-                                    "type": "gaze",
-                                    "timestamp": gaze.timestamp,
-                                    "gaze_x": gaze.gaze_x,
-                                    "gaze_y": gaze.gaze_y,
-                                    "pupil_diameter": gaze.pupil_diameter,
-                                    "eyeball_center": gaze.eyeball_center,
-                                }),
-                                None,
-                            );
-                            if tx_clone.send(response).await.is_err() {
-                                break;
+                        let mut client_gone = false;
+                        loop {
+                            tokio::select! {
+                                item = gaze_rx.recv() => match item {
+                                    Some(gaze) => {
+                                        // Streaming data doesn't need request ID (it's unsolicited)
+                                        let response = BridgeResponse::data(
+                                            format!("neon_{}", device_name_clone),
+                                            json!({
+                                                "type": "gaze",
+                                                "timestamp": gaze.timestamp,
+                                                "gaze_x": gaze.gaze_x,
+                                                "gaze_y": gaze.gaze_y,
+                                                "pupil_diameter": gaze.pupil_diameter,
+                                                "eyeball_center": gaze.eyeball_center,
+                                            }),
+                                            None,
+                                        );
+                                        if tx_clone.send(response).await.is_err() {
+                                            client_gone = true;
+                                            break;
+                                        }
+                                    }
+                                    None => break, // stream disconnected explicitly
+                                },
+                                _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                                    if closed.load(Ordering::Relaxed) {
+                                        client_gone = true;
+                                        break;
+                                    }
+                                }
                             }
+                        }
+                        if client_gone {
+                            let _ = teardown_state
+                                .neon_manager
+                                .disconnect_gaze_stream(&device_name_clone)
+                                .await;
                         }
                     });
 
@@ -1448,25 +1486,49 @@ async fn handle_device_command(
                             .await;
                         return;
                     }
-                    // Spawn a task to forward event data to WebSocket
+                    // Spawn a task to forward event data to WebSocket (closed-aware,
+                    // see the gaze forwarder above).
                     let tx_clone = tx.clone();
                     let device_name_clone = device_name.to_string();
+                    let closed = connection_closed.clone();
+                    let teardown_state = state.clone();
 
                     tokio::spawn(async move {
-                        while let Some(event) = events_rx.recv().await {
-                            // Streaming data doesn't need request ID (it's unsolicited)
-                            let response = BridgeResponse::data(
-                                format!("neon_{}", device_name_clone),
-                                json!({
-                                    "type": "event",
-                                    "timestamp": event.timestamp,
-                                    "event_name": event.event_name,
-                                }),
-                                None,
-                            );
-                            if tx_clone.send(response).await.is_err() {
-                                break;
+                        let mut client_gone = false;
+                        loop {
+                            tokio::select! {
+                                item = events_rx.recv() => match item {
+                                    Some(event) => {
+                                        // Streaming data doesn't need request ID (it's unsolicited)
+                                        let response = BridgeResponse::data(
+                                            format!("neon_{}", device_name_clone),
+                                            json!({
+                                                "type": "event",
+                                                "timestamp": event.timestamp,
+                                                "event_name": event.event_name,
+                                            }),
+                                            None,
+                                        );
+                                        if tx_clone.send(response).await.is_err() {
+                                            client_gone = true;
+                                            break;
+                                        }
+                                    }
+                                    None => break,
+                                },
+                                _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                                    if closed.load(Ordering::Relaxed) {
+                                        client_gone = true;
+                                        break;
+                                    }
+                                }
                             }
+                        }
+                        if client_gone {
+                            let _ = teardown_state
+                                .neon_manager
+                                .disconnect_events_stream(&device_name_clone)
+                                .await;
                         }
                     });
 
@@ -1512,6 +1574,7 @@ async fn handle_device_command(
                 return;
             }
 
+            let connect_ticket = state.begin_connect("pupil");
             info!(
                 "ConnectNeonRest: resolving hostname for device '{}'",
                 device_name
@@ -1561,10 +1624,15 @@ async fn handle_device_command(
                     reclaim_pupil_recording(state, &mut device);
                     let info = device.get_info();
                     if let Err(mut orphan) = state
-                        .add_device_if_open("pupil".to_string(), device, connection_closed)
+                        .add_device_if_latest(
+                            "pupil".to_string(),
+                            device,
+                            connect_ticket,
+                            connection_closed,
+                        )
                         .await
                     {
-                        info!("Connection closed while connecting pupil via discovery; not registered");
+                        info!("Pupil connect via discovery superseded (newer connect or connection closed); not registered");
                         let _ = orphan.disconnect().await;
                         return;
                     }
