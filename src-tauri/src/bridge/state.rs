@@ -60,11 +60,25 @@ pub struct AppState {
     /// observed the old socket's close yet.
     pub connect_tickets: Arc<DashMap<String, u64>>,
     /// Per device id, the ticket of the connect that registered the device
-    /// currently in the registry. A connection whose own connect ticket is
-    /// older than this must not disconnect the device: a newer connect
-    /// (possibly from a connection that replaced it) owns it now.
+    /// currently (or most recently) in the registry. A connection whose own
+    /// connect ticket is older than this must not disconnect the device: a
+    /// newer connect (possibly from a connection that replaced it) owns it
+    /// now. Deliberately kept after the device is removed: "latest ticket ==
+    /// registered ticket" then means "no explicit connect is pending", which
+    /// is what lets auto-reconnect run again after a plain disconnect.
     pub registered_tickets: Arc<DashMap<String, u64>>,
+    /// When each device's latest connect ticket was issued. Together with
+    /// `registered_tickets` this tells whether an explicit connect is still in
+    /// flight (issued recently, not yet registered), which the opportunistic
+    /// auto-connect path must yield to.
+    pub ticket_issued_at: Arc<DashMap<String, Instant>>,
 }
+
+/// An explicit connect that has not registered within this window is
+/// considered finished (failed or abandoned): every connect path has a shorter
+/// timeout than this, so auto-connect is never blocked indefinitely by a
+/// connect that never completed.
+pub const EXPLICIT_CONNECT_WINDOW: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionInfo {
@@ -239,6 +253,7 @@ impl AppState {
             owned_recordings: Arc::new(DashMap::new()),
             connect_tickets: Arc::new(DashMap::new()),
             registered_tickets: Arc::new(DashMap::new()),
+            ticket_issued_at: Arc::new(DashMap::new()),
             metrics: Arc::new(RwLock::new(Metrics::default())),
             performance_monitor: Arc::new(PerformanceMonitor::new()),
             start_time: Instant::now(),
@@ -282,20 +297,23 @@ impl AppState {
         self.performance_monitor.add_device(id).await;
     }
 
-    /// Register `device` only if nothing is registered under `id` yet AND
-    /// `ticket` (issued by `begin_connect` when this attempt started) is still
-    /// the newest connect for `id`. Returns false (and drops `device`) when an
-    /// explicit connect has registered meanwhile or started after us and is
-    /// still in flight — the auto-reconnect path must never replace or
-    /// pre-empt what the operator explicitly asked for.
-    pub async fn add_device_if_absent(&self, id: String, device: BoxedDevice, ticket: u64) -> bool {
+    /// Opportunistic registration (Kernel auto-reconnect on send). Registers
+    /// `device` only if nothing is registered under `id` AND no explicit
+    /// connect for `id` is in flight — whether that explicit connect started
+    /// before or after the auto-connect. The operator's explicit connect (with
+    /// the configuration they just entered) must never be pre-empted by a
+    /// reconnect from remembered configuration. Returns false (and drops
+    /// `device`) when it yields. Takes no ticket of its own: it registers under
+    /// the current latest ticket, so ownership semantics for disconnects are
+    /// unchanged.
+    pub async fn add_device_if_absent(&self, id: String, device: BoxedDevice) -> bool {
         let mut devices = self.devices.write().await;
-        let latest = self.connect_tickets.get(&id).map(|v| *v).unwrap_or(0);
-        if devices.contains_key(&id) || ticket != latest {
+        if devices.contains_key(&id) || self.explicit_connect_in_flight_locked(&id) {
             return false;
         }
+        let latest = self.connect_tickets.get(&id).map(|v| *v).unwrap_or(0);
         devices.insert(id.clone(), Arc::new(RwLock::new(device)));
-        self.registered_tickets.insert(id.clone(), ticket);
+        self.registered_tickets.insert(id.clone(), latest);
         drop(devices);
         self.performance_monitor.add_device(id).await;
         true
@@ -306,7 +324,23 @@ impl AppState {
     fn issue_ticket_locked(&self, id: &str) -> u64 {
         let mut entry = self.connect_tickets.entry(id.to_string()).or_insert(0);
         *entry += 1;
+        self.ticket_issued_at.insert(id.to_string(), Instant::now());
         *entry
+    }
+
+    /// True while an explicit connect for `id` may still be running: its
+    /// ticket is newer than whatever is registered and was issued within
+    /// `EXPLICIT_CONNECT_WINDOW`. Callers hold the `devices` lock.
+    fn explicit_connect_in_flight_locked(&self, id: &str) -> bool {
+        let latest = self.connect_tickets.get(id).map(|v| *v).unwrap_or(0);
+        let registered = self.registered_tickets.get(id).map(|v| *v).unwrap_or(0);
+        if latest <= registered {
+            return false;
+        }
+        self.ticket_issued_at
+            .get(id)
+            .map(|t| t.elapsed() < EXPLICIT_CONNECT_WINDOW)
+            .unwrap_or(false)
     }
 
     /// Track which Neon recording this bridge owns, from a Pupil device's
@@ -369,13 +403,13 @@ impl AppState {
         own_ticket: Option<u64>,
     ) -> DisconnectTarget {
         let devices = self.devices.read().await;
+        let Some(device) = devices.get(id) else {
+            return DisconnectTarget::Absent;
+        };
         if self.is_stale_disconnect(id, own_ticket) {
             return DisconnectTarget::Stale;
         }
-        match devices.get(id) {
-            Some(device) => DisconnectTarget::Device(device.clone()),
-            None => DisconnectTarget::Absent,
-        }
+        DisconnectTarget::Device(device.clone())
     }
 
     /// Register `device` under `id` only if `ticket` is still the newest connect
@@ -384,24 +418,26 @@ impl AppState {
     /// when the server happened to notice a socket close: a connect started
     /// later always wins over one started earlier, even if the earlier one
     /// finishes last. Returns the device back on refusal so the caller can
-    /// release it.
+    /// release it. On success returns the device that was registered under
+    /// `id` before (if any) so the caller can disconnect it — a replaced
+    /// device must not keep its hardware connection open.
     pub async fn add_device_if_latest(
         &self,
         id: String,
         device: BoxedDevice,
         ticket: u64,
         closed: &AtomicBool,
-    ) -> Result<(), BoxedDevice> {
+    ) -> Result<Option<Arc<RwLock<BoxedDevice>>>, BoxedDevice> {
         let mut devices = self.devices.write().await;
         let latest = self.connect_tickets.get(&id).map(|v| *v).unwrap_or(0);
         if closed.load(std::sync::atomic::Ordering::Relaxed) || ticket != latest {
             return Err(device);
         }
-        devices.insert(id.clone(), Arc::new(RwLock::new(device)));
+        let replaced = devices.insert(id.clone(), Arc::new(RwLock::new(device)));
         self.registered_tickets.insert(id.clone(), ticket);
         drop(devices);
         self.performance_monitor.add_device(id).await;
-        Ok(())
+        Ok(replaced)
     }
 
     /// Remove the registration for `id` only if it is still `expected` — the
@@ -416,7 +452,6 @@ impl AppState {
         match devices.get(id) {
             Some(current) if Arc::ptr_eq(current, expected) => {
                 devices.remove(id);
-                self.registered_tickets.remove(id);
                 drop(devices);
                 self.performance_monitor.remove_device(id).await;
                 true
@@ -428,7 +463,6 @@ impl AppState {
     pub async fn remove_device(&self, id: &str) -> Option<Arc<RwLock<BoxedDevice>>> {
         let mut devices = self.devices.write().await;
         let result = devices.remove(id);
-        self.registered_tickets.remove(id);
 
         // Remove device from performance monitoring
         self.performance_monitor.remove_device(id).await;
@@ -802,7 +836,7 @@ mod device_identity_tests {
             state.device_for_disconnect("kernel", Some(a_ticket)).await,
             DisconnectTarget::Absent
         ));
-        assert!(state.registered_ticket("kernel").is_none());
+        assert!(state.get_device("kernel").await.is_none());
     }
 
     #[tokio::test]
@@ -828,10 +862,9 @@ mod device_identity_tests {
         // The auto-connect path also takes ownership when it registers.
         let ui = state.get_device("kernel").await.unwrap();
         state.remove_device_if_same("kernel", &ui).await;
-        let auto_ticket = state.begin_connect("kernel").await;
         assert!(
             state
-                .add_device_if_absent("kernel".into(), mock("auto"), auto_ticket)
+                .add_device_if_absent("kernel".into(), mock("auto"))
                 .await
         );
         assert!(matches!(
@@ -845,17 +878,25 @@ mod device_identity_tests {
     }
 
     #[tokio::test]
-    async fn an_auto_connect_never_preempts_an_explicit_connect_that_started_later() {
+    async fn an_auto_connect_yields_to_any_explicit_connect_in_flight() {
         let state = AppState::new();
         let open = AtomicBool::new(false);
-        // Auto-reconnect (saved config) starts first...
-        let auto_ticket = state.begin_connect("kernel").await;
-        // ...the operator's explicit connect (current config) starts after it.
+        // Nothing registered, no explicit connect pending: auto may register.
+        assert!(
+            state
+                .add_device_if_absent("kernel".into(), mock("auto-0"))
+                .await
+        );
+        let auto0 = state.get_device("kernel").await.unwrap();
+        assert!(state.remove_device_if_same("kernel", &auto0).await);
+
+        // An explicit connect is in flight (ticket issued, not registered)...
         let explicit_ticket = state.begin_connect("kernel").await;
-        // Auto finishes first: it must NOT register, the explicit one is coming.
+        // ...so an auto-connect that finishes now must yield, whether it
+        // started before or after the explicit one.
         assert!(
             !state
-                .add_device_if_absent("kernel".into(), mock("auto"), auto_ticket)
+                .add_device_if_absent("kernel".into(), mock("auto-1"))
                 .await
         );
         assert!(state.get_device("kernel").await.is_none());
@@ -866,13 +907,67 @@ mod device_identity_tests {
             .is_ok());
         let registered = state.get_device("kernel").await.unwrap();
         assert_eq!(registered.read().await.get_info().name, "explicit");
-        // An auto-connect can't replace a registered device either.
-        let late_auto = state.begin_connect("kernel").await;
+        // A registered device is never replaced by an auto-connect.
         assert!(
             !state
-                .add_device_if_absent("kernel".into(), mock("auto-2"), late_auto)
+                .add_device_if_absent("kernel".into(), mock("auto-2"))
                 .await
         );
+        // Once the explicit device is gone (and no connect is pending),
+        // auto-connect works again.
+        assert!(state.remove_device_if_same("kernel", &registered).await);
+        assert!(
+            state
+                .add_device_if_absent("kernel".into(), mock("auto-3"))
+                .await
+        );
+        // The auto-registered device is owned by the latest ticket: the
+        // explicit connection's disconnect is still allowed (same ticket).
+        assert!(matches!(
+            state
+                .device_for_disconnect("kernel", Some(explicit_ticket))
+                .await,
+            DisconnectTarget::Device(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_failed_explicit_connect_stops_blocking_auto_connect_after_the_window() {
+        let state = AppState::new();
+        let _abandoned = state.begin_connect("kernel").await;
+        assert!(
+            !state
+                .add_device_if_absent("kernel".into(), mock("auto"))
+                .await
+        );
+        // Pretend the ticket was issued long ago.
+        state.ticket_issued_at.insert(
+            "kernel".into(),
+            Instant::now() - EXPLICIT_CONNECT_WINDOW - Duration::from_secs(1),
+        );
+        assert!(
+            state
+                .add_device_if_absent("kernel".into(), mock("auto"))
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn a_latest_connect_hands_back_the_device_it_replaced() {
+        let state = AppState::new();
+        let open = AtomicBool::new(false);
+        assert!(
+            state
+                .add_device_if_absent("kernel".into(), mock("auto"))
+                .await
+        );
+        let t = state.begin_connect("kernel").await;
+        let replaced = state
+            .add_device_if_latest("kernel".into(), mock("explicit"), t, &open)
+            .await
+            .unwrap()
+            .expect("the auto-registered device is handed back");
+        assert_eq!(replaced.read().await.get_info().name, "auto");
     }
 
     #[tokio::test]

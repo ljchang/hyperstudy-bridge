@@ -190,15 +190,22 @@ pub async fn connect_device(
             state.record_connection_attempt(&device_id, true).await;
 
             let never_closed = std::sync::atomic::AtomicBool::new(false);
-            if let Err(mut orphan) = state
+            match state
                 .add_device_if_latest(device_id.clone(), device, ticket, &never_closed)
                 .await
             {
-                let _ = orphan.disconnect().await;
-                return Ok(CommandResult::error(format!(
-                    "Connect for {} was superseded by a newer connect",
-                    device_id
-                )));
+                Ok(Some(replaced)) => {
+                    // Don't leave the replaced device's hardware connection open.
+                    let _ = replaced.write().await.disconnect().await;
+                }
+                Ok(None) => {}
+                Err(mut orphan) => {
+                    let _ = orphan.disconnect().await;
+                    return Ok(CommandResult::error(format!(
+                        "Connect for {} was superseded by a newer connect",
+                        device_id
+                    )));
+                }
             }
 
             // Set up performance callback for TTL devices AFTER registration

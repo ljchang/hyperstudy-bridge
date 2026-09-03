@@ -5,7 +5,7 @@ use crate::bridge::message::{CommandAction, QueryTarget};
 use crate::bridge::state::{DeviceStatusEvent, DisconnectTarget};
 use crate::bridge::{AppState, BridgeCommand, BridgeResponse, MessageHandler};
 use crate::devices::{kernel::KernelDevice, mock::MockDevice, pupil::PupilDevice, ttl::TtlDevice};
-use crate::devices::{Device, DeviceError};
+use crate::devices::{BoxedDevice, Device, DeviceError};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use std::collections::HashMap;
@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Runtime};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, RwLock};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -398,6 +398,23 @@ fn reclaim_pupil_recording(state: &Arc<AppState>, device: &mut Box<dyn Device>) 
 /// pick up the wrong hardware. Neon deliberately stays manual — auto-connecting
 /// a phone by remembered address is exactly the identity mistake the pinning
 /// work exists to prevent.
+/// A connect that replaced an already-registered device (e.g. one the
+/// auto-reconnect path registered from remembered configuration) must not
+/// leave the old hardware connection open. Done in the background so the
+/// connect response is not delayed by the old device's teardown.
+fn disconnect_replaced(device_id: &str, replaced: Option<Arc<RwLock<BoxedDevice>>>) {
+    if let Some(old) = replaced {
+        let device_id = device_id.to_string();
+        tokio::spawn(async move {
+            info!(
+                "{} re-registered by a newer connect; disconnecting the replaced device",
+                device_id
+            );
+            let _ = old.write().await.disconnect().await;
+        });
+    }
+}
+
 async fn try_auto_connect(state: &Arc<AppState>, device_id: &str) -> bool {
     if device_id != "kernel" {
         return false;
@@ -416,18 +433,16 @@ async fn try_auto_connect(state: &Arc<AppState>, device_id: &str) -> bool {
         "Auto-connecting {} from last known config ({})",
         device_id, ip
     );
-    // Ticket at START, like every other connect: an explicit connect that
-    // starts after this auto-connect must win even if it finishes later.
-    let ticket = state.begin_connect(device_id).await;
     let mut device: Box<dyn Device> = Box::new(KernelDevice::new(ip.to_string()));
     match device.connect().await {
         Ok(_) => {
             state.record_connection_attempt(device_id, true).await;
             let info = device.get_info();
             // An explicit connect may have won the race (registered already, or
-            // started later and still in flight); never replace or pre-empt it.
+            // still in flight — started before or after us); never replace or
+            // pre-empt it. The orphan is disconnected when `device` drops below.
             if !state
-                .add_device_if_absent(device_id.to_string(), device, ticket)
+                .add_device_if_absent(device_id.to_string(), device)
                 .await
             {
                 info!(
@@ -891,7 +906,7 @@ async fn handle_device_command(
                     // Register only while this connection is alive — decided under
                     // the registry lock so a stale connect can never overwrite the
                     // device a newer connection registered meanwhile.
-                    if let Err(mut orphan) = state
+                    let replaced = match state
                         .add_device_if_latest(
                             device_id.clone(),
                             device,
@@ -900,22 +915,26 @@ async fn handle_device_command(
                         )
                         .await
                     {
-                        info!(
+                        Ok(replaced) => replaced,
+                        Err(mut orphan) => {
+                            info!(
                             "Connect for {} superseded (newer connect or connection closed); device not registered",
                             device_id
                         );
-                        let _ = orphan.disconnect().await;
-                        send_response(
-                            tx,
-                            BridgeResponse::device_error(
-                                device_id,
-                                "Connect superseded by a newer connect".to_string(),
-                                id,
-                            ),
-                        )
-                        .await;
-                        return;
-                    }
+                            let _ = orphan.disconnect().await;
+                            send_response(
+                                tx,
+                                BridgeResponse::device_error(
+                                    device_id,
+                                    "Connect superseded by a newer connect".to_string(),
+                                    id,
+                                ),
+                            )
+                            .await;
+                            return;
+                        }
+                    };
+                    disconnect_replaced(&device_id, replaced);
                     state.record_connection_attempt(&device_id, true).await;
                     state.remember_connect_config(&device_id, config.clone());
 
@@ -1733,7 +1752,7 @@ async fn handle_device_command(
                 Ok(_) => {
                     reclaim_pupil_recording(state, &mut device);
                     let info = device.get_info();
-                    if let Err(mut orphan) = state
+                    let replaced = match state
                         .add_device_if_latest(
                             "pupil".to_string(),
                             device,
@@ -1742,19 +1761,23 @@ async fn handle_device_command(
                         )
                         .await
                     {
-                        info!("Pupil connect via discovery superseded (newer connect or connection closed); not registered");
-                        let _ = orphan.disconnect().await;
-                        send_response(
-                            tx,
-                            BridgeResponse::device_error(
-                                "pupil".to_string(),
-                                "Connect superseded by a newer connect".to_string(),
-                                id,
-                            ),
-                        )
-                        .await;
-                        return;
-                    }
+                        Ok(replaced) => replaced,
+                        Err(mut orphan) => {
+                            info!("Pupil connect via discovery superseded (newer connect or connection closed); not registered");
+                            let _ = orphan.disconnect().await;
+                            send_response(
+                                tx,
+                                BridgeResponse::device_error(
+                                    "pupil".to_string(),
+                                    "Connect superseded by a newer connect".to_string(),
+                                    id,
+                                ),
+                            )
+                            .await;
+                            return;
+                        }
+                    };
+                    disconnect_replaced("pupil", replaced);
                     state.record_connection_attempt("pupil", true).await;
 
                     state.broadcast_device_status(DeviceStatusEvent::connected_with_info(
