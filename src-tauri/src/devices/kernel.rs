@@ -281,7 +281,15 @@ impl KernelDevice {
         }
 
         self.reconnect_attempts += 1;
-        let backoff_delay = self.calculate_backoff_delay();
+        // The first retry is immediate: the Kernel acquisition app is on
+        // localhost and usually just dropped the socket, and this runs with the
+        // device lock held — every second here is a second the caller's
+        // marker (and anything queued behind it) waits.
+        let backoff_delay = if self.reconnect_attempts == 1 {
+            Duration::ZERO
+        } else {
+            self.calculate_backoff_delay()
+        };
 
         warn!(
             device = "kernel",
@@ -291,7 +299,9 @@ impl KernelDevice {
             backoff_delay
         );
 
-        sleep(backoff_delay).await;
+        if !backoff_delay.is_zero() {
+            sleep(backoff_delay).await;
+        }
 
         match self.establish_connection().await {
             Ok(socket) => {

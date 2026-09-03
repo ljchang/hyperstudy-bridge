@@ -84,6 +84,98 @@ struct EventStreamTask {
     _handle: tokio::task::JoinHandle<()>,
 }
 
+/// Group Neon LSL streams into devices.
+///
+/// Streams are grouped by *(device name, host)*, not by name alone: two phones
+/// both called "Neon Companion" used to collapse into one entry whose hostname
+/// was whichever stream arrived first — so a station could subscribe to the
+/// other participant's gaze. When several devices share a name, each is keyed
+/// and labelled `"<name> @ <host>"` so they stay distinguishable; a unique name
+/// keeps its plain label.
+pub(crate) fn group_neon_streams(
+    streams: Vec<crate::devices::lsl::resolver::DiscoveredStream>,
+    now: std::time::SystemTime,
+) -> HashMap<String, DiscoveredNeonDevice> {
+    let mut by_identity: Vec<((String, String), DiscoveredNeonDevice)> = Vec::new();
+
+    for stream in streams {
+        let stream_name = &stream.info.name;
+        let Some(device_name) = StreamFilter::extract_neon_device_name(stream_name) else {
+            continue;
+        };
+        let host = stream.info.hostname.clone();
+        let key = (device_name.clone(), host.clone());
+
+        let idx = match by_identity.iter().position(|(k, _)| *k == key) {
+            Some(i) => i,
+            None => {
+                by_identity.push((
+                    key,
+                    DiscoveredNeonDevice {
+                        device_name: device_name.clone(),
+                        hostname: if host.is_empty() {
+                            None
+                        } else {
+                            Some(host.clone())
+                        },
+                        has_gaze_stream: false,
+                        has_events_stream: false,
+                        gaze_channel_count: 0,
+                        gaze_stream_uid: None,
+                        events_stream_uid: None,
+                        discovered_at: now,
+                    },
+                ));
+                by_identity.len() - 1
+            }
+        };
+        let entry = &mut by_identity[idx].1;
+
+        if StreamFilter::is_neon_gaze_stream(stream_name) {
+            entry.has_gaze_stream = true;
+            entry.gaze_channel_count = stream.info.channel_count;
+            entry.gaze_stream_uid = Some(stream.uid.clone());
+            debug!(
+                device = "neon",
+                "Found Neon gaze stream: {} ({} channels) on {}",
+                stream_name,
+                stream.info.channel_count,
+                host
+            );
+        } else if StreamFilter::is_neon_events_stream(stream_name) {
+            entry.has_events_stream = true;
+            entry.events_stream_uid = Some(stream.uid.clone());
+            debug!(
+                device = "neon",
+                "Found Neon events stream: {} on {}", stream_name, host
+            );
+        }
+    }
+
+    // Disambiguate labels for devices that share a display name.
+    let mut name_counts: HashMap<String, usize> = HashMap::new();
+    for ((name, _), _) in &by_identity {
+        *name_counts.entry(name.clone()).or_insert(0) += 1;
+    }
+
+    let mut device_map: HashMap<String, DiscoveredNeonDevice> = HashMap::new();
+    for ((name, host), mut device) in by_identity {
+        let label = if name_counts.get(&name).copied().unwrap_or(0) > 1 && !host.is_empty() {
+            warn!(
+                device = "neon",
+                "Several Neon devices are named '{}'; labelling by host so they stay distinct",
+                name
+            );
+            format!("{} @ {}", name, host)
+        } else {
+            name
+        };
+        device.device_name = label.clone();
+        device_map.insert(label, device);
+    }
+    device_map
+}
+
 impl NeonLslManager {
     /// Create a new Neon LSL manager
     ///
@@ -122,50 +214,7 @@ impl NeonLslManager {
             })
             .collect();
 
-        // Group streams by device name
-        let mut device_map: HashMap<String, DiscoveredNeonDevice> = HashMap::new();
-        let now = std::time::SystemTime::now();
-
-        for stream in streams {
-            let stream_name = &stream.info.name;
-
-            if let Some(device_name) = StreamFilter::extract_neon_device_name(stream_name) {
-                let entry =
-                    device_map
-                        .entry(device_name.clone())
-                        .or_insert_with(|| DiscoveredNeonDevice {
-                            device_name: device_name.clone(),
-                            hostname: None,
-                            has_gaze_stream: false,
-                            has_events_stream: false,
-                            gaze_channel_count: 0,
-                            gaze_stream_uid: None,
-                            events_stream_uid: None,
-                            discovered_at: now,
-                        });
-
-                // Capture hostname from LSL stream info (needed for REST API connection)
-                if entry.hostname.is_none() && !stream.info.hostname.is_empty() {
-                    entry.hostname = Some(stream.info.hostname.clone());
-                }
-
-                if StreamFilter::is_neon_gaze_stream(stream_name) {
-                    entry.has_gaze_stream = true;
-                    entry.gaze_channel_count = stream.info.channel_count;
-                    entry.gaze_stream_uid = Some(stream.uid.clone());
-                    debug!(
-                        device = "neon",
-                        "Found Neon gaze stream: {} ({} channels)",
-                        stream_name,
-                        stream.info.channel_count
-                    );
-                } else if StreamFilter::is_neon_events_stream(stream_name) {
-                    entry.has_events_stream = true;
-                    entry.events_stream_uid = Some(stream.uid.clone());
-                    debug!(device = "neon", "Found Neon events stream: {}", stream_name);
-                }
-            }
-        }
+        let device_map = group_neon_streams(streams, std::time::SystemTime::now());
 
         // Update our cache
         {
@@ -194,7 +243,8 @@ impl NeonLslManager {
         Ok(device_list)
     }
 
-    /// Get a previously discovered Neon device by name
+    /// Get a previously discovered Neon device by its display name (the key
+    /// returned by `discover_neon_devices`).
     pub async fn get_device(&self, device_name: &str) -> Option<DiscoveredNeonDevice> {
         let devices = self.discovered_devices.read().await;
         devices.get(device_name).cloned()
@@ -752,5 +802,75 @@ mod tests {
             StreamFilter::extract_neon_device_name("SomeOtherStream"),
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod grouping_tests {
+    use super::*;
+    use crate::devices::lsl::resolver::DiscoveredStream;
+    use crate::devices::lsl::types::{ChannelFormat, StreamInfo, StreamType};
+    use std::time::SystemTime;
+
+    fn stream(name: &str, host: &str, uid: &str) -> DiscoveredStream {
+        let mut info = StreamInfo::new(
+            name.to_string(),
+            StreamType::Gaze,
+            2,
+            200.0,
+            ChannelFormat::Float32,
+            format!("src-{uid}"),
+        );
+        info.hostname = host.to_string();
+        DiscoveredStream {
+            info,
+            discovered_at: SystemTime::now(),
+            last_seen: SystemTime::now(),
+            available: true,
+            uid: uid.to_string(),
+            session_id: "default".to_string(),
+            data_loss: 0.0,
+            time_stamps: (),
+        }
+    }
+
+    #[test]
+    fn unique_name_keeps_plain_label_and_merges_gaze_and_events() {
+        let map = group_neon_streams(
+            vec![
+                stream("Neon P1_Neon Gaze", "phone-a", "g1"),
+                stream("Neon P1_Neon Events", "phone-a", "e1"),
+            ],
+            SystemTime::now(),
+        );
+        assert_eq!(map.len(), 1);
+        let d = &map["Neon P1"];
+        assert!(d.has_gaze_stream && d.has_events_stream);
+        assert_eq!(d.gaze_stream_uid.as_deref(), Some("g1"));
+        assert_eq!(d.hostname.as_deref(), Some("phone-a"));
+    }
+
+    #[test]
+    fn same_name_on_two_hosts_stays_two_devices_labelled_by_host() {
+        let map = group_neon_streams(
+            vec![
+                stream("Neon Companion_Neon Gaze", "phone-a", "g1"),
+                stream("Neon Companion_Neon Gaze", "phone-b", "g2"),
+                stream("Neon Companion_Neon Events", "phone-b", "e2"),
+            ],
+            SystemTime::now(),
+        );
+        assert_eq!(map.len(), 2, "two phones must not collapse into one entry");
+        let a = &map["Neon Companion @ phone-a"];
+        let b = &map["Neon Companion @ phone-b"];
+        assert_eq!(a.gaze_stream_uid.as_deref(), Some("g1"));
+        assert_eq!(b.gaze_stream_uid.as_deref(), Some("g2"));
+        assert!(b.has_events_stream && !a.has_events_stream);
+    }
+
+    #[test]
+    fn non_neon_streams_are_ignored() {
+        let map = group_neon_streams(vec![stream("FRENZ_EEG", "band", "x")], SystemTime::now());
+        assert!(map.is_empty());
     }
 }

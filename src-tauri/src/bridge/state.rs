@@ -33,6 +33,10 @@ pub struct AppState {
     /// Broadcast channel for device status change events
     /// WebSocket connections can subscribe to receive status updates
     device_status_tx: broadcast::Sender<DeviceStatusEvent>,
+    /// Last successful `connect` payload per device id, so a device that
+    /// dropped out (or was never re-added after a bridge restart) can be
+    /// re-connected on demand when a client sends to it.
+    pub last_connect_configs: Arc<DashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,6 +157,7 @@ impl AppState {
         Self {
             devices: Arc::new(RwLock::new(HashMap::new())),
             connections: Arc::new(DashMap::new()),
+            last_connect_configs: Arc::new(DashMap::new()),
             metrics: Arc::new(RwLock::new(Metrics::default())),
             performance_monitor: Arc::new(PerformanceMonitor::new()),
             start_time: Instant::now(),
@@ -351,6 +356,19 @@ impl AppState {
     }
 
     /// Record device connection attempt with performance tracking
+    /// Remember the payload that last connected `device_id` successfully.
+    pub fn remember_connect_config(&self, device_id: &str, config: serde_json::Value) {
+        self.last_connect_configs
+            .insert(device_id.to_string(), config);
+    }
+
+    /// The payload that last connected `device_id`, if any.
+    pub fn last_connect_config(&self, device_id: &str) -> Option<serde_json::Value> {
+        self.last_connect_configs
+            .get(device_id)
+            .map(|v| v.value().clone())
+    }
+
     pub async fn record_connection_attempt(&self, device_id: &str, success: bool) {
         self.performance_monitor
             .record_connection_attempt(device_id, success)

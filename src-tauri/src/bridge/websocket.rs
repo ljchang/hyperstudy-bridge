@@ -154,6 +154,16 @@ async fn handle_connection<R: Runtime>(
     let should_stop_clone = should_stop.clone();
 
     let receive_task = tokio::spawn(async move {
+        // Per-device FIFO queues for data-path commands (send / send_event /
+        // send_pulse). Each device gets its own worker task, so a Kernel stuck
+        // in a reconnect can no longer hold up Neon markers arriving on the same
+        // WebSocket. Order is preserved per device; everything else (connect,
+        // status, discovery…) stays inline on this loop as before.
+        let mut device_queues: std::collections::HashMap<
+            String,
+            mpsc::UnboundedSender<QueuedCommand>,
+        > = std::collections::HashMap::new();
+
         while let Some(msg) = ws_receiver.next().await {
             if should_stop_clone.load(Ordering::Relaxed) {
                 debug!("Receive task stopping: send channel closed");
@@ -166,6 +176,46 @@ async fn handle_connection<R: Runtime>(
                     info!("Received WebSocket message: {}", text);
 
                     match MessageHandler::parse_command(&text) {
+                        Ok(BridgeCommand::Command {
+                            device,
+                            action,
+                            payload,
+                            id,
+                        }) if is_data_path_action(&action) => {
+                            info!("Parsed command successfully");
+                            let key = device.to_lowercase();
+                            let sender = device_queues.entry(key.clone()).or_insert_with(|| {
+                                let (qtx, mut qrx) = mpsc::unbounded_channel::<QueuedCommand>();
+                                let worker_state = state_clone.clone();
+                                let worker_tx = tx.clone();
+                                tokio::spawn(async move {
+                                    while let Some(cmd) = qrx.recv().await {
+                                        handle_device_command(
+                                            &worker_state,
+                                            cmd.device,
+                                            cmd.action,
+                                            cmd.payload,
+                                            cmd.id,
+                                            &worker_tx,
+                                        )
+                                        .await;
+                                    }
+                                    debug!("Device queue worker for {} finished", key);
+                                });
+                                qtx
+                            });
+                            if sender
+                                .send(QueuedCommand {
+                                    device,
+                                    action,
+                                    payload,
+                                    id,
+                                })
+                                .is_err()
+                            {
+                                warn!("Device queue worker gone; command dropped");
+                            }
+                        }
                         Ok(command) => {
                             info!("Parsed command successfully");
                             handle_command(command, &state_clone, &tx, &app_handle).await;
@@ -235,6 +285,69 @@ async fn handle_connection<R: Runtime>(
     info!("Connection {} closed", connection_id);
 
     Ok(())
+}
+
+/// A data-path command parked on its device's FIFO queue.
+struct QueuedCommand {
+    device: String,
+    action: CommandAction,
+    payload: Option<serde_json::Value>,
+    id: Option<String>,
+}
+
+/// Commands that go through a device's own queue rather than the shared loop.
+fn is_data_path_action(action: &CommandAction) -> bool {
+    matches!(
+        action,
+        CommandAction::Send | CommandAction::SendEvent | CommandAction::SendPulse
+    )
+}
+
+/// Re-create and connect a device from the payload that last connected it, so a
+/// `send`/`send_event` to a device that dropped out of the registry (Kernel app
+/// restarted, bridge UI disconnect, …) can succeed instead of being rejected.
+///
+/// Kernel only for now: it is `127.0.0.1` per station, so reconnecting cannot
+/// pick up the wrong hardware. Neon deliberately stays manual — auto-connecting
+/// a phone by remembered address is exactly the identity mistake the pinning
+/// work exists to prevent.
+async fn try_auto_connect(state: &Arc<AppState>, device_id: &str) -> bool {
+    if device_id != "kernel" {
+        return false;
+    }
+    let Some(config) = state.last_connect_config(device_id) else {
+        return false;
+    };
+    let Some(ip) = config
+        .get("ip")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    else {
+        return false;
+    };
+    info!(
+        "Auto-connecting {} from last known config ({})",
+        device_id, ip
+    );
+    let mut device: Box<dyn Device> = Box::new(KernelDevice::new(ip.to_string()));
+    match device.connect().await {
+        Ok(_) => {
+            state.record_connection_attempt(device_id, true).await;
+            let info = device.get_info();
+            state.add_device(device_id.to_string(), device).await;
+            state.broadcast_device_status(DeviceStatusEvent::connected(
+                device_id.to_string(),
+                info.device_type,
+                "auto-reconnected on send",
+            ));
+            true
+        }
+        Err(e) => {
+            state.record_connection_attempt(device_id, false).await;
+            warn!("Auto-connect of {} failed: {}", device_id, e);
+            false
+        }
+    }
 }
 
 async fn handle_command<R: Runtime>(
@@ -578,6 +691,7 @@ async fn handle_device_command(
 
                     let info = device.get_info();
                     state.add_device(device_id.clone(), device).await;
+                    state.remember_connect_config(&device_id, config.clone());
 
                     // Tell every client, not just the requester. HyperStudy tracks
                     // device state from these broadcasts and previously only heard
@@ -861,7 +975,11 @@ async fn handle_device_command(
             let event = payload.unwrap_or_else(|| json!({}));
 
             // Minimize lock duration: acquire lock, do send_event, release lock, then send responses
-            let send_result = if let Some(device_lock) = state.get_device(&device_id).await {
+            let mut device_lock = state.get_device(&device_id).await;
+            if device_lock.is_none() && try_auto_connect(state, &device_id).await {
+                device_lock = state.get_device(&device_id).await;
+            }
+            let send_result = if let Some(device_lock) = device_lock {
                 let mut device = device_lock.write().await;
                 let result = device.send_event(event).await;
                 drop(device); // Explicitly release lock before async response handling
@@ -878,7 +996,6 @@ async fn handle_device_command(
                     send_response(tx, BridgeResponse::device_error_from(device_id, &e, id)).await;
                 }
                 None => {
-                    // Device not connected yet - try to auto-connect if we have config
                     warn!("Device {} not connected, cannot send event", device_id);
                     send_response(
                         tx,
