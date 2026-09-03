@@ -2,7 +2,7 @@ use crate::bridge::device_queues::{
     CommandHandler, DeviceQueues, Dispatch, QueuedCommand, DEVICE_QUEUE_CAPACITY, MAX_DEVICE_QUEUES,
 };
 use crate::bridge::message::{CommandAction, QueryTarget};
-use crate::bridge::state::{DeviceStatusEvent, DisconnectTarget};
+use crate::bridge::state::{ConnectAttempt, DeviceStatusEvent, DisconnectTarget};
 use crate::bridge::{AppState, BridgeCommand, BridgeResponse, MessageHandler};
 use crate::devices::{kernel::KernelDevice, mock::MockDevice, pupil::PupilDevice, ttl::TtlDevice};
 use crate::devices::{BoxedDevice, Device, DeviceError};
@@ -589,6 +589,8 @@ async fn handle_device_command(
             // registered, and its failure is reported to it.
             let connect_ticket = state.begin_connect(&device_id).await;
             conn.remember_connect_ticket(&device_id, connect_ticket);
+            // Marks the ticket finished on every exit that does not register.
+            let mut attempt = ConnectAttempt::new(state.clone(), &device_id, connect_ticket);
 
             // FRENZ: orchestrated connect via FrenzLslManager (not the Device trait)
             if device_id == "frenz" {
@@ -934,6 +936,7 @@ async fn handle_device_command(
                             return;
                         }
                     };
+                    attempt.registered();
                     disconnect_replaced(&device_id, replaced);
                     state.record_connection_attempt(&device_id, true).await;
                     state.remember_connect_config(&device_id, config.clone());
@@ -1704,6 +1707,7 @@ async fn handle_device_command(
 
             let connect_ticket = state.begin_connect("pupil").await;
             conn.remember_connect_ticket("pupil", connect_ticket);
+            let mut attempt = ConnectAttempt::new(state.clone(), "pupil", connect_ticket);
             info!(
                 "ConnectNeonRest: resolving hostname for device '{}'",
                 device_name
@@ -1777,6 +1781,7 @@ async fn handle_device_command(
                             return;
                         }
                     };
+                    attempt.registered();
                     disconnect_replaced("pupil", replaced);
                     state.record_connection_attempt("pupil", true).await;
 

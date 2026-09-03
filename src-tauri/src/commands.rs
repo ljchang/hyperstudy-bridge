@@ -181,6 +181,8 @@ pub async fn connect_device(
     // Ticket at start so this native connect is ordered with WebSocket
     // connects: whichever started last is the one that gets registered.
     let ticket = state.begin_connect(&device_id).await;
+    let mut attempt =
+        crate::bridge::state::ConnectAttempt::new(state.inner().clone(), &device_id, ticket);
 
     match device.connect().await {
         Ok(_) => {
@@ -195,10 +197,11 @@ pub async fn connect_device(
                 .await
             {
                 Ok(Some(replaced)) => {
+                    attempt.registered();
                     // Don't leave the replaced device's hardware connection open.
                     let _ = replaced.write().await.disconnect().await;
                 }
-                Ok(None) => {}
+                Ok(None) => attempt.registered(),
                 Err(mut orphan) => {
                     let _ = orphan.disconnect().await;
                     return Ok(CommandResult::error(format!(

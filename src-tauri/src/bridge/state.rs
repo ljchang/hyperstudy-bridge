@@ -72,6 +72,47 @@ pub struct AppState {
     /// flight (issued recently, not yet registered), which the opportunistic
     /// auto-connect path must yield to.
     pub ticket_issued_at: Arc<DashMap<String, Instant>>,
+    /// Highest connect ticket per device id known to have finished WITHOUT
+    /// registering (failed, refused, superseded, or abandoned by its
+    /// connection). Maintained by `ConnectAttempt`'s Drop, so every exit path
+    /// of a connect handler counts. Lets auto-reconnect run right after a
+    /// failed explicit connect instead of waiting out the window.
+    pub finished_tickets: Arc<DashMap<String, u64>>,
+}
+
+/// RAII marker for one explicit connect attempt. Create it right after
+/// `AppState::begin_connect`; call `registered()` once the device is in the
+/// registry. If it is dropped without that — early return, error, superseded,
+/// panic — the ticket is marked finished so it no longer counts as an
+/// in-flight explicit connect.
+pub struct ConnectAttempt {
+    state: Arc<AppState>,
+    id: String,
+    ticket: u64,
+    registered: bool,
+}
+
+impl ConnectAttempt {
+    pub fn new(state: Arc<AppState>, id: &str, ticket: u64) -> Self {
+        Self {
+            state,
+            id: id.to_string(),
+            ticket,
+            registered: false,
+        }
+    }
+
+    pub fn registered(&mut self) {
+        self.registered = true;
+    }
+}
+
+impl Drop for ConnectAttempt {
+    fn drop(&mut self) {
+        if !self.registered {
+            self.state.mark_connect_finished(&self.id, self.ticket);
+        }
+    }
 }
 
 /// An explicit connect that has not registered within this window is
@@ -254,6 +295,7 @@ impl AppState {
             connect_tickets: Arc::new(DashMap::new()),
             registered_tickets: Arc::new(DashMap::new()),
             ticket_issued_at: Arc::new(DashMap::new()),
+            finished_tickets: Arc::new(DashMap::new()),
             metrics: Arc::new(RwLock::new(Metrics::default())),
             performance_monitor: Arc::new(PerformanceMonitor::new()),
             start_time: Instant::now(),
@@ -334,7 +376,8 @@ impl AppState {
     fn explicit_connect_in_flight_locked(&self, id: &str) -> bool {
         let latest = self.connect_tickets.get(id).map(|v| *v).unwrap_or(0);
         let registered = self.registered_tickets.get(id).map(|v| *v).unwrap_or(0);
-        if latest <= registered {
+        let finished = self.finished_tickets.get(id).map(|v| *v).unwrap_or(0);
+        if latest <= registered.max(finished) {
             return false;
         }
         self.ticket_issued_at
@@ -373,6 +416,14 @@ impl AppState {
     pub async fn begin_connect(&self, id: &str) -> u64 {
         let _registry = self.devices.write().await;
         self.issue_ticket_locked(id)
+    }
+
+    /// Record that connect `ticket` for `id` ended without registering.
+    pub fn mark_connect_finished(&self, id: &str, ticket: u64) {
+        let mut entry = self.finished_tickets.entry(id.to_string()).or_insert(0);
+        if ticket > *entry {
+            *entry = ticket;
+        }
     }
 
     /// Ticket of the connect that registered the device currently under `id`.
@@ -949,6 +1000,54 @@ mod device_identity_tests {
             state
                 .add_device_if_absent("kernel".into(), mock("auto"))
                 .await
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_explicit_connect_unblocks_auto_connect_immediately() {
+        let state = Arc::new(AppState::new());
+        let ticket = state.begin_connect("kernel").await;
+        {
+            // The handler's guard: dropped on any exit without registering.
+            let _attempt = ConnectAttempt::new(state.clone(), "kernel", ticket);
+            assert!(
+                !state
+                    .add_device_if_absent("kernel".into(), mock("auto"))
+                    .await
+            );
+        }
+        // Explicit connect failed (guard dropped): markers must be able to
+        // auto-reconnect right away, not after the 60 s window.
+        assert!(
+            state
+                .add_device_if_absent("kernel".into(), mock("auto"))
+                .await
+        );
+        // A guard that registered does not mark its ticket finished, and a
+        // later explicit connect is again respected while pending.
+        let device = state.get_device("kernel").await.unwrap();
+        state.remove_device_if_same("kernel", &device).await;
+        let t2 = state.begin_connect("kernel").await;
+        let mut attempt = ConnectAttempt::new(state.clone(), "kernel", t2);
+        assert!(
+            !state
+                .add_device_if_absent("kernel".into(), mock("auto"))
+                .await
+        );
+        state
+            .add_device_if_latest(
+                "kernel".into(),
+                mock("explicit"),
+                t2,
+                &AtomicBool::new(false),
+            )
+            .await
+            .unwrap();
+        attempt.registered();
+        drop(attempt);
+        assert_eq!(
+            state.finished_tickets.get("kernel").map(|v| *v),
+            Some(ticket)
         );
     }
 
