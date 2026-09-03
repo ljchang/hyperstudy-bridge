@@ -37,6 +37,11 @@ pub struct AppState {
     /// dropped out (or was never re-added after a bridge restart) can be
     /// re-connected on demand when a client sends to it.
     pub last_connect_configs: Arc<DashMap<String, serde_json::Value>>,
+    /// Neon phone device_id -> recording id this bridge started. Ownership
+    /// otherwise lives only inside the PupilDevice instance and is lost on a
+    /// disconnect/reconnect or bridge restart, after which the bridge's own
+    /// recording reads as "busy" / "not owned" until someone passes force.
+    pub owned_recordings: Arc<DashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,15 +79,47 @@ pub struct DeviceStatusEvent {
     pub status: DeviceStatus,
     pub reason: String,
     pub timestamp: u64,
+    /// Device metadata at the time of the change (Neon device_id/IP, recording
+    /// state…) so every client — not just the one that issued the command —
+    /// can see *which* hardware is behind the status.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub info: Option<serde_json::Value>,
 }
 
 impl DeviceStatusEvent {
     pub fn disconnected(device_id: String, device_type: DeviceType, reason: &str) -> Self {
-        Self::with_status(device_id, device_type, DeviceStatus::Disconnected, reason)
+        Self::with_status(
+            device_id,
+            device_type,
+            DeviceStatus::Disconnected,
+            reason,
+            None,
+        )
     }
 
     pub fn connected(device_id: String, device_type: DeviceType, reason: &str) -> Self {
-        Self::with_status(device_id, device_type, DeviceStatus::Connected, reason)
+        Self::with_status(
+            device_id,
+            device_type,
+            DeviceStatus::Connected,
+            reason,
+            None,
+        )
+    }
+
+    pub fn connected_with_info(
+        device_id: String,
+        device_type: DeviceType,
+        reason: &str,
+        info: serde_json::Value,
+    ) -> Self {
+        Self::with_status(
+            device_id,
+            device_type,
+            DeviceStatus::Connected,
+            reason,
+            Some(info),
+        )
     }
 
     fn with_status(
@@ -90,6 +127,7 @@ impl DeviceStatusEvent {
         device_type: DeviceType,
         status: DeviceStatus,
         reason: &str,
+        info: Option<serde_json::Value>,
     ) -> Self {
         Self {
             device_id,
@@ -100,8 +138,26 @@ impl DeviceStatusEvent {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64,
+            info,
         }
     }
+}
+
+/// Extract `(phone device_id, active recording id, owned)` from a Pupil
+/// device's `get_info().metadata`. Pure so it can be tested without a device.
+pub fn pupil_recording_state_from_info(
+    info: &serde_json::Value,
+) -> Option<(String, Option<String>, bool)> {
+    let phone = info.get("device_id")?.as_str()?.to_string();
+    let recording = info
+        .get("recording_id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let owned = info
+        .get("recording_owned")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    Some((phone, recording, owned))
 }
 
 impl std::fmt::Debug for AppState {
@@ -158,6 +214,7 @@ impl AppState {
             devices: Arc::new(RwLock::new(HashMap::new())),
             connections: Arc::new(DashMap::new()),
             last_connect_configs: Arc::new(DashMap::new()),
+            owned_recordings: Arc::new(DashMap::new()),
             metrics: Arc::new(RwLock::new(Metrics::default())),
             performance_monitor: Arc::new(PerformanceMonitor::new()),
             start_time: Instant::now(),
@@ -193,6 +250,42 @@ impl AppState {
 
         // Add device to performance monitoring
         self.performance_monitor.add_device(id).await;
+    }
+
+    /// Register `device` only if nothing is registered under `id` yet. Returns
+    /// false (and drops `device`) when another connect won the race — the
+    /// auto-reconnect path must never replace a device an explicit connect
+    /// just registered.
+    pub async fn add_device_if_absent(&self, id: String, device: BoxedDevice) -> bool {
+        let mut devices = self.devices.write().await;
+        if devices.contains_key(&id) {
+            return false;
+        }
+        devices.insert(id.clone(), Arc::new(RwLock::new(device)));
+        drop(devices);
+        self.performance_monitor.add_device(id).await;
+        true
+    }
+
+    /// Track which Neon recording this bridge owns, from a Pupil device's
+    /// metadata after a command (see `pupil_recording_state_from_info`).
+    pub fn note_pupil_recording_state(&self, info: &serde_json::Value) {
+        if let Some((phone, recording, owned)) = pupil_recording_state_from_info(info) {
+            match recording {
+                Some(id) if owned => {
+                    self.owned_recordings.insert(phone, id);
+                }
+                Some(_) => {}
+                None => {
+                    self.owned_recordings.remove(&phone);
+                }
+            }
+        }
+    }
+
+    /// The recording id this bridge started on `phone`, if still remembered.
+    pub fn owned_recording(&self, phone: &str) -> Option<String> {
+        self.owned_recordings.get(phone).map(|v| v.value().clone())
     }
 
     pub async fn remove_device(&self, id: &str) -> Option<Arc<RwLock<BoxedDevice>>> {
@@ -482,5 +575,46 @@ impl AppState {
         }
 
         any_updated
+    }
+}
+
+#[cfg(test)]
+mod device_identity_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn recording_state_is_read_from_pupil_metadata() {
+        let info = json!({ "device_id": "a41fe4fe2bccf6c3", "recording_id": "rec-1", "recording_owned": true });
+        assert_eq!(
+            pupil_recording_state_from_info(&info),
+            Some(("a41fe4fe2bccf6c3".into(), Some("rec-1".into()), true))
+        );
+        let none = json!({ "device_id": "a41fe4fe2bccf6c3", "recording_id": null, "recording_owned": false });
+        assert_eq!(
+            pupil_recording_state_from_info(&none),
+            Some(("a41fe4fe2bccf6c3".into(), None, false))
+        );
+        assert_eq!(
+            pupil_recording_state_from_info(&json!({ "recording_id": "x" })),
+            None
+        );
+    }
+
+    #[test]
+    fn connected_event_carries_info_and_disconnected_does_not() {
+        let with = DeviceStatusEvent::connected_with_info(
+            "pupil".into(),
+            DeviceType::Pupil,
+            "connected",
+            json!({ "device_id": "abc" }),
+        );
+        let value = serde_json::to_value(&with).unwrap();
+        assert_eq!(value["info"]["device_id"], "abc");
+        assert_eq!(value["status"], "Connected");
+
+        let without = DeviceStatusEvent::disconnected("kernel".into(), DeviceType::Kernel, "bye");
+        let value = serde_json::to_value(&without).unwrap();
+        assert!(value.get("info").is_none());
     }
 }

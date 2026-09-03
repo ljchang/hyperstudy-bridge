@@ -279,6 +279,15 @@ impl PupilDevice {
         }
     }
 
+    /// Restore ownership of `recording_id` after a reconnect or bridge
+    /// restart, when the bridge remembers having started it on this phone.
+    /// No-op unless that recording is the one currently active.
+    pub fn claim_recording_ownership(&mut self, recording_id: &str) {
+        if self.recording_id.as_deref() == Some(recording_id) {
+            self.recording_owned = true;
+        }
+    }
+
     /// Pin this device to a phone hardware id (see `expected_device_id`).
     pub fn with_expected_device_id(mut self, device_id: Option<String>) -> Self {
         self.expected_device_id = device_id.filter(|s| !s.is_empty());
@@ -458,39 +467,49 @@ impl PupilDevice {
         let deadline = started + Duration::from_millis(RECORDING_ACTIVE_TIMEOUT_MS);
 
         loop {
-            match self.get_neon_status().await {
-                Ok(status) if status.recording.as_ref().map(|r| r.id.as_str()) == Some(id) => {
-                    info!(
-                        device = "pupil",
-                        recording_id = %id,
-                        elapsed_ms = started.elapsed().as_millis() as u64,
-                        "Recording confirmed active"
-                    );
-                    return;
-                }
-                Ok(status) => {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            // Bound each status request by what is left of the budget, so a
+            // stalled request cannot hold the device lock past the cap.
+            match timeout(remaining, self.get_neon_status()).await {
+                Ok(Ok(status)) => {
+                    let active = status
+                        .recording
+                        .as_ref()
+                        .filter(|r| Self::recording_is_active(r))
+                        .map(|r| r.id.as_str());
+                    if active == Some(id) {
+                        info!(
+                            device = "pupil",
+                            recording_id = %id,
+                            elapsed_ms = started.elapsed().as_millis() as u64,
+                            "Recording confirmed active"
+                        );
+                        return;
+                    }
                     debug!(
                         device = "pupil",
-                        reported = ?status.recording.as_ref().map(|r| &r.id),
+                        reported = ?status.recording.as_ref().map(|r| (&r.id, &r.action)),
                         "Recording not yet reported active"
                     );
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     debug!(device = "pupil", error = %e, "Status poll failed while waiting for recording");
                 }
+                Err(_) => break,
             }
-
-            if Instant::now() >= deadline {
-                warn!(
-                    device = "pupil",
-                    recording_id = %id,
-                    "Recording not reported active after {}ms; events sent now may not be attached to it",
-                    RECORDING_ACTIVE_TIMEOUT_MS
-                );
-                return;
-            }
-            sleep(Duration::from_millis(RECORDING_ACTIVE_POLL_MS)).await;
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            sleep(Duration::from_millis(RECORDING_ACTIVE_POLL_MS).min(remaining)).await;
         }
+
+        warn!(
+            device = "pupil",
+            recording_id = %id,
+            "Recording not reported active after {}ms; events sent now may not be attached to it",
+            RECORDING_ACTIVE_TIMEOUT_MS
+        );
     }
 
     /// Ownership guard shared by stop/cancel. Returns `Ok(false)` when there is
@@ -511,10 +530,15 @@ impl PupilDevice {
         let status = match self.get_neon_status().await {
             Ok(s) => s,
             Err(e) => {
-                // If we can't see the phone the request below will fail on its own;
-                // don't turn a transient status hiccup into a refusal.
-                warn!(device = "pupil", error = %e, "Could not verify recording ownership before {}; proceeding", verb);
-                return Ok(true);
+                // Fail closed: this guard exists precisely for flaky-network
+                // moments, and "we couldn't check" must not become "go ahead and
+                // stop whatever is running" — that is how a station ended the
+                // other participant's recording. The caller can retry, or pass
+                // force=true if they know the recording is theirs.
+                return Err(DeviceError::CommunicationError(format!(
+                    "could not verify who owns the active recording before {} ({}); refusing. Retry when the phone is reachable, or send the command with force=true",
+                    verb, e
+                )));
             }
         };
         match status.recording.filter(Self::recording_is_active) {
@@ -962,6 +986,10 @@ impl Device for PupilDevice {
         self.status
     }
 
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn configure(&mut self, config: DeviceConfig) -> Result<(), DeviceError> {
         info!(device = "pupil", "Configuring Pupil device");
         self.config = config;
@@ -1262,6 +1290,17 @@ mod tests {
         assert!(PupilDevice::recording_is_active(&mk("")));
         assert!(!PupilDevice::recording_is_active(&mk("STOP")));
         assert!(!PupilDevice::recording_is_active(&mk("save")));
+    }
+
+    #[test]
+    fn test_claim_recording_ownership_only_for_the_active_recording() {
+        let mut device = PupilDevice::new("192.168.1.100".to_string());
+        device.recording_id = Some("rec-1".to_string());
+        device.recording_owned = false;
+        device.claim_recording_ownership("rec-other");
+        assert!(!device.recording_owned);
+        device.claim_recording_ownership("rec-1");
+        assert!(device.recording_owned);
     }
 
     #[test]

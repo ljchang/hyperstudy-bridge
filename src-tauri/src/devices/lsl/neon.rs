@@ -66,6 +66,10 @@ struct GazeStreamTask {
     /// The task uses a clone of this sender.
     #[allow(dead_code)]
     sender: mpsc::Sender<NeonGazeData>,
+    /// LSL stream uid this task reads, so the same stream can't be opened
+    /// twice under two device labels (labels change when a same-named phone
+    /// appears and discovery re-keys entries by host).
+    stream_uid: String,
     /// Shutdown flag
     shutdown: Arc<AtomicBool>,
     /// Task join handle
@@ -78,6 +82,8 @@ struct EventStreamTask {
     /// The task uses a clone of this sender.
     #[allow(dead_code)]
     sender: mpsc::Sender<NeonEventData>,
+    /// LSL stream uid this task reads (see GazeStreamTask::stream_uid).
+    stream_uid: String,
     /// Shutdown flag
     shutdown: Arc<AtomicBool>,
     /// Task join handle
@@ -299,6 +305,19 @@ impl NeonLslManager {
             LslError::NeonStreamNotAvailable("Gaze stream UID not found".to_string())
         })?;
 
+        // Refuse to open the same LSL stream twice under different labels
+        // (discovery re-keys same-named phones by host, changing the label).
+        {
+            let tasks = self.gaze_tasks.read().await;
+            if let Some((existing, _)) = tasks.iter().find(|(_, t)| t.stream_uid == gaze_uid) {
+                return Err(LslError::LslLibraryError(format!(
+                    "Gaze stream for '{}' is already connected as '{}'",
+                    device_name, existing
+                )));
+            }
+        }
+        let gaze_uid_for_task = gaze_uid.clone();
+
         // Find the stream in the resolver cache
         let stream = self.resolver.get_stream(&gaze_uid).await.ok_or_else(|| {
             LslError::StreamNotFound(format!("Gaze stream not found: {}", gaze_uid))
@@ -397,6 +416,7 @@ impl NeonLslManager {
                 device_name.to_string(),
                 GazeStreamTask {
                     sender: tx,
+                    stream_uid: gaze_uid_for_task,
                     shutdown,
                     _handle: handle,
                 },
@@ -452,6 +472,17 @@ impl NeonLslManager {
         let events_uid = device.events_stream_uid.ok_or_else(|| {
             LslError::NeonStreamNotAvailable("Events stream UID not found".to_string())
         })?;
+
+        {
+            let tasks = self.event_tasks.read().await;
+            if let Some((existing, _)) = tasks.iter().find(|(_, t)| t.stream_uid == events_uid) {
+                return Err(LslError::LslLibraryError(format!(
+                    "Events stream for '{}' is already connected as '{}'",
+                    device_name, existing
+                )));
+            }
+        }
+        let events_uid_for_task = events_uid.clone();
 
         // Find the stream in the resolver cache
         let stream = self.resolver.get_stream(&events_uid).await.ok_or_else(|| {
@@ -556,6 +587,7 @@ impl NeonLslManager {
                 device_name.to_string(),
                 EventStreamTask {
                     sender: tx,
+                    stream_uid: events_uid_for_task,
                     shutdown,
                     _handle: handle,
                 },
@@ -646,10 +678,16 @@ impl NeonLslManager {
 
     /// Disconnect all Neon streams
     pub async fn disconnect_all(&self) -> Result<(), LslError> {
-        let device_names: Vec<String> = {
+        // Walk the ACTIVE task labels, not just the current discovery cache:
+        // a re-discovery can re-key devices (e.g. "Neon Companion" becomes
+        // "Neon Companion @ host"), which would otherwise orphan tasks that
+        // were started under the old label.
+        let mut device_names: std::collections::BTreeSet<String> = {
             let devices = self.discovered_devices.read().await;
             devices.keys().cloned().collect()
         };
+        device_names.extend(self.gaze_tasks.read().await.keys().cloned());
+        device_names.extend(self.event_tasks.read().await.keys().cloned());
 
         for device_name in device_names {
             let _ = self.disconnect(&device_name).await;

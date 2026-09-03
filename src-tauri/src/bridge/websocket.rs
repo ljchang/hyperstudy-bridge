@@ -16,6 +16,11 @@ use tokio_tungstenite::{accept_async, tungstenite::Message};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+/// Pending commands allowed per device before the bridge rejects new ones with
+/// an error instead of buffering without bound (and replaying stale markers
+/// minutes later once a stalled device recovers).
+const DEVICE_QUEUE_CAPACITY: usize = 256;
+
 const WS_PORT: u16 = 9000;
 #[allow(dead_code)]
 const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024; // 10MB
@@ -114,11 +119,20 @@ async fn handle_connection<R: Runtime>(
         loop {
             match status_rx.recv().await {
                 Ok(event) => {
-                    // Convert DeviceStatusEvent to BridgeResponse
+                    // Convert DeviceStatusEvent to BridgeResponse. Device metadata
+                    // (Neon device_id/IP, recording state…) rides along with the
+                    // reason so every client can see which hardware answered.
+                    let mut info =
+                        json!({ "reason": event.reason, "device_type": event.device_type });
+                    if let Some(extra) = event.info.as_ref().and_then(|v| v.as_object()) {
+                        for (k, v) in extra {
+                            info[k] = v.clone();
+                        }
+                    }
                     let response = BridgeResponse::status_with_info(
                         event.device_id,
                         event.status,
-                        json!({ "reason": event.reason, "device_type": event.device_type }),
+                        info,
                         None, // No request ID for broadcast events
                     );
                     if tx_for_status.send(response).await.is_err() {
@@ -153,16 +167,23 @@ async fn handle_connection<R: Runtime>(
     let should_stop = Arc::new(AtomicBool::new(false));
     let should_stop_clone = should_stop.clone();
 
+    // Set once this connection is gone. Device queue workers check it before
+    // starting each queued command so a reconnect-and-retry can't double-send
+    // markers that were still buffered when the socket closed.
+    let connection_closed = Arc::new(AtomicBool::new(false));
+    let connection_closed_for_workers = connection_closed.clone();
+
     let receive_task = tokio::spawn(async move {
-        // Per-device FIFO queues for data-path commands (send / send_event /
-        // send_pulse). Each device gets its own worker task, so a Kernel stuck
-        // in a reconnect can no longer hold up Neon markers arriving on the same
-        // WebSocket. Order is preserved per device; everything else (connect,
-        // status, discovery…) stays inline on this loop as before.
-        let mut device_queues: std::collections::HashMap<
-            String,
-            mpsc::UnboundedSender<QueuedCommand>,
-        > = std::collections::HashMap::new();
+        // Per-device FIFO queues. Every device command — connect, send,
+        // send_event, disconnect, … — runs on that device's own worker task, in
+        // arrival order. A Kernel stuck in a reconnect can no longer hold up
+        // Neon markers arriving on the same WebSocket, and a `disconnect` can
+        // never overtake the `send_event` that preceded it. Queries and
+        // subscriptions stay inline. Queues are bounded (see
+        // DEVICE_QUEUE_CAPACITY); once the connection closes, commands still
+        // queued are dropped while the in-flight one finishes.
+        let mut device_queues: std::collections::HashMap<String, mpsc::Sender<QueuedCommand>> =
+            std::collections::HashMap::new();
 
         while let Some(msg) = ws_receiver.next().await {
             if should_stop_clone.load(Ordering::Relaxed) {
@@ -181,15 +202,24 @@ async fn handle_connection<R: Runtime>(
                             action,
                             payload,
                             id,
-                        }) if is_data_path_action(&action) => {
+                        }) => {
                             info!("Parsed command successfully");
                             let key = device.to_lowercase();
                             let sender = device_queues.entry(key.clone()).or_insert_with(|| {
-                                let (qtx, mut qrx) = mpsc::unbounded_channel::<QueuedCommand>();
+                                let (qtx, mut qrx) =
+                                    mpsc::channel::<QueuedCommand>(DEVICE_QUEUE_CAPACITY);
                                 let worker_state = state_clone.clone();
                                 let worker_tx = tx.clone();
+                                let worker_closed = connection_closed_for_workers.clone();
                                 tokio::spawn(async move {
                                     while let Some(cmd) = qrx.recv().await {
+                                        if worker_closed.load(Ordering::Relaxed) {
+                                            debug!(
+                                                "Connection closed; dropping queued {:?} for {}",
+                                                cmd.action, cmd.device
+                                            );
+                                            continue;
+                                        }
                                         handle_device_command(
                                             &worker_state,
                                             cmd.device,
@@ -204,16 +234,34 @@ async fn handle_connection<R: Runtime>(
                                 });
                                 qtx
                             });
-                            if sender
-                                .send(QueuedCommand {
-                                    device,
-                                    action,
-                                    payload,
-                                    id,
-                                })
-                                .is_err()
-                            {
-                                warn!("Device queue worker gone; command dropped");
+                            match sender.try_send(QueuedCommand {
+                                device,
+                                action,
+                                payload,
+                                id,
+                            }) {
+                                Ok(()) => {}
+                                Err(mpsc::error::TrySendError::Full(cmd)) => {
+                                    warn!(
+                                        "Command queue for {} is full ({} pending); rejecting {:?}",
+                                        cmd.device, DEVICE_QUEUE_CAPACITY, cmd.action
+                                    );
+                                    send_response(
+                                        &tx,
+                                        BridgeResponse::device_error(
+                                            cmd.device,
+                                            format!(
+                                                "Command queue for this device is full ({} pending) — the device is not keeping up; check its connection in the Bridge",
+                                                DEVICE_QUEUE_CAPACITY
+                                            ),
+                                            cmd.id,
+                                        ),
+                                    )
+                                    .await;
+                                }
+                                Err(mpsc::error::TrySendError::Closed(_)) => {
+                                    warn!("Device queue worker gone; command dropped");
+                                }
                             }
                         }
                         Ok(command) => {
@@ -281,26 +329,50 @@ async fn handle_connection<R: Runtime>(
         },
     }
 
+    connection_closed.store(true, Ordering::Relaxed);
     state.remove_connection(&connection_id);
     info!("Connection {} closed", connection_id);
 
     Ok(())
 }
 
-/// A data-path command parked on its device's FIFO queue.
+/// A bridge restart or reconnect loses the in-memory "this bridge started that
+/// recording" flag, after which the bridge's own recording reads as busy and
+/// cannot be stopped without force. Restore ownership when the phone we just
+/// connected to is still running the recording AppState remembers starting.
+fn reclaim_pupil_recording(state: &Arc<AppState>, device: &mut Box<dyn Device>) {
+    let probe = device.get_info().metadata;
+    let phone = probe
+        .get("device_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let Some(active) = probe.get("recording_id").and_then(|v| v.as_str()) else {
+        return;
+    };
+    let Some(remembered) = state.owned_recording(phone) else {
+        return;
+    };
+    if remembered != active {
+        return;
+    }
+    if let Some(pupil) = device
+        .as_any_mut()
+        .and_then(|any| any.downcast_mut::<PupilDevice>())
+    {
+        pupil.claim_recording_ownership(active);
+        info!(
+            "Restored ownership of Neon recording {} on phone {} after reconnect",
+            active, phone
+        );
+    }
+}
+
+/// A device command parked on its device's FIFO queue.
 struct QueuedCommand {
     device: String,
     action: CommandAction,
     payload: Option<serde_json::Value>,
     id: Option<String>,
-}
-
-/// Commands that go through a device's own queue rather than the shared loop.
-fn is_data_path_action(action: &CommandAction) -> bool {
-    matches!(
-        action,
-        CommandAction::Send | CommandAction::SendEvent | CommandAction::SendPulse
-    )
 }
 
 /// Re-create and connect a device from the payload that last connected it, so a
@@ -334,11 +406,23 @@ async fn try_auto_connect(state: &Arc<AppState>, device_id: &str) -> bool {
         Ok(_) => {
             state.record_connection_attempt(device_id, true).await;
             let info = device.get_info();
-            state.add_device(device_id.to_string(), device).await;
-            state.broadcast_device_status(DeviceStatusEvent::connected(
+            // An explicit connect may have won the race while we were
+            // connecting; never replace what it registered.
+            if !state
+                .add_device_if_absent(device_id.to_string(), device)
+                .await
+            {
+                info!(
+                    "{} was connected explicitly while auto-connecting; using that",
+                    device_id
+                );
+                return true;
+            }
+            state.broadcast_device_status(DeviceStatusEvent::connected_with_info(
                 device_id.to_string(),
                 info.device_type,
                 "auto-reconnected on send",
+                info.metadata.clone(),
             ));
             true
         }
@@ -601,7 +685,32 @@ async fn handle_device_command(
                         .map(str::to_string);
 
                     let host = match (url, pinned_id.as_deref()) {
-                        (Some(u), _) => u,
+                        (Some(u), None) => u,
+                        (Some(u), Some(pin)) => {
+                            // A pinned phone is identified by its hardware id; the
+                            // saved address is only a fallback (DHCP moves phones).
+                            match crate::devices::neon_discovery::find_neon_phone(
+                                pin,
+                                Duration::from_secs(3),
+                            )
+                            .await
+                            {
+                                Ok(Some(phone)) => {
+                                    info!(
+                                        "Pinned Neon {} resolved via mDNS to {} (saved address {})",
+                                        pin, phone.ip, u
+                                    );
+                                    phone.host()
+                                }
+                                _ => {
+                                    info!(
+                                        "Pinned Neon {} not seen via mDNS; trying saved address {}",
+                                        pin, u
+                                    );
+                                    u
+                                }
+                            }
+                        }
                         (None, Some(pin)) => {
                             info!("Resolving pinned Neon {} over mDNS", pin);
                             match crate::devices::neon_discovery::find_neon_phone(
@@ -689,6 +798,9 @@ async fn handle_device_command(
                     // Record successful connection attempt
                     state.record_connection_attempt(&device_id, true).await;
 
+                    if device_id == "pupil" {
+                        reclaim_pupil_recording(state, &mut device);
+                    }
                     let info = device.get_info();
                     state.add_device(device_id.clone(), device).await;
                     state.remember_connect_config(&device_id, config.clone());
@@ -697,10 +809,11 @@ async fn handle_device_command(
                     // device state from these broadcasts and previously only heard
                     // about USB unplugs — a Kernel disconnected from the bridge UI
                     // stayed "connected" in the web app for the whole session.
-                    state.broadcast_device_status(DeviceStatusEvent::connected(
+                    state.broadcast_device_status(DeviceStatusEvent::connected_with_info(
                         device_id.clone(),
                         info.device_type,
                         "connected",
+                        info.metadata.clone(),
                     ));
                     send_response(
                         tx,
@@ -718,9 +831,11 @@ async fn handle_device_command(
                     state.record_connection_attempt(&device_id, false).await;
                     state.record_device_error(&device_id, &e.to_string()).await;
 
+                    // Keep the machine-readable code (wrong_device, device_not_found…)
+                    // so the client can tell an identity refusal from a plain failure.
                     send_response(
                         tx,
-                        BridgeResponse::device_error(device_id.clone(), e.to_string(), id),
+                        BridgeResponse::device_error_from(device_id.clone(), &e, id),
                     )
                     .await;
                 }
@@ -814,6 +929,10 @@ async fn handle_device_command(
                 // post-command state (e.g. Neon recording_id / device_id) here.
                 let info = device.get_info().metadata;
                 drop(device); // Explicitly release lock before async response handling
+                if device_id == "pupil" {
+                    // Remember which recording we own so a reconnect can reclaim it.
+                    state.note_pupil_recording_state(&info);
+                }
                 Some((info, result))
             } else {
                 None
@@ -1386,13 +1505,15 @@ async fn handle_device_command(
             match device.connect().await {
                 Ok(_) => {
                     state.record_connection_attempt("pupil", true).await;
+                    reclaim_pupil_recording(state, &mut device);
                     let info = device.get_info();
                     state.add_device("pupil".to_string(), device).await;
 
-                    state.broadcast_device_status(DeviceStatusEvent::connected(
+                    state.broadcast_device_status(DeviceStatusEvent::connected_with_info(
                         "pupil".to_string(),
                         info.device_type,
                         "connected",
+                        info.metadata.clone(),
                     ));
                     send_response(
                         tx,
@@ -1411,7 +1532,7 @@ async fn handle_device_command(
 
                     send_response(
                         tx,
-                        BridgeResponse::device_error("pupil".to_string(), e.to_string(), id),
+                        BridgeResponse::device_error_from("pupil".to_string(), &e, id),
                     )
                     .await;
                 }
