@@ -1,0 +1,50 @@
+name: Claude Code Review
+
+# Automatic PR review by Claude. Requires the Claude GitHub App to be installed
+# on the repo and the ANTHROPIC_API_KEY repository secret to be set.
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+jobs:
+  claude-review:
+    # Skip draft PRs and bot-authored PRs (release/readme automation)
+    if: github.event.pull_request.draft == false && !endsWith(github.event.pull_request.user.login, '[bot]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Review this pull request for the HyperStudy Bridge (Tauri + Rust backend,
+            Svelte 5 frontend). Read CLAUDE.md for project conventions first.
+
+            Focus on:
+            - Correctness bugs, race conditions, and lock-held-across-await in the
+              Tokio device code (src-tauri/src/devices, src-tauri/src/bridge)
+            - Timing/synchronization behavior for research hardware (TTL, Kernel
+              Flow2, Pupil Neon, LSL): anything that could delay, drop, or
+              misattribute an event marker
+            - Error handling that fails silently or hides device state from the user
+            - WebSocket protocol compatibility with the HyperStudy web client
+            - Svelte 5 runes usage and test coverage for changed code
+
+            Use `gh pr comment` with your Bash tool to leave a single review
+            comment. Be concise: lead with blocking issues, then suggestions.
+            If the PR looks good, say so briefly.
+          claude_args: '--allowed-tools "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*)"'
