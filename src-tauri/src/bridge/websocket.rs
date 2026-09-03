@@ -8,9 +8,10 @@ use crate::devices::{kernel::KernelDevice, mock::MockDevice, pupil::PupilDevice,
 use crate::devices::{Device, DeviceError};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Runtime};
 use tokio::net::{TcpListener, TcpStream};
@@ -179,11 +180,11 @@ async fn handle_connection<R: Runtime>(
         let handler: CommandHandler = {
             let state = state_clone.clone();
             let tx = tx.clone();
-            let closed = connection_closed_for_workers.clone();
+            let conn = Arc::new(ConnectionCtx::new(connection_closed_for_workers.clone()));
             Arc::new(move |cmd: QueuedCommand| {
                 let state = state.clone();
                 let tx = tx.clone();
-                let closed = closed.clone();
+                let conn = conn.clone();
                 Box::pin(async move {
                     handle_device_command(
                         &state,
@@ -192,7 +193,7 @@ async fn handle_connection<R: Runtime>(
                         cmd.payload,
                         cmd.id,
                         &tx,
-                        &closed,
+                        &conn,
                     )
                     .await
                 })
@@ -462,9 +463,10 @@ async fn handle_command<R: Runtime>(
             id,
         } => {
             // Commands normally arrive via the per-device queues in the receive
-            // loop; this direct path has no owning-connection flag.
-            let never_closed = Arc::new(AtomicBool::new(false));
-            handle_device_command(state, device, action, payload, id, tx, &never_closed).await;
+            // loop; this direct path has no owning connection (never closed,
+            // no connect history).
+            let conn = Arc::new(ConnectionCtx::new(Arc::new(AtomicBool::new(false))));
+            handle_device_command(state, device, action, payload, id, tx, &conn).await;
         }
         BridgeCommand::Query { target, id } => {
             handle_query(state, target, id, tx).await;
@@ -494,6 +496,42 @@ async fn handle_command<R: Runtime>(
     }
 }
 
+/// What a device-command handler needs to know about the WebSocket connection
+/// it is running for.
+pub struct ConnectionCtx {
+    /// Set once the connection is gone. A connect that was already running
+    /// when its connection went away must not register its device afterwards —
+    /// a newer connection may have selected a different phone by then.
+    pub closed: Arc<AtomicBool>,
+    /// The newest connect ticket this connection issued per device id (see
+    /// `AppState::begin_connect`). A Disconnect from this connection is refused
+    /// when a *newer* connect has registered the device since — that device is
+    /// not ours to remove, even if this connection is not yet known to be dead.
+    connect_tickets: Mutex<HashMap<String, u64>>,
+}
+
+impl ConnectionCtx {
+    pub fn new(closed: Arc<AtomicBool>) -> Self {
+        Self {
+            closed,
+            connect_tickets: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn remember_connect_ticket(&self, device_id: &str, ticket: u64) {
+        if let Ok(mut tickets) = self.connect_tickets.lock() {
+            tickets.insert(device_id.to_string(), ticket);
+        }
+    }
+
+    fn connect_ticket(&self, device_id: &str) -> Option<u64> {
+        self.connect_tickets
+            .lock()
+            .ok()
+            .and_then(|tickets| tickets.get(device_id).copied())
+    }
+}
+
 async fn handle_device_command(
     state: &Arc<AppState>,
     device_id: String,
@@ -501,10 +539,7 @@ async fn handle_device_command(
     payload: Option<serde_json::Value>,
     id: Option<String>,
     tx: &mpsc::Sender<BridgeResponse>,
-    // The owning connection's closed flag. A connect that was already running
-    // when its connection went away must not register its device afterwards —
-    // a newer connection may have selected a different phone by then.
-    connection_closed: &Arc<AtomicBool>,
+    conn: &Arc<ConnectionCtx>,
 ) {
     let device_id = device_id.to_lowercase();
     info!(
@@ -514,9 +549,6 @@ async fn handle_device_command(
     match action {
         CommandAction::Connect => {
             info!("Processing connect for device: {}", device_id);
-            // Ticket first, before any await: whichever connect STARTED last is
-            // the one allowed to register (see AppState::add_device_if_latest).
-            let connect_ticket = state.begin_connect(&device_id);
             let device_type = MessageHandler::validate_device_type(&device_id);
 
             if device_type.is_none() {
@@ -530,6 +562,15 @@ async fn handle_device_command(
             }
 
             let config = if let Some(p) = payload { p } else { json!({}) };
+
+            // Ticket once the attempt is known to be viable (valid device type)
+            // and before any await: whichever connect STARTED last is the one
+            // allowed to register (see AppState::add_device_if_latest). A newer
+            // attempt that later fails still supersedes this one on purpose —
+            // the operator has moved on; what it selected is what should be
+            // registered, and its failure is reported to it.
+            let connect_ticket = state.begin_connect(&device_id).await;
+            conn.remember_connect_ticket(&device_id, connect_ticket);
 
             // FRENZ: orchestrated connect via FrenzLslManager (not the Device trait)
             if device_id == "frenz" {
@@ -831,7 +872,7 @@ async fn handle_device_command(
                             device_id.clone(),
                             device,
                             connect_ticket,
-                            connection_closed,
+                            &conn.closed,
                         )
                         .await
                     {
@@ -840,6 +881,15 @@ async fn handle_device_command(
                             device_id
                         );
                         let _ = orphan.disconnect().await;
+                        send_response(
+                            tx,
+                            BridgeResponse::device_error(
+                                device_id,
+                                "Connect superseded by a newer connect".to_string(),
+                                id,
+                            ),
+                        )
+                        .await;
                         return;
                     }
                     state.record_connection_attempt(&device_id, true).await;
@@ -893,6 +943,27 @@ async fn handle_device_command(
                     BridgeResponse::status(
                         device_id,
                         crate::devices::DeviceStatus::Disconnected,
+                        id,
+                    ),
+                )
+                .await;
+                return;
+            }
+
+            // A disconnect from a connection whose connect has since been
+            // superseded (the page reloaded and reconnected before the server
+            // observed the old socket close) must not remove the newer device.
+            if state.is_stale_disconnect(&device_id, conn.connect_ticket(&device_id)) {
+                info!(
+                    "Stale disconnect for {}: a newer connect owns the device; ignoring",
+                    device_id
+                );
+                send_response(
+                    tx,
+                    BridgeResponse::device_error(
+                        device_id,
+                        "Device was reconnected by a newer connection; disconnect ignored"
+                            .to_string(),
                         id,
                     ),
                 )
@@ -1375,12 +1446,15 @@ async fn handle_device_command(
             info!("Connecting to Neon gaze stream: {}", device_name);
 
             match state.neon_manager.connect_gaze_stream(device_name).await {
-                Ok(mut gaze_rx) => {
-                    if connection_closed.load(Ordering::Relaxed) {
+                Ok((mut gaze_rx, task_id)) => {
+                    if conn.closed.load(Ordering::Relaxed) {
                         // Nobody is listening any more; don't leave a live inlet and
                         // task registered under this label for the next client to
                         // trip over as "already connected".
-                        let _ = state.neon_manager.disconnect_gaze_stream(device_name).await;
+                        let _ = state
+                            .neon_manager
+                            .disconnect_gaze_stream_owned(device_name, task_id)
+                            .await;
                         return;
                     }
                     // Spawn a task to forward gaze data to WebSocket. It also watches
@@ -1390,7 +1464,7 @@ async fn handle_device_command(
                     // "already connected".
                     let tx_clone = tx.clone();
                     let device_name_clone = device_name.to_string();
-                    let closed = connection_closed.clone();
+                    let closed = conn.closed.clone();
                     let teardown_state = state.clone();
 
                     tokio::spawn(async move {
@@ -1428,9 +1502,11 @@ async fn handle_device_command(
                             }
                         }
                         if client_gone {
+                            // Release only OUR stream: if a newer client has
+                            // since opened this label, that stream is theirs.
                             let _ = teardown_state
                                 .neon_manager
-                                .disconnect_gaze_stream(&device_name_clone)
+                                .disconnect_gaze_stream_owned(&device_name_clone, task_id)
                                 .await;
                         }
                     });
@@ -1478,11 +1554,11 @@ async fn handle_device_command(
             info!("Connecting to Neon events stream: {}", device_name);
 
             match state.neon_manager.connect_events_stream(device_name).await {
-                Ok(mut events_rx) => {
-                    if connection_closed.load(Ordering::Relaxed) {
+                Ok((mut events_rx, task_id)) => {
+                    if conn.closed.load(Ordering::Relaxed) {
                         let _ = state
                             .neon_manager
-                            .disconnect_events_stream(device_name)
+                            .disconnect_events_stream_owned(device_name, task_id)
                             .await;
                         return;
                     }
@@ -1490,7 +1566,7 @@ async fn handle_device_command(
                     // see the gaze forwarder above).
                     let tx_clone = tx.clone();
                     let device_name_clone = device_name.to_string();
-                    let closed = connection_closed.clone();
+                    let closed = conn.closed.clone();
                     let teardown_state = state.clone();
 
                     tokio::spawn(async move {
@@ -1527,7 +1603,7 @@ async fn handle_device_command(
                         if client_gone {
                             let _ = teardown_state
                                 .neon_manager
-                                .disconnect_events_stream(&device_name_clone)
+                                .disconnect_events_stream_owned(&device_name_clone, task_id)
                                 .await;
                         }
                     });
@@ -1574,7 +1650,8 @@ async fn handle_device_command(
                 return;
             }
 
-            let connect_ticket = state.begin_connect("pupil");
+            let connect_ticket = state.begin_connect("pupil").await;
+            conn.remember_connect_ticket("pupil", connect_ticket);
             info!(
                 "ConnectNeonRest: resolving hostname for device '{}'",
                 device_name
@@ -1628,12 +1705,21 @@ async fn handle_device_command(
                             "pupil".to_string(),
                             device,
                             connect_ticket,
-                            connection_closed,
+                            &conn.closed,
                         )
                         .await
                     {
                         info!("Pupil connect via discovery superseded (newer connect or connection closed); not registered");
                         let _ = orphan.disconnect().await;
+                        send_response(
+                            tx,
+                            BridgeResponse::device_error(
+                                "pupil".to_string(),
+                                "Connect superseded by a newer connect".to_string(),
+                                id,
+                            ),
+                        )
+                        .await;
                         return;
                     }
                     state.record_connection_attempt("pupil", true).await;

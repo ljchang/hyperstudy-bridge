@@ -49,6 +49,11 @@ pub struct AppState {
     /// what a newer connect registered — regardless of whether the server has
     /// observed the old socket's close yet.
     pub connect_tickets: Arc<DashMap<String, u64>>,
+    /// Per device id, the ticket of the connect that registered the device
+    /// currently in the registry. A connection whose own connect ticket is
+    /// older than this must not disconnect the device: a newer connect
+    /// (possibly from a connection that replaced it) owns it now.
+    pub registered_tickets: Arc<DashMap<String, u64>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -223,6 +228,7 @@ impl AppState {
             last_connect_configs: Arc::new(DashMap::new()),
             owned_recordings: Arc::new(DashMap::new()),
             connect_tickets: Arc::new(DashMap::new()),
+            registered_tickets: Arc::new(DashMap::new()),
             metrics: Arc::new(RwLock::new(Metrics::default())),
             performance_monitor: Arc::new(PerformanceMonitor::new()),
             start_time: Instant::now(),
@@ -297,11 +303,33 @@ impl AppState {
     }
 
     /// Start a connect for `id`: returns a ticket that identifies this attempt
-    /// as the newest. Call before any await in the connect path.
-    pub fn begin_connect(&self, id: &str) -> u64 {
+    /// as the newest. Issued under the registry lock — the same lock
+    /// `add_device_if_latest` checks under — so "newest ticket" and
+    /// "registered device" are always observed consistently. Call only for a
+    /// validated attempt (known device type, usable config) and before any
+    /// await in the connect path.
+    pub async fn begin_connect(&self, id: &str) -> u64 {
+        let _registry = self.devices.write().await;
         let mut entry = self.connect_tickets.entry(id.to_string()).or_insert(0);
         *entry += 1;
         *entry
+    }
+
+    /// Ticket of the connect that registered the device currently under `id`.
+    pub fn registered_ticket(&self, id: &str) -> Option<u64> {
+        self.registered_tickets.get(id).map(|v| *v)
+    }
+
+    /// True when a connection that last connected `id` with `own_ticket` would
+    /// be disconnecting a device that a *newer* connect registered — i.e. its
+    /// disconnect is stale and must not touch the registry. A connection that
+    /// never connected `id` (`None`) is never considered stale: a fresh page
+    /// may legitimately disconnect a device left connected by a previous one.
+    pub fn is_stale_disconnect(&self, id: &str, own_ticket: Option<u64>) -> bool {
+        match (own_ticket, self.registered_ticket(id)) {
+            (Some(own), Some(registered)) => registered > own,
+            _ => false,
+        }
     }
 
     /// Register `device` under `id` only if `ticket` is still the newest connect
@@ -324,6 +352,7 @@ impl AppState {
             return Err(device);
         }
         devices.insert(id.clone(), Arc::new(RwLock::new(device)));
+        self.registered_tickets.insert(id.clone(), ticket);
         drop(devices);
         self.performance_monitor.add_device(id).await;
         Ok(())
@@ -341,6 +370,7 @@ impl AppState {
         match devices.get(id) {
             Some(current) if Arc::ptr_eq(current, expected) => {
                 devices.remove(id);
+                self.registered_tickets.remove(id);
                 drop(devices);
                 self.performance_monitor.remove_device(id).await;
                 true
@@ -352,6 +382,7 @@ impl AppState {
     pub async fn remove_device(&self, id: &str) -> Option<Arc<RwLock<BoxedDevice>>> {
         let mut devices = self.devices.write().await;
         let result = devices.remove(id);
+        self.registered_tickets.remove(id);
 
         // Remove device from performance monitoring
         self.performance_monitor.remove_device(id).await;
@@ -654,8 +685,8 @@ mod device_identity_tests {
         let state = AppState::new();
         let open = AtomicBool::new(false);
         // Old connection starts connecting first, new connection second.
-        let old_ticket = state.begin_connect("pupil");
-        let new_ticket = state.begin_connect("pupil");
+        let old_ticket = state.begin_connect("pupil").await;
+        let new_ticket = state.begin_connect("pupil").await;
         // The newer connect finishes first and registers phone B.
         assert!(state
             .add_device_if_latest("pupil".into(), mock("phone-b"), new_ticket, &open)
@@ -677,7 +708,7 @@ mod device_identity_tests {
     async fn a_closed_connection_cannot_register_even_with_the_latest_ticket() {
         let state = AppState::new();
         let closed = AtomicBool::new(true);
-        let ticket = state.begin_connect("kernel");
+        let ticket = state.begin_connect("kernel").await;
         assert!(state
             .add_device_if_latest("kernel".into(), mock("k"), ticket, &closed)
             .await
@@ -686,17 +717,48 @@ mod device_identity_tests {
     }
 
     #[tokio::test]
+    async fn a_disconnect_from_an_older_connect_is_stale_once_a_newer_connect_registered() {
+        let state = AppState::new();
+        let open = AtomicBool::new(false);
+        // Connection A connects the kernel.
+        let a_ticket = state.begin_connect("kernel").await;
+        state
+            .add_device_if_latest("kernel".into(), mock("from-a"), a_ticket, &open)
+            .await
+            .unwrap();
+        // A's own disconnect would be fine right now.
+        assert!(!state.is_stale_disconnect("kernel", Some(a_ticket)));
+        // Connection B (the reloaded page) reconnects before the server has
+        // observed A's socket close; B's device replaces A's.
+        let b_ticket = state.begin_connect("kernel").await;
+        state
+            .add_device_if_latest("kernel".into(), mock("from-b"), b_ticket, &open)
+            .await
+            .unwrap();
+        // A's queued disconnect is now stale: it must not touch B's device.
+        assert!(state.is_stale_disconnect("kernel", Some(a_ticket)));
+        assert!(!state.is_stale_disconnect("kernel", Some(b_ticket)));
+        // A connection that never connected the kernel may still disconnect it.
+        assert!(!state.is_stale_disconnect("kernel", None));
+        // Once B's device is gone there is nothing to be stale against.
+        let b_device = state.get_device("kernel").await.unwrap();
+        assert!(state.remove_device_if_same("kernel", &b_device).await);
+        assert!(!state.is_stale_disconnect("kernel", Some(a_ticket)));
+        assert!(state.registered_ticket("kernel").is_none());
+    }
+
+    #[tokio::test]
     async fn disconnect_removes_only_the_exact_device_it_disconnected() {
         let state = AppState::new();
         let open = AtomicBool::new(false);
-        let t1 = state.begin_connect("kernel");
+        let t1 = state.begin_connect("kernel").await;
         state
             .add_device_if_latest("kernel".into(), mock("first"), t1, &open)
             .await
             .unwrap();
         let first = state.get_device("kernel").await.unwrap();
         // A newer connection replaces it.
-        let t2 = state.begin_connect("kernel");
+        let t2 = state.begin_connect("kernel").await;
         state
             .add_device_if_latest("kernel".into(), mock("second"), t2, &open)
             .await
