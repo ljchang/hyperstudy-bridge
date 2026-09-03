@@ -613,19 +613,24 @@ impl NeonLslManager {
             tasks.remove(device_name)
         };
 
-        if let Some(task) = task {
-            // Signal shutdown
-            task.shutdown.store(true, Ordering::Relaxed);
-            // Wait for task to complete (with timeout)
-            let _ = tokio::time::timeout(Duration::from_secs(2), task._handle).await;
-        }
-
-        // Close the inlet
-        if let Some(device) = self.get_device(device_name).await {
-            if let Some(uid) = device.gaze_stream_uid {
-                let _ = self.inlet_manager.close_inlet(&uid).await;
-                let _ = self.inlet_manager.remove_inlet(&uid).await;
+        // Close the inlet the task was actually reading — the discovery label
+        // may have been re-keyed since it started, so never resolve the uid
+        // through the (possibly stale) display name when a task exists.
+        let uid = match task {
+            Some(task) => {
+                let uid = task.stream_uid.clone();
+                task.shutdown.store(true, Ordering::Relaxed);
+                let _ = tokio::time::timeout(Duration::from_secs(2), task._handle).await;
+                Some(uid)
             }
+            None => self
+                .get_device(device_name)
+                .await
+                .and_then(|d| d.gaze_stream_uid),
+        };
+        if let Some(uid) = uid {
+            let _ = self.inlet_manager.close_inlet(&uid).await;
+            let _ = self.inlet_manager.remove_inlet(&uid).await;
         }
 
         info!(
@@ -647,19 +652,21 @@ impl NeonLslManager {
             tasks.remove(device_name)
         };
 
-        if let Some(task) = task {
-            // Signal shutdown
-            task.shutdown.store(true, Ordering::Relaxed);
-            // Wait for task to complete (with timeout)
-            let _ = tokio::time::timeout(Duration::from_secs(2), task._handle).await;
-        }
-
-        // Close the inlet
-        if let Some(device) = self.get_device(device_name).await {
-            if let Some(uid) = device.events_stream_uid {
-                let _ = self.inlet_manager.close_inlet(&uid).await;
-                let _ = self.inlet_manager.remove_inlet(&uid).await;
+        let uid = match task {
+            Some(task) => {
+                let uid = task.stream_uid.clone();
+                task.shutdown.store(true, Ordering::Relaxed);
+                let _ = tokio::time::timeout(Duration::from_secs(2), task._handle).await;
+                Some(uid)
             }
+            None => self
+                .get_device(device_name)
+                .await
+                .and_then(|d| d.events_stream_uid),
+        };
+        if let Some(uid) = uid {
+            let _ = self.inlet_manager.close_inlet(&uid).await;
+            let _ = self.inlet_manager.remove_inlet(&uid).await;
         }
 
         info!(

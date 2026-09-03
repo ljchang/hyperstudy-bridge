@@ -20,7 +20,9 @@ let initialized = false;
 // Timeout constants (in milliseconds)
 // Connect timeout is longer to accommodate mDNS (.local) hostname resolution,
 // which can take 5+ seconds on macOS before the actual HTTP request begins.
-const CONNECT_TIMEOUT_MS = 15000;
+// A pinned Neon connect can take ~3 s mDNS + up to three 5 s HTTP attempts;
+// the UI must not give up (and let the user retry) before the backend does.
+const CONNECT_TIMEOUT_MS = 30000;
 const DISCONNECT_TIMEOUT_MS = 5000;
 const COMMAND_TIMEOUT_MS = 5000;
 

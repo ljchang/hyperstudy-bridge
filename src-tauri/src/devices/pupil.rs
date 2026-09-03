@@ -410,7 +410,15 @@ impl PupilDevice {
     /// resolved the same phone, and piling both participants' markers into one
     /// recording is worse than failing loudly.
     pub async fn start_recording(&mut self) -> Result<String, DeviceError> {
-        if let Ok(status) = self.get_neon_status().await {
+        // Fail closed like stop/cancel: if we cannot see whether the phone is
+        // already recording for someone else, we must not start on it.
+        let status = self.get_neon_status().await.map_err(|e| {
+            DeviceError::CommunicationError(format!(
+                "could not check whether the phone is already recording ({}); refusing to start — retry when the phone is reachable",
+                e
+            ))
+        })?;
+        {
             if let Some(rec) = status.recording.filter(Self::recording_is_active) {
                 let ours =
                     self.recording_owned && self.recording_id.as_deref() == Some(rec.id.as_str());

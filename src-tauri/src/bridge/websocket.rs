@@ -1,3 +1,6 @@
+use crate::bridge::device_queues::{
+    CommandHandler, DeviceQueues, Dispatch, QueuedCommand, DEVICE_QUEUE_CAPACITY, MAX_DEVICE_QUEUES,
+};
 use crate::bridge::message::{CommandAction, QueryTarget};
 use crate::bridge::state::DeviceStatusEvent;
 use crate::bridge::{AppState, BridgeCommand, BridgeResponse, MessageHandler};
@@ -15,11 +18,6 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
-
-/// Pending commands allowed per device before the bridge rejects new ones with
-/// an error instead of buffering without bound (and replaying stale markers
-/// minutes later once a stalled device recovers).
-const DEVICE_QUEUE_CAPACITY: usize = 256;
 
 const WS_PORT: u16 = 9000;
 #[allow(dead_code)]
@@ -174,16 +172,33 @@ async fn handle_connection<R: Runtime>(
     let connection_closed_for_workers = connection_closed.clone();
 
     let receive_task = tokio::spawn(async move {
-        // Per-device FIFO queues. Every device command — connect, send,
-        // send_event, disconnect, … — runs on that device's own worker task, in
-        // arrival order. A Kernel stuck in a reconnect can no longer hold up
-        // Neon markers arriving on the same WebSocket, and a `disconnect` can
-        // never overtake the `send_event` that preceded it. Queries and
-        // subscriptions stay inline. Queues are bounded (see
-        // DEVICE_QUEUE_CAPACITY); once the connection closes, commands still
-        // queued are dropped while the in-flight one finishes.
-        let mut device_queues: std::collections::HashMap<String, mpsc::Sender<QueuedCommand>> =
-            std::collections::HashMap::new();
+        // Per-device FIFO queues (see bridge::device_queues): every device
+        // command runs on the queue of the resource it mutates, in arrival
+        // order; devices never wait on each other; queues are bounded; and
+        // commands still queued when this connection closes are dropped.
+        let handler: CommandHandler = {
+            let state = state_clone.clone();
+            let tx = tx.clone();
+            let closed = connection_closed_for_workers.clone();
+            Arc::new(move |cmd: QueuedCommand| {
+                let state = state.clone();
+                let tx = tx.clone();
+                let closed = closed.clone();
+                Box::pin(async move {
+                    handle_device_command(
+                        &state,
+                        cmd.device,
+                        cmd.action,
+                        cmd.payload,
+                        cmd.id,
+                        &tx,
+                        &closed,
+                    )
+                    .await
+                })
+            })
+        };
+        let mut device_queues = DeviceQueues::new(connection_closed_for_workers.clone(), handler);
 
         while let Some(msg) = ws_receiver.next().await {
             if should_stop_clone.load(Ordering::Relaxed) {
@@ -204,48 +219,14 @@ async fn handle_connection<R: Runtime>(
                             id,
                         }) => {
                             info!("Parsed command successfully");
-                            let key = device.to_lowercase();
-                            let sender = device_queues.entry(key.clone()).or_insert_with(|| {
-                                let (qtx, mut qrx) =
-                                    mpsc::channel::<QueuedCommand>(DEVICE_QUEUE_CAPACITY);
-                                let worker_state = state_clone.clone();
-                                let worker_tx = tx.clone();
-                                let worker_closed = connection_closed_for_workers.clone();
-                                tokio::spawn(async move {
-                                    while let Some(cmd) = qrx.recv().await {
-                                        if worker_closed.load(Ordering::Relaxed) {
-                                            debug!(
-                                                "Connection closed; dropping queued {:?} for {}",
-                                                cmd.action, cmd.device
-                                            );
-                                            continue;
-                                        }
-                                        handle_device_command(
-                                            &worker_state,
-                                            cmd.device,
-                                            cmd.action,
-                                            cmd.payload,
-                                            cmd.id,
-                                            &worker_tx,
-                                        )
-                                        .await;
-                                    }
-                                    debug!("Device queue worker for {} finished", key);
-                                });
-                                qtx
-                            });
-                            match sender.try_send(QueuedCommand {
+                            match device_queues.dispatch(QueuedCommand {
                                 device,
                                 action,
                                 payload,
                                 id,
                             }) {
-                                Ok(()) => {}
-                                Err(mpsc::error::TrySendError::Full(cmd)) => {
-                                    warn!(
-                                        "Command queue for {} is full ({} pending); rejecting {:?}",
-                                        cmd.device, DEVICE_QUEUE_CAPACITY, cmd.action
-                                    );
+                                Dispatch::Queued => {}
+                                Dispatch::Full(cmd) => {
                                     send_response(
                                         &tx,
                                         BridgeResponse::device_error(
@@ -259,8 +240,29 @@ async fn handle_connection<R: Runtime>(
                                     )
                                     .await;
                                 }
-                                Err(mpsc::error::TrySendError::Closed(_)) => {
-                                    warn!("Device queue worker gone; command dropped");
+                                Dispatch::TooManyQueues(cmd) => {
+                                    warn!(
+                                        "Too many distinct devices on one connection; rejecting {}",
+                                        cmd.device
+                                    );
+                                    send_response(
+                                        &tx,
+                                        BridgeResponse::device_error(
+                                            cmd.device,
+                                            format!(
+                                                "Too many distinct devices on this connection (limit {})",
+                                                MAX_DEVICE_QUEUES
+                                            ),
+                                            cmd.id,
+                                        ),
+                                    )
+                                    .await;
+                                }
+                                Dispatch::WorkerGone(cmd) => {
+                                    warn!(
+                                        "Device queue worker for {} gone; command dropped",
+                                        cmd.device
+                                    );
                                 }
                             }
                         }
@@ -312,6 +314,9 @@ async fn handle_connection<R: Runtime>(
     tokio::select! {
         result = &mut send_task => {
             debug!("Send task completed: {:?}, draining receive task", result);
+            // Nothing can reach this client any more: stop queued work first,
+            // then let the command in flight finish.
+            connection_closed.store(true, Ordering::Relaxed);
             should_stop.store(true, Ordering::Relaxed);
             // Let the current handle_command finish (up to 10s)
             let _ = tokio::time::timeout(Duration::from_secs(10), receive_task).await;
@@ -319,11 +324,13 @@ async fn handle_connection<R: Runtime>(
         },
         result = &mut receive_task => {
             debug!("Receive task completed: {:?}", result);
+            connection_closed.store(true, Ordering::Relaxed);
             send_task.abort();
             status_task.abort();
         },
         result = &mut status_task => {
             debug!("Status task completed: {:?}", result);
+            connection_closed.store(true, Ordering::Relaxed);
             send_task.abort();
             receive_task.abort();
         },
@@ -365,14 +372,6 @@ fn reclaim_pupil_recording(state: &Arc<AppState>, device: &mut Box<dyn Device>) 
             active, phone
         );
     }
-}
-
-/// A device command parked on its device's FIFO queue.
-struct QueuedCommand {
-    device: String,
-    action: CommandAction,
-    payload: Option<serde_json::Value>,
-    id: Option<String>,
 }
 
 /// Re-create and connect a device from the payload that last connected it, so a
@@ -447,7 +446,10 @@ async fn handle_command<R: Runtime>(
             payload,
             id,
         } => {
-            handle_device_command(state, device, action, payload, id, tx).await;
+            // Commands normally arrive via the per-device queues in the receive
+            // loop; this direct path has no owning-connection flag.
+            let never_closed = Arc::new(AtomicBool::new(false));
+            handle_device_command(state, device, action, payload, id, tx, &never_closed).await;
         }
         BridgeCommand::Query { target, id } => {
             handle_query(state, target, id, tx).await;
@@ -484,6 +486,10 @@ async fn handle_device_command(
     payload: Option<serde_json::Value>,
     id: Option<String>,
     tx: &mpsc::Sender<BridgeResponse>,
+    // The owning connection's closed flag. A connect that was already running
+    // when its connection went away must not register its device afterwards —
+    // a newer connection may have selected a different phone by then.
+    connection_closed: &Arc<AtomicBool>,
 ) {
     let device_id = device_id.to_lowercase();
     info!(
@@ -798,6 +804,14 @@ async fn handle_device_command(
                     // Record successful connection attempt
                     state.record_connection_attempt(&device_id, true).await;
 
+                    if connection_closed.load(Ordering::Relaxed) {
+                        info!(
+                            "Connection closed while connecting {}; not registering the device",
+                            device_id
+                        );
+                        let _ = device.disconnect().await;
+                        return;
+                    }
                     if device_id == "pupil" {
                         reclaim_pupil_recording(state, &mut device);
                     }
@@ -1505,6 +1519,11 @@ async fn handle_device_command(
             match device.connect().await {
                 Ok(_) => {
                     state.record_connection_attempt("pupil", true).await;
+                    if connection_closed.load(Ordering::Relaxed) {
+                        info!("Connection closed while connecting pupil via discovery; not registering");
+                        let _ = device.disconnect().await;
+                        return;
+                    }
                     reclaim_pupil_recording(state, &mut device);
                     let info = device.get_info();
                     state.add_device("pupil".to_string(), device).await;
