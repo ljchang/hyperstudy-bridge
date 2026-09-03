@@ -14,7 +14,6 @@ use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, RwLock};
 use tracing::{info, warn};
 
-#[derive(Clone)]
 /// Outcome of `AppState::device_for_disconnect`.
 pub enum DisconnectTarget {
     /// A newer connect registered the device; the caller must not touch it.
@@ -25,6 +24,7 @@ pub enum DisconnectTarget {
     Device(Arc<RwLock<BoxedDevice>>),
 }
 
+#[derive(Clone)]
 pub struct AppState {
     pub devices: Arc<RwLock<HashMap<String, Arc<RwLock<BoxedDevice>>>>>,
     pub connections: Arc<DashMap<String, ConnectionInfo>>,
@@ -282,16 +282,18 @@ impl AppState {
         self.performance_monitor.add_device(id).await;
     }
 
-    /// Register `device` only if nothing is registered under `id` yet. Returns
-    /// false (and drops `device`) when another connect won the race — the
-    /// auto-reconnect path must never replace a device an explicit connect
-    /// just registered.
-    pub async fn add_device_if_absent(&self, id: String, device: BoxedDevice) -> bool {
+    /// Register `device` only if nothing is registered under `id` yet AND
+    /// `ticket` (issued by `begin_connect` when this attempt started) is still
+    /// the newest connect for `id`. Returns false (and drops `device`) when an
+    /// explicit connect has registered meanwhile or started after us and is
+    /// still in flight — the auto-reconnect path must never replace or
+    /// pre-empt what the operator explicitly asked for.
+    pub async fn add_device_if_absent(&self, id: String, device: BoxedDevice, ticket: u64) -> bool {
         let mut devices = self.devices.write().await;
-        if devices.contains_key(&id) {
+        let latest = self.connect_tickets.get(&id).map(|v| *v).unwrap_or(0);
+        if devices.contains_key(&id) || ticket != latest {
             return false;
         }
-        let ticket = self.issue_ticket_locked(&id);
         devices.insert(id.clone(), Arc::new(RwLock::new(device)));
         self.registered_tickets.insert(id.clone(), ticket);
         drop(devices);
@@ -826,9 +828,10 @@ mod device_identity_tests {
         // The auto-connect path also takes ownership when it registers.
         let ui = state.get_device("kernel").await.unwrap();
         state.remove_device_if_same("kernel", &ui).await;
+        let auto_ticket = state.begin_connect("kernel").await;
         assert!(
             state
-                .add_device_if_absent("kernel".into(), mock("auto"))
+                .add_device_if_absent("kernel".into(), mock("auto"), auto_ticket)
                 .await
         );
         assert!(matches!(
@@ -839,6 +842,37 @@ mod device_identity_tests {
             state.device_for_disconnect("kernel", None).await,
             DisconnectTarget::Device(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn an_auto_connect_never_preempts_an_explicit_connect_that_started_later() {
+        let state = AppState::new();
+        let open = AtomicBool::new(false);
+        // Auto-reconnect (saved config) starts first...
+        let auto_ticket = state.begin_connect("kernel").await;
+        // ...the operator's explicit connect (current config) starts after it.
+        let explicit_ticket = state.begin_connect("kernel").await;
+        // Auto finishes first: it must NOT register, the explicit one is coming.
+        assert!(
+            !state
+                .add_device_if_absent("kernel".into(), mock("auto"), auto_ticket)
+                .await
+        );
+        assert!(state.get_device("kernel").await.is_none());
+        // The explicit connect registers normally.
+        assert!(state
+            .add_device_if_latest("kernel".into(), mock("explicit"), explicit_ticket, &open)
+            .await
+            .is_ok());
+        let registered = state.get_device("kernel").await.unwrap();
+        assert_eq!(registered.read().await.get_info().name, "explicit");
+        // An auto-connect can't replace a registered device either.
+        let late_auto = state.begin_connect("kernel").await;
+        assert!(
+            !state
+                .add_device_if_absent("kernel".into(), mock("auto-2"), late_auto)
+                .await
+        );
     }
 
     #[tokio::test]

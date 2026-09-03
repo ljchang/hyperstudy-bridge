@@ -178,6 +178,10 @@ pub async fn connect_device(
 
     let device_id = device.get_info().id.clone();
 
+    // Ticket at start so this native connect is ordered with WebSocket
+    // connects: whichever started last is the one that gets registered.
+    let ticket = state.begin_connect(&device_id).await;
+
     match device.connect().await {
         Ok(_) => {
             let info = device.get_info();
@@ -185,7 +189,17 @@ pub async fn connect_device(
             // Record successful connection attempt
             state.record_connection_attempt(&device_id, true).await;
 
-            state.add_device(device_id.clone(), device).await;
+            let never_closed = std::sync::atomic::AtomicBool::new(false);
+            if let Err(mut orphan) = state
+                .add_device_if_latest(device_id.clone(), device, ticket, &never_closed)
+                .await
+            {
+                let _ = orphan.disconnect().await;
+                return Ok(CommandResult::error(format!(
+                    "Connect for {} was superseded by a newer connect",
+                    device_id
+                )));
+            }
 
             // Set up performance callback for TTL devices AFTER registration
             // This prevents race conditions where the callback fires before

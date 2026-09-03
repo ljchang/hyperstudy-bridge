@@ -416,15 +416,18 @@ async fn try_auto_connect(state: &Arc<AppState>, device_id: &str) -> bool {
         "Auto-connecting {} from last known config ({})",
         device_id, ip
     );
+    // Ticket at START, like every other connect: an explicit connect that
+    // starts after this auto-connect must win even if it finishes later.
+    let ticket = state.begin_connect(device_id).await;
     let mut device: Box<dyn Device> = Box::new(KernelDevice::new(ip.to_string()));
     match device.connect().await {
         Ok(_) => {
             state.record_connection_attempt(device_id, true).await;
             let info = device.get_info();
-            // An explicit connect may have won the race while we were
-            // connecting; never replace what it registered.
+            // An explicit connect may have won the race (registered already, or
+            // started later and still in flight); never replace or pre-empt it.
             if !state
-                .add_device_if_absent(device_id.to_string(), device)
+                .add_device_if_absent(device_id.to_string(), device, ticket)
                 .await
             {
                 info!(
@@ -628,14 +631,11 @@ async fn handle_device_command(
                     .await
                 {
                     Ok(receivers) => {
-                        if conn.closed.load(Ordering::Relaxed) {
-                            // The client went away while we were connecting: don't
-                            // leave streams running against a dead channel.
-                            info!("Connection closed while connecting FRENZ; rolling back");
-                            let _ = state.frenz_manager.disconnect_all().await;
-                            let _ = state.frenz_process.stop().await;
-                            return;
-                        }
+                        // Note: no dead-connection rollback here. FrenzLslManager is a
+                        // process-wide singleton without per-consumer ownership, so a
+                        // teardown issued by a connection that turned out to be dead
+                        // could destroy streams a newer client has since opened. The
+                        // streams stay until the next explicit FRENZ connect/disconnect.
                         let connected_count = receivers.len();
                         info!(
                             "FRENZ connected {} streams for '{}'",
@@ -2159,13 +2159,8 @@ async fn handle_device_command(
                 .await
             {
                 Ok(status) => {
-                    if conn.closed.load(Ordering::Relaxed) {
-                        // Nobody is waiting for this connect any more; a newer
-                        // connection will connect on its own terms.
-                        info!("Connection closed while connecting EyeLink; rolling back");
-                        let _ = state.eyelink_manager.disconnect().await;
-                        return;
-                    }
+                    // No dead-connection rollback: EyeLinkManager is a singleton
+                    // without per-consumer ownership (see the FRENZ note above).
                     send_response(
                         tx,
                         BridgeResponse::data(
@@ -2431,14 +2426,13 @@ async fn handle_device_command(
         CommandAction::ConnectEyeLinkGaze => {
             match state.eyelink_manager.start_gaze_stream().await {
                 Ok(mut gaze_rx) => {
-                    if conn.closed.load(Ordering::Relaxed) {
-                        let _ = state.eyelink_manager.stop_gaze_stream().await;
-                        return;
-                    }
                     // Spawn a task to forward gaze data to WebSocket.
-                    // When the WebSocket closes (tx_clone.send fails, or the closed
-                    // flag is seen while the stream is quiet), we proactively stop
-                    // the gaze stream to avoid wasting CPU on polling with no consumer.
+                    // When the WebSocket closes (tx_clone.send fails), we proactively
+                    // stop the gaze stream to avoid wasting CPU on polling with no
+                    // consumer (pre-existing behaviour). A quiet stream only stops
+                    // forwarding on the closed flag: the manager is a singleton with
+                    // no per-consumer ownership, so an unowned stop could hit a
+                    // newer client's stream.
                     let tx_clone = tx.clone();
                     let eyelink_mgr = state.eyelink_manager.clone();
                     let closed = conn.closed.clone();
@@ -2451,8 +2445,7 @@ async fn handle_device_command(
                                 },
                                 _ = tokio::time::sleep(Duration::from_secs(1)) => {
                                     if closed.load(Ordering::Relaxed) {
-                                        tracing::debug!("WebSocket closed (quiet stream), stopping gaze stream");
-                                        let _ = eyelink_mgr.stop_gaze_stream().await;
+                                        tracing::debug!("WebSocket closed (quiet stream), stopping forwarder");
                                         break;
                                     }
                                     continue;
