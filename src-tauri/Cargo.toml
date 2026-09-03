@@ -37,6 +37,8 @@ lsl = { git = "https://github.com/labstreaminglayer/liblsl-rust.git", branch = "
 
 # HTTP Client (for Neon REST API)
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# mDNS/DNS-SD browse (Neon Companion phones advertise as PI monitor:<name>:<id>)
+mdns-sd = "0.21"
 
 # Utilities
 anyhow = "1"

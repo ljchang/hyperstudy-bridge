@@ -207,7 +207,12 @@
       let phaseTimeout = null;
 
       // Show contextual progress phases based on device type
-      if (deviceId === 'pupil' && deviceConfig.url?.includes('.local')) {
+      if (deviceId === 'pupil' && !deviceConfig.url && deviceConfig.device_id) {
+        connectPhaseText = 'Finding pinned phone on the network...';
+        phaseTimeout = setTimeout(() => {
+          connectPhaseText = 'Connecting to Neon Companion...';
+        }, 5000);
+      } else if (deviceId === 'pupil' && deviceConfig.url?.includes('.local')) {
         connectPhaseText = 'Resolving hostname...';
         phaseTimeout = setTimeout(() => {
           connectPhaseText = 'Connecting to Neon Companion...';
@@ -526,8 +531,34 @@
     {:else if device.id === 'pupil'}
       <div class="config-row">
         <span class="label">URL:</span>
-        <span class="value">{device.config.url || 'Auto-discover'}</span>
+        <span class="value">
+          {device.config.url || (device.config.device_id ? 'Resolved from pinned phone' : 'Not configured')}
+        </span>
       </div>
+      <div class="config-row">
+        <span class="label">Pinned phone:</span>
+        <span class="value">{device.config.device_id || 'Any (not pinned)'}</span>
+      </div>
+      {#if device.status === 'connected' && device.info?.device_id}
+        <div class="config-row">
+          <span class="label">Connected:</span>
+          <span class="value">
+            {device.info.device_name} · {device.info.device_id} · {device.info.device_ip}{device.info
+              .battery_level != null
+              ? ` · ${Math.round(device.info.battery_level)}%`
+              : ''}
+          </span>
+        </div>
+        {#if device.info.recording_id}
+          <div class="config-row">
+            <span class="label">Recording:</span>
+            <span class="value">
+              {device.info.recording_owned ? 'started by this station' : 'started elsewhere'}
+              ({String(device.info.recording_id).slice(0, 8)})
+            </span>
+          </div>
+        {/if}
+      {/if}
     {:else if device.id === 'eyelink'}
       <div class="config-row">
         <span class="label">IP:</span>

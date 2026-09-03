@@ -1,6 +1,7 @@
 <script>
   import { listTtlDevices } from '../services/tauri.js';
   import { getSecret, setSecret, removeSecret } from '../services/stronghold.js';
+  import * as bridgeStore from '../stores/websocket.svelte.js';
 
   // Use Svelte 5 $props() rune
   let { isOpen = false, device = null, onSave = () => {}, onClose = () => {} } = $props();
@@ -17,6 +18,12 @@
   let detectedTtlDevices = $state([]);
   let isDetecting = $state(false);
   let showDeviceSelector = $state(false);
+
+  // Neon phone discovery (mDNS) state
+  let discoveredPhones = $state([]);
+  let isDiscoveringPhones = $state(false);
+  let phoneSearched = $state(false);
+  let phoneDiscoveryError = $state('');
 
   // Device configuration templates with validation rules
   const deviceConfigs = {
@@ -69,10 +76,18 @@
       url: {
         label: 'Neon Companion URL',
         type: 'text',
-        placeholder: 'neon.local:8080 or 192.168.1.101:8080',
-        required: true,
+        placeholder: '192.168.1.101:8080 (leave empty to connect by pinned phone)',
+        required: false,
         pattern: '^[\\w.-]+(:\\d+)?$',
         errorMessage: 'Invalid URL format. Expected hostname:port',
+      },
+      device_id: {
+        label: 'Pinned phone (hardware ID)',
+        type: 'text',
+        placeholder: 'e.g. a41fe4fe2bccf6c3 — use "Find phones" below',
+        required: false,
+        pattern: '^[0-9a-fA-F]*$',
+        errorMessage: 'Hardware ID is hexadecimal',
       },
     },
     eyelink: {
@@ -364,8 +379,38 @@
       }
     });
 
+    // Neon: either an address or a pinned phone is needed. With a pinned phone the
+    // bridge resolves the address itself over mDNS, so URL may stay empty.
+    if (device?.id === 'pupil' && !formData.url && !formData.device_id) {
+      newErrors.url = 'Enter the Companion URL or pin a phone with "Find phones"';
+      hasErrors = true;
+    }
+
     errors = newErrors;
     return !hasErrors;
+  }
+
+  // Ask the bridge to browse mDNS for Neon Companion phones (name, hardware id, IP).
+  async function findPhones() {
+    isDiscoveringPhones = true;
+    phoneDiscoveryError = '';
+    try {
+      const result = await bridgeStore.discoverNeonPhones(3000);
+      discoveredPhones = Array.isArray(result?.phones) ? result.phones : [];
+      phoneSearched = true;
+    } catch (error) {
+      phoneDiscoveryError = error.message || 'Phone discovery failed';
+      discoveredPhones = [];
+      phoneSearched = true;
+    } finally {
+      isDiscoveringPhones = false;
+    }
+  }
+
+  // Pin this station to a discovered phone: hardware id + its current address.
+  function usePhone(phone) {
+    handleFieldChange('device_id', phone.device_id);
+    handleFieldChange('url', `${phone.ip}:${phone.port}`);
   }
 
   function handleFieldChange(fieldName, value, isLsl = false) {
@@ -626,6 +671,65 @@
                   {/if}
                 </div>
               {/each}
+
+              {#if device.id === 'pupil'}
+                <div class="phone-finder">
+                  <div class="phone-finder-header">
+                    <span class="form-label">Phones on this network</span>
+                    <button
+                      type="button"
+                      class="phone-btn"
+                      onclick={findPhones}
+                      disabled={isDiscoveringPhones}
+                    >
+                      {isDiscoveringPhones ? 'Searching…' : 'Find phones'}
+                    </button>
+                  </div>
+                  <p class="phone-hint">
+                    Pick the phone this station should always use. The bridge then connects by hardware
+                    ID and refuses any other phone that answers to the same name.
+                  </p>
+                  {#if phoneDiscoveryError}
+                    <p class="phone-error">{phoneDiscoveryError}</p>
+                  {/if}
+                  {#if discoveredPhones.length > 0}
+                    <ul class="phone-list">
+                      {#each discoveredPhones as phone (phone.device_id)}
+                        <li class="phone-row" class:selected={formData.device_id === phone.device_id}>
+                          <div class="phone-main">
+                            <span class="phone-name">{phone.device_name}</span>
+                            <span class="phone-id">{phone.device_id}</span>
+                          </div>
+                          <div class="phone-meta">
+                            <span>{phone.ip}:{phone.port}</span>
+                            {#if phone.reachable}
+                              {#if phone.battery_level != null}
+                                <span>{Math.round(phone.battery_level)}% battery</span>
+                              {/if}
+                              {#if phone.recording_id}
+                                <span class="phone-flag busy">recording</span>
+                              {/if}
+                              {#if phone.glasses_connected === false}
+                                <span class="phone-flag warn">no glasses</span>
+                              {/if}
+                            {:else}
+                              <span class="phone-flag warn">unreachable</span>
+                            {/if}
+                          </div>
+                          <button type="button" class="phone-btn small" onclick={() => usePhone(phone)}>
+                            {formData.device_id === phone.device_id ? 'Pinned' : 'Use this phone'}
+                          </button>
+                        </li>
+                      {/each}
+                    </ul>
+                  {:else if phoneSearched && !isDiscoveringPhones && !phoneDiscoveryError}
+                    <p class="phone-hint">
+                      No Neon Companion phones found. Make sure the app is open and the phone is on the
+                      same Wi-Fi as this computer.
+                    </p>
+                  {/if}
+                </div>
+              {/if}
             {:else}
               <div class="no-config">
                 <p>No configuration options available for this device type.</p>
@@ -1184,5 +1288,114 @@
   .device-option-details {
     font-size: 0.75rem;
     opacity: 0.7;
+  }
+
+  /* Neon phone finder */
+  .phone-finder {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-color, #e2e8f0);
+  }
+  .phone-finder-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+  .phone-hint {
+    margin: 0.35rem 0 0;
+    font-size: 0.8rem;
+    color: var(--text-secondary, #64748b);
+  }
+  .phone-error {
+    margin: 0.5rem 0 0;
+    font-size: 0.8rem;
+    color: var(--error-color, #dc2626);
+  }
+  .phone-btn {
+    padding: 0.4rem 0.8rem;
+    border: 1px solid var(--border-color, #cbd5e1);
+    border-radius: 6px;
+    background: var(--bg-secondary, #f8fafc);
+    color: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .phone-btn:hover:not(:disabled) {
+    background: var(--bg-hover, #eef2f7);
+  }
+  .phone-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+  .phone-btn.small {
+    padding: 0.3rem 0.6rem;
+    font-size: 0.8rem;
+  }
+  .phone-list {
+    list-style: none;
+    margin: 0.75rem 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .phone-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      'main action'
+      'meta action';
+    gap: 0.15rem 0.75rem;
+    align-items: center;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 6px;
+  }
+  .phone-row.selected {
+    border-color: var(--primary-color, #2563eb);
+    background: var(--bg-selected, rgba(37, 99, 235, 0.06));
+  }
+  .phone-main {
+    grid-area: main;
+    display: flex;
+    gap: 0.6rem;
+    align-items: baseline;
+    min-width: 0;
+  }
+  .phone-name {
+    font-weight: 600;
+  }
+  .phone-id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.8rem;
+    color: var(--text-secondary, #64748b);
+  }
+  .phone-meta {
+    grid-area: meta;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    font-size: 0.78rem;
+    color: var(--text-secondary, #64748b);
+  }
+  .phone-row .phone-btn {
+    grid-area: action;
+  }
+  .phone-flag {
+    padding: 0 0.4rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .phone-flag.busy {
+    background: rgba(220, 38, 38, 0.12);
+    color: var(--error-color, #dc2626);
+  }
+  .phone-flag.warn {
+    background: rgba(217, 119, 6, 0.14);
+    color: #b45309;
   }
 </style>
