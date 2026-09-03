@@ -216,6 +216,10 @@ struct PupilCommand {
     name: Option<String>,
     #[serde(default)]
     timestamp: Option<i64>,
+    /// `recording_stop` / `recording_cancel` only: override the ownership guard
+    /// and stop a recording this bridge did not start.
+    #[serde(default)]
+    force: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -235,6 +239,10 @@ pub struct PupilDevice {
     status: DeviceStatus,
     config: DeviceConfig,
     recording_id: Option<String>,
+    /// True when this bridge issued `recording:start` for `recording_id`; false
+    /// when the id was adopted from a recording already running on the phone.
+    /// Only owned recordings may be stopped without `force`.
+    recording_owned: bool,
     neon_status: Option<NeonStatus>,
     connection_retry_count: u32,
     max_retries: u32,
@@ -259,6 +267,7 @@ impl PupilDevice {
             status: DeviceStatus::Disconnected,
             config: DeviceConfig::default(),
             recording_id: None,
+            recording_owned: false,
             neon_status: None,
             connection_retry_count: 0,
             max_retries: 3,
@@ -364,8 +373,39 @@ impl PupilDevice {
         Ok(neon_status)
     }
 
+    /// True if a status `Recording` item describes a recording that is still
+    /// running (the phone reports the last recording briefly with a terminal
+    /// action after it ends).
+    fn recording_is_active(rec: &RecordingInfo) -> bool {
+        !matches!(
+            rec.action.to_ascii_uppercase().as_str(),
+            "STOP" | "SAVE" | "DISCARD" | "CANCEL" | "ERROR"
+        )
+    }
+
     /// Start a recording. Returns the recording UUID.
+    ///
+    /// Refuses (`PhoneBusy`) if the phone is already recording something this
+    /// bridge did not start: on a shared lab network that means another station
+    /// resolved the same phone, and piling both participants' markers into one
+    /// recording is worse than failing loudly.
     pub async fn start_recording(&mut self) -> Result<String, DeviceError> {
+        if let Ok(status) = self.get_neon_status().await {
+            if let Some(rec) = status.recording.filter(Self::recording_is_active) {
+                let ours =
+                    self.recording_owned && self.recording_id.as_deref() == Some(rec.id.as_str());
+                if ours {
+                    // Retry after a lost response — idempotent.
+                    info!(device = "pupil", recording_id = %rec.id, "Recording already running (ours)");
+                    return Ok(rec.id);
+                }
+                return Err(DeviceError::PhoneBusy(format!(
+                    "phone is already recording {} which this bridge did not start — another station may be connected to this phone",
+                    rec.id
+                )));
+            }
+        }
+
         let url = format!("{}/recording:start", self.base_url);
         let resp = self.http_client.post(&url).send().await.map_err(|e| {
             DeviceError::CommunicationError(format!("POST recording:start failed: {}", e))
@@ -386,6 +426,7 @@ impl PupilDevice {
 
         let id = envelope.result.id;
         self.recording_id = Some(id.clone());
+        self.recording_owned = true;
         info!(device = "pupil", recording_id = %id, "Recording started");
 
         self.wait_for_recording_active(&id).await;
@@ -441,8 +482,65 @@ impl PupilDevice {
         }
     }
 
+    /// Ownership guard shared by stop/cancel. Returns `Ok(false)` when there is
+    /// nothing to stop, `Ok(true)` when the active recording is ours (or `force`),
+    /// and `RecordingNotOwned` when it belongs to someone else.
+    async fn check_recording_ownership(
+        &mut self,
+        verb: &str,
+        force: bool,
+    ) -> Result<bool, DeviceError> {
+        if force {
+            warn!(
+                device = "pupil",
+                "{} recording with force=true — skipping ownership check", verb
+            );
+            return Ok(true);
+        }
+        let status = match self.get_neon_status().await {
+            Ok(s) => s,
+            Err(e) => {
+                // If we can't see the phone the request below will fail on its own;
+                // don't turn a transient status hiccup into a refusal.
+                warn!(device = "pupil", error = %e, "Could not verify recording ownership before {}; proceeding", verb);
+                return Ok(true);
+            }
+        };
+        match status.recording.filter(Self::recording_is_active) {
+            None => {
+                warn!(
+                    device = "pupil",
+                    ours = ?self.recording_id,
+                    "No active recording on the phone — nothing to {} (stopped by another client?)", verb
+                );
+                self.recording_id = None;
+                self.recording_owned = false;
+                Ok(false)
+            }
+            Some(rec)
+                if self.recording_owned
+                    && self.recording_id.as_deref() == Some(rec.id.as_str()) =>
+            {
+                Ok(true)
+            }
+            Some(rec) => Err(DeviceError::RecordingNotOwned(format!(
+                "refusing to {} recording {} — it was not started by this bridge (ours: {}). Another station may be using this phone; send the command with force=true to override",
+                verb,
+                rec.id,
+                self.recording_id.as_deref().unwrap_or("none")
+            ))),
+        }
+    }
+
     /// Stop the current recording and save it.
-    pub async fn stop_recording(&mut self) -> Result<(), DeviceError> {
+    ///
+    /// Only stops a recording this bridge started unless `force` is set — an
+    /// unconditional stop is exactly how one station ended the other
+    /// participant's recording mid-experiment in the dyad sessions.
+    pub async fn stop_recording(&mut self, force: bool) -> Result<(), DeviceError> {
+        if !self.check_recording_ownership("stop", force).await? {
+            return Ok(());
+        }
         let url = format!("{}/recording:stop_and_save", self.base_url);
         let resp = self.http_client.post(&url).send().await.map_err(|e| {
             DeviceError::CommunicationError(format!("POST recording:stop_and_save failed: {}", e))
@@ -476,11 +574,16 @@ impl PupilDevice {
         }
 
         self.recording_id = None;
+        self.recording_owned = false;
         Ok(())
     }
 
-    /// Cancel the current recording without saving.
-    pub async fn cancel_recording(&mut self) -> Result<(), DeviceError> {
+    /// Cancel the current recording without saving. Same ownership guard as
+    /// [`stop_recording`](Self::stop_recording).
+    pub async fn cancel_recording(&mut self, force: bool) -> Result<(), DeviceError> {
+        if !self.check_recording_ownership("cancel", force).await? {
+            return Ok(());
+        }
         let url = format!("{}/recording:cancel", self.base_url);
         let resp = self.http_client.post(&url).send().await.map_err(|e| {
             DeviceError::CommunicationError(format!("POST recording:cancel failed: {}", e))
@@ -512,6 +615,7 @@ impl PupilDevice {
         }
 
         self.recording_id = None;
+        self.recording_owned = false;
         Ok(())
     }
 
@@ -614,11 +718,11 @@ impl PupilDevice {
                 Ok(serde_json::json!({ "recording_id": id }))
             }
             "recording_stop" => {
-                self.stop_recording().await?;
+                self.stop_recording(cmd.force).await?;
                 Ok(serde_json::json!({ "success": true }))
             }
             "recording_cancel" => {
-                self.cancel_recording().await?;
+                self.cancel_recording(cmd.force).await?;
                 Ok(serde_json::json!({ "success": true }))
             }
             "event" => {
@@ -674,13 +778,20 @@ impl Device for PupilDevice {
                         "Connected to Neon Companion"
                     );
 
-                    // Check for active recording
-                    if let Some(ref rec) = status.recording {
+                    // Adopt an already-running recording for event attribution, but
+                    // remember we didn't start it: stop/cancel will refuse without
+                    // force, and recording_start will report the phone as busy.
+                    if let Some(rec) = status
+                        .recording
+                        .as_ref()
+                        .filter(|r| Self::recording_is_active(r))
+                    {
                         self.recording_id = Some(rec.id.clone());
-                        info!(
+                        self.recording_owned = false;
+                        warn!(
                             device = "pupil",
                             recording_id = %rec.id,
-                            "Found active recording"
+                            "Phone already has an active recording that this bridge did not start"
                         );
                     }
 
@@ -746,6 +857,7 @@ impl Device for PupilDevice {
         self.status = DeviceStatus::Disconnected;
         self.neon_status = None;
         self.recording_id = None;
+        self.recording_owned = false;
         self.connection_retry_count = 0;
 
         info!(device = "pupil", "Disconnected from Neon Companion");
@@ -794,6 +906,7 @@ impl Device for PupilDevice {
             "base_url": self.base_url,
             "device_ip": self.device_ip,
             "recording_id": self.recording_id,
+            "recording_owned": self.recording_owned,
         });
 
         if let Some(ref status) = self.neon_status {
@@ -898,10 +1011,16 @@ impl Device for PupilDevice {
         let timestamp = event.get("timestamp").and_then(|v| v.as_i64());
 
         let resp = self.send_neon_event(name, timestamp).await?;
+        // Let the client see when the phone filed this event somewhere other than
+        // the recording we started (or nowhere) — not just the log.
+        let recording_mismatch =
+            self.recording_id.is_some() && resp.recording_id != self.recording_id;
         Ok(serde_json::json!({
             "success": true,
             "name": resp.name,
             "recording_id": resp.recording_id,
+            "expected_recording_id": self.recording_id,
+            "recording_mismatch": recording_mismatch,
             "timestamp": resp.timestamp,
         }))
     }
@@ -1085,6 +1204,39 @@ mod tests {
             .expect("hardware item should still be present");
         assert!(hw.glasses_serial.is_none());
         assert!(hw.module_serial.is_none());
+    }
+
+    #[test]
+    fn test_pupil_command_force_flag() {
+        let cmd: PupilCommand = serde_json::from_str(r#"{"command":"recording_stop"}"#).unwrap();
+        assert!(!cmd.force);
+        let cmd: PupilCommand =
+            serde_json::from_str(r#"{"command":"recording_stop","force":true}"#).unwrap();
+        assert!(cmd.force);
+    }
+
+    #[test]
+    fn test_recording_is_active_by_action() {
+        let mk = |action: &str| RecordingInfo {
+            id: "r1".into(),
+            action: action.into(),
+            rec_duration_ns: 0,
+            message: String::new(),
+        };
+        assert!(PupilDevice::recording_is_active(&mk("START")));
+        assert!(PupilDevice::recording_is_active(&mk("")));
+        assert!(!PupilDevice::recording_is_active(&mk("STOP")));
+        assert!(!PupilDevice::recording_is_active(&mk("save")));
+    }
+
+    #[test]
+    fn test_device_error_codes() {
+        assert_eq!(DeviceError::PhoneBusy("x".into()).code(), "phone_busy");
+        assert_eq!(
+            DeviceError::RecordingNotOwned("x".into()).code(),
+            "recording_not_owned"
+        );
+        assert_eq!(DeviceError::NotConnected.code(), "not_connected");
     }
 
     #[test]

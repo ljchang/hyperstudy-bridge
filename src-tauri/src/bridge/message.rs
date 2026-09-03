@@ -85,6 +85,10 @@ pub enum BridgeResponse {
     Status {
         device: String,
         status: DeviceStatus,
+        /// Device metadata (identity, recording state, battery…) so clients can
+        /// verify *which* hardware answered, not just that something did.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        info: Option<Value>,
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         timestamp: u64,
@@ -155,6 +159,40 @@ impl BridgeResponse {
         Self::Status {
             device,
             status,
+            info: None,
+            id,
+            timestamp: Self::timestamp(),
+        }
+    }
+
+    /// Status response carrying the device's `get_info().metadata`.
+    pub fn status_with_info(
+        device: String,
+        status: DeviceStatus,
+        info: Value,
+        id: Option<String>,
+    ) -> Self {
+        Self::Status {
+            device,
+            status,
+            info: Some(info),
+            id,
+            timestamp: Self::timestamp(),
+        }
+    }
+
+    /// Error response for a `DeviceError`, carrying its machine-readable code
+    /// so clients can branch on `phone_busy` / `recording_not_owned` etc.
+    /// instead of matching on message text.
+    pub fn device_error_from(
+        device: String,
+        error: &crate::devices::DeviceError,
+        id: Option<String>,
+    ) -> Self {
+        Self::Error {
+            device: Some(device),
+            message: error.to_string(),
+            code: Some(error.code().to_string()),
             id,
             timestamp: Self::timestamp(),
         }

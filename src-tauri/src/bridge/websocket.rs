@@ -1,4 +1,5 @@
 use crate::bridge::message::{CommandAction, QueryTarget};
+use crate::bridge::state::DeviceStatusEvent;
 use crate::bridge::{AppState, BridgeCommand, BridgeResponse, MessageHandler};
 use crate::devices::Device;
 use crate::devices::{kernel::KernelDevice, mock::MockDevice, pupil::PupilDevice, ttl::TtlDevice};
@@ -114,9 +115,10 @@ async fn handle_connection<R: Runtime>(
             match status_rx.recv().await {
                 Ok(event) => {
                     // Convert DeviceStatusEvent to BridgeResponse
-                    let response = BridgeResponse::status(
+                    let response = BridgeResponse::status_with_info(
                         event.device_id,
                         event.status,
+                        json!({ "reason": event.reason, "device_type": event.device_type }),
                         None, // No request ID for broadcast events
                     );
                     if tx_for_status.send(response).await.is_err() {
@@ -510,10 +512,28 @@ async fn handle_device_command(
                     // Record successful connection attempt
                     state.record_connection_attempt(&device_id, true).await;
 
-                    let status = device.get_status();
+                    let info = device.get_info();
                     state.add_device(device_id.clone(), device).await;
 
-                    send_response(tx, BridgeResponse::status(device_id.clone(), status, id)).await;
+                    // Tell every client, not just the requester. HyperStudy tracks
+                    // device state from these broadcasts and previously only heard
+                    // about USB unplugs — a Kernel disconnected from the bridge UI
+                    // stayed "connected" in the web app for the whole session.
+                    state.broadcast_device_status(DeviceStatusEvent::connected(
+                        device_id.clone(),
+                        info.device_type,
+                        "connected",
+                    ));
+                    send_response(
+                        tx,
+                        BridgeResponse::status_with_info(
+                            device_id.clone(),
+                            info.status,
+                            info.metadata,
+                            id,
+                        ),
+                    )
+                    .await;
                 }
                 Err(e) => {
                     // Record failed connection attempt
@@ -550,16 +570,22 @@ async fn handle_device_command(
             // Minimize lock duration: acquire lock, do operation, release lock, then send responses
             let disconnect_result = if let Some(device_lock) = state.get_device(&device_id).await {
                 let mut device = device_lock.write().await;
+                let device_type = device.get_info().device_type;
                 let result = device.disconnect().await;
                 drop(device); // Explicitly release lock before async response handling
-                Some(result)
+                Some((device_type, result))
             } else {
                 None
             };
 
             match disconnect_result {
-                Some(Ok(_)) => {
+                Some((device_type, Ok(_))) => {
                     state.remove_device(&device_id).await;
+                    state.broadcast_device_status(DeviceStatusEvent::disconnected(
+                        device_id.clone(),
+                        device_type,
+                        "disconnected",
+                    ));
 
                     send_response(
                         tx,
@@ -571,12 +597,8 @@ async fn handle_device_command(
                     )
                     .await;
                 }
-                Some(Err(e)) => {
-                    send_response(
-                        tx,
-                        BridgeResponse::device_error(device_id, e.to_string(), id),
-                    )
-                    .await;
+                Some((_, Err(e))) => {
+                    send_response(tx, BridgeResponse::device_error_from(device_id, &e, id)).await;
                 }
                 None => {
                     send_response(
@@ -610,30 +632,29 @@ async fn handle_device_command(
             let send_result = if let Some(device_lock) = state.get_device(&device_id).await {
                 let mut device = device_lock.write().await;
                 let result = device.send(&data).await;
+                // Device::send() discards the command's result, so surface the
+                // post-command state (e.g. Neon recording_id / device_id) here.
+                let info = device.get_info().metadata;
                 drop(device); // Explicitly release lock before async response handling
-                Some(result)
+                Some((info, result))
             } else {
                 None
             };
 
             match send_result {
-                Some(Ok(_)) => {
+                Some((info, Ok(_))) => {
                     send_response(
                         tx,
                         BridgeResponse::data(
                             device_id,
-                            json!({ "success": true, "message": "Data sent" }),
+                            json!({ "success": true, "message": "Data sent", "info": info }),
                             id,
                         ),
                     )
                     .await;
                 }
-                Some(Err(e)) => {
-                    send_response(
-                        tx,
-                        BridgeResponse::device_error(device_id, e.to_string(), id),
-                    )
-                    .await;
+                Some((_, Err(e))) => {
+                    send_response(tx, BridgeResponse::device_error_from(device_id, &e, id)).await;
                 }
                 None => {
                     send_response(
@@ -790,11 +811,7 @@ async fn handle_device_command(
                     send_response(tx, BridgeResponse::data(device_id, response_data, id)).await;
                 }
                 Some(Err(e)) => {
-                    send_response(
-                        tx,
-                        BridgeResponse::device_error(device_id, e.to_string(), id),
-                    )
-                    .await;
+                    send_response(tx, BridgeResponse::device_error_from(device_id, &e, id)).await;
                 }
                 None => {
                     // Device not connected yet - try to auto-connect if we have config
@@ -851,9 +868,16 @@ async fn handle_device_command(
                     BridgeResponse::data("all".to_string(), json!({ "devices": statuses }), id),
                 )
                 .await;
-            } else if let Some(status) = state.get_device_status(&device_id).await {
-                // Exact device ID match
-                send_response(tx, BridgeResponse::status(device_id, status, id)).await;
+            } else if let Some(device_lock) = state.get_device(&device_id).await {
+                // Exact device ID match — include identity metadata (Neon device_id
+                // and IP, recording_id, battery…) so the client can check *which*
+                // hardware it is talking to, not just that something is connected.
+                let info = device_lock.read().await.get_info();
+                send_response(
+                    tx,
+                    BridgeResponse::status_with_info(device_id, info.status, info.metadata, id),
+                )
+                .await;
             } else {
                 // Try matching by device type (e.g., "ttl" matches any TTL device)
                 let devices = state.list_devices().await;
@@ -1137,11 +1161,24 @@ async fn handle_device_command(
             match device.connect().await {
                 Ok(_) => {
                     state.record_connection_attempt("pupil", true).await;
-                    let status = device.get_status();
+                    let info = device.get_info();
                     state.add_device("pupil".to_string(), device).await;
 
-                    send_response(tx, BridgeResponse::status("pupil".to_string(), status, id))
-                        .await;
+                    state.broadcast_device_status(DeviceStatusEvent::connected(
+                        "pupil".to_string(),
+                        info.device_type,
+                        "connected",
+                    ));
+                    send_response(
+                        tx,
+                        BridgeResponse::status_with_info(
+                            "pupil".to_string(),
+                            info.status,
+                            info.metadata,
+                            id,
+                        ),
+                    )
+                    .await;
                 }
                 Err(e) => {
                     state.record_connection_attempt("pupil", false).await;
