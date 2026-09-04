@@ -12,14 +12,16 @@
 //! are unit-tested rather than asserted in comments.
 
 use crate::bridge::message::CommandAction;
+use futures_util::FutureExt;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::future::Future;
+use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 /// Pending commands allowed per device before new ones are rejected instead of
 /// buffered without bound (and replayed as stale markers minutes later).
@@ -57,6 +59,15 @@ pub enum Dispatch {
     /// The worker for that device has exited (should not happen while the
     /// connection is alive).
     WorkerGone(QueuedCommand),
+}
+
+fn warn_if_replacing(existed: bool, key: &str) {
+    if existed {
+        warn!(
+            "Device queue worker for {} was gone; starting a new one",
+            key
+        );
+    }
 }
 
 pub struct DeviceQueues {
@@ -108,37 +119,64 @@ impl DeviceQueues {
         if !self.queues.contains_key(&key) && self.queues.len() >= self.max_queues {
             return Dispatch::TooManyQueues(cmd);
         }
-        let capacity = self.capacity;
-        let closed = self.closed.clone();
-        let handler = self.handler.clone();
-        let sender = self.queues.entry(key.clone()).or_insert_with(|| {
-            let (qtx, mut qrx) = mpsc::channel::<QueuedCommand>(capacity);
-            tokio::spawn(async move {
-                while let Some(cmd) = qrx.recv().await {
-                    if closed.load(Ordering::Relaxed) {
-                        debug!(
-                            "Connection closed; dropping queued {:?} for {}",
-                            cmd.action, cmd.device
-                        );
-                        continue;
-                    }
-                    (handler)(cmd).await;
-                }
-                debug!("Device queue worker for {} finished", key);
-            });
-            qtx
-        });
+        // A worker whose task died (it should not — panics are caught below —
+        // but a dead sender must never wedge a device for the rest of the
+        // connection) is replaced rather than dispatched into.
+        let sender = match self.queues.get(&key) {
+            Some(existing) if !existing.is_closed() => existing.clone(),
+            _ => {
+                warn_if_replacing(self.queues.contains_key(&key), &key);
+                let fresh = self.spawn_worker(key.clone());
+                self.queues.insert(key.clone(), fresh.clone());
+                fresh
+            }
+        };
         match sender.try_send(cmd) {
             Ok(()) => Dispatch::Queued,
             Err(mpsc::error::TrySendError::Full(cmd)) => {
                 warn!(
                     "Command queue for {} is full ({} pending); rejecting {:?}",
-                    cmd.device, capacity, cmd.action
+                    cmd.device, self.capacity, cmd.action
                 );
                 Dispatch::Full(cmd)
             }
             Err(mpsc::error::TrySendError::Closed(cmd)) => Dispatch::WorkerGone(cmd),
         }
+    }
+
+    fn spawn_worker(&self, key: String) -> mpsc::Sender<QueuedCommand> {
+        let (qtx, mut qrx) = mpsc::channel::<QueuedCommand>(self.capacity);
+        let closed = self.closed.clone();
+        let handler = self.handler.clone();
+        tokio::spawn(async move {
+            while let Some(cmd) = qrx.recv().await {
+                if closed.load(Ordering::Relaxed) {
+                    debug!(
+                        "Connection closed; dropping queued {:?} for {}",
+                        cmd.action, cmd.device
+                    );
+                    continue;
+                }
+                let (device, action, id) = (cmd.device.clone(), cmd.action.clone(), cmd.id.clone());
+                // A panicking device handler must not take the worker down with
+                // it: that would silently drop every later command for this
+                // device (marker loss with no error to the client). The
+                // panicking command itself gets no response; the client's own
+                // timeout reports it.
+                if AssertUnwindSafe((handler)(cmd))
+                    .catch_unwind()
+                    .await
+                    .is_err()
+                {
+                    error!(
+                        "Device command handler panicked: device={} action={:?} id={:?}; worker continues",
+                        device, action, id
+                    );
+                }
+            }
+            debug!("Device queue worker for {} finished", key);
+        });
+        qtx
     }
 
     /// Number of distinct device queues created so far.
@@ -323,6 +361,34 @@ mod tests {
             assert_eq!(next_done(&mut rx).await, expected);
         }
         assert_nothing_done(&mut rx).await;
+    }
+
+    #[tokio::test]
+    async fn a_panicking_command_does_not_wedge_the_device_queue() {
+        let (done, mut rx) = mpsc::unbounded_channel::<String>();
+        let handler: CommandHandler = Arc::new(move |c: QueuedCommand| {
+            let done = done.clone();
+            Box::pin(async move {
+                let id = c.id.unwrap_or_default();
+                if id == "boom" {
+                    panic!("device driver bug");
+                }
+                let _ = done.send(id);
+            })
+        });
+        let mut q = DeviceQueues::new(Arc::new(AtomicBool::new(false)), handler);
+        q.dispatch(cmd("kernel", CommandAction::SendEvent, "k0"));
+        q.dispatch(cmd("kernel", CommandAction::SendEvent, "boom"));
+        q.dispatch(cmd("kernel", CommandAction::SendEvent, "k1"));
+        assert_eq!(next_done(&mut rx).await, "k0");
+        // The panic is contained; the next marker still goes through, in order.
+        assert_eq!(next_done(&mut rx).await, "k1");
+        assert!(matches!(
+            q.dispatch(cmd("kernel", CommandAction::SendEvent, "k2")),
+            Dispatch::Queued
+        ));
+        assert_eq!(next_done(&mut rx).await, "k2");
+        assert_eq!(q.len(), 1);
     }
 
     #[tokio::test]

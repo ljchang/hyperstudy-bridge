@@ -261,9 +261,19 @@ async fn handle_connection<R: Runtime>(
                                 }
                                 Dispatch::WorkerGone(cmd) => {
                                     warn!(
-                                        "Device queue worker for {} gone; command dropped",
+                                        "Device queue worker for {} gone; command rejected",
                                         cmd.device
                                     );
+                                    send_response(
+                                        &tx,
+                                        BridgeResponse::device_error(
+                                            cmd.device,
+                                            "Bridge could not queue this command; retry"
+                                                .to_string(),
+                                            cmd.id,
+                                        ),
+                                    )
+                                    .await;
                                 }
                             }
                         }
@@ -440,8 +450,8 @@ async fn try_auto_connect(state: &Arc<AppState>, device_id: &str) -> bool {
             let info = device.get_info();
             // An explicit connect may have won the race (registered already, or
             // still in flight — started before or after us); never replace or
-            // pre-empt it. The orphan is disconnected when `device` drops below.
-            if !state
+            // pre-empt it, and close the orphan's hardware connection cleanly.
+            if let Err(mut orphan) = state
                 .add_device_if_absent(device_id.to_string(), device)
                 .await
             {
@@ -449,6 +459,7 @@ async fn try_auto_connect(state: &Arc<AppState>, device_id: &str) -> bool {
                     "{} was connected explicitly while auto-connecting; using that",
                     device_id
                 );
+                let _ = orphan.disconnect().await;
                 return true;
             }
             state.broadcast_device_status(DeviceStatusEvent::connected_with_info(

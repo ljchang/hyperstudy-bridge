@@ -344,21 +344,25 @@ impl AppState {
     /// connect for `id` is in flight — whether that explicit connect started
     /// before or after the auto-connect. The operator's explicit connect (with
     /// the configuration they just entered) must never be pre-empted by a
-    /// reconnect from remembered configuration. Returns false (and drops
-    /// `device`) when it yields. Takes no ticket of its own: it registers under
+    /// reconnect from remembered configuration. Hands `device` back (`Err`) when it
+    /// yields so the caller can disconnect it cleanly. Takes no ticket of its own: it registers under
     /// the current latest ticket, so ownership semantics for disconnects are
     /// unchanged.
-    pub async fn add_device_if_absent(&self, id: String, device: BoxedDevice) -> bool {
+    pub async fn add_device_if_absent(
+        &self,
+        id: String,
+        device: BoxedDevice,
+    ) -> Result<(), BoxedDevice> {
         let mut devices = self.devices.write().await;
         if devices.contains_key(&id) || self.explicit_connect_in_flight_locked(&id) {
-            return false;
+            return Err(device);
         }
         let latest = self.connect_tickets.get(&id).map(|v| *v).unwrap_or(0);
         devices.insert(id.clone(), Arc::new(RwLock::new(device)));
         self.registered_tickets.insert(id.clone(), latest);
         drop(devices);
         self.performance_monitor.add_device(id).await;
-        true
+        Ok(())
     }
 
     /// Next connect ticket for `id`. Callers must hold the `devices` write lock
@@ -913,11 +917,10 @@ mod device_identity_tests {
         // The auto-connect path also takes ownership when it registers.
         let ui = state.get_device("kernel").await.unwrap();
         state.remove_device_if_same("kernel", &ui).await;
-        assert!(
-            state
-                .add_device_if_absent("kernel".into(), mock("auto"))
-                .await
-        );
+        assert!(state
+            .add_device_if_absent("kernel".into(), mock("auto"))
+            .await
+            .is_ok());
         assert!(matches!(
             state.device_for_disconnect("kernel", Some(ws_ticket)).await,
             DisconnectTarget::Stale
@@ -933,11 +936,10 @@ mod device_identity_tests {
         let state = AppState::new();
         let open = AtomicBool::new(false);
         // Nothing registered, no explicit connect pending: auto may register.
-        assert!(
-            state
-                .add_device_if_absent("kernel".into(), mock("auto-0"))
-                .await
-        );
+        assert!(state
+            .add_device_if_absent("kernel".into(), mock("auto-0"))
+            .await
+            .is_ok());
         let auto0 = state.get_device("kernel").await.unwrap();
         assert!(state.remove_device_if_same("kernel", &auto0).await);
 
@@ -945,11 +947,10 @@ mod device_identity_tests {
         let explicit_ticket = state.begin_connect("kernel").await;
         // ...so an auto-connect that finishes now must yield, whether it
         // started before or after the explicit one.
-        assert!(
-            !state
-                .add_device_if_absent("kernel".into(), mock("auto-1"))
-                .await
-        );
+        assert!(state
+            .add_device_if_absent("kernel".into(), mock("auto-1"))
+            .await
+            .is_err());
         assert!(state.get_device("kernel").await.is_none());
         // The explicit connect registers normally.
         assert!(state
@@ -959,19 +960,17 @@ mod device_identity_tests {
         let registered = state.get_device("kernel").await.unwrap();
         assert_eq!(registered.read().await.get_info().name, "explicit");
         // A registered device is never replaced by an auto-connect.
-        assert!(
-            !state
-                .add_device_if_absent("kernel".into(), mock("auto-2"))
-                .await
-        );
+        assert!(state
+            .add_device_if_absent("kernel".into(), mock("auto-2"))
+            .await
+            .is_err());
         // Once the explicit device is gone (and no connect is pending),
         // auto-connect works again.
         assert!(state.remove_device_if_same("kernel", &registered).await);
-        assert!(
-            state
-                .add_device_if_absent("kernel".into(), mock("auto-3"))
-                .await
-        );
+        assert!(state
+            .add_device_if_absent("kernel".into(), mock("auto-3"))
+            .await
+            .is_ok());
         // The auto-registered device is owned by the latest ticket: the
         // explicit connection's disconnect is still allowed (same ticket).
         assert!(matches!(
@@ -986,21 +985,19 @@ mod device_identity_tests {
     async fn a_failed_explicit_connect_stops_blocking_auto_connect_after_the_window() {
         let state = AppState::new();
         let _abandoned = state.begin_connect("kernel").await;
-        assert!(
-            !state
-                .add_device_if_absent("kernel".into(), mock("auto"))
-                .await
-        );
+        assert!(state
+            .add_device_if_absent("kernel".into(), mock("auto"))
+            .await
+            .is_err());
         // Pretend the ticket was issued long ago.
         state.ticket_issued_at.insert(
             "kernel".into(),
             Instant::now() - EXPLICIT_CONNECT_WINDOW - Duration::from_secs(1),
         );
-        assert!(
-            state
-                .add_device_if_absent("kernel".into(), mock("auto"))
-                .await
-        );
+        assert!(state
+            .add_device_if_absent("kernel".into(), mock("auto"))
+            .await
+            .is_ok());
     }
 
     #[tokio::test]
@@ -1010,30 +1007,27 @@ mod device_identity_tests {
         {
             // The handler's guard: dropped on any exit without registering.
             let _attempt = ConnectAttempt::new(state.clone(), "kernel", ticket);
-            assert!(
-                !state
-                    .add_device_if_absent("kernel".into(), mock("auto"))
-                    .await
-            );
+            assert!(state
+                .add_device_if_absent("kernel".into(), mock("auto"))
+                .await
+                .is_err());
         }
         // Explicit connect failed (guard dropped): markers must be able to
         // auto-reconnect right away, not after the 60 s window.
-        assert!(
-            state
-                .add_device_if_absent("kernel".into(), mock("auto"))
-                .await
-        );
+        assert!(state
+            .add_device_if_absent("kernel".into(), mock("auto"))
+            .await
+            .is_ok());
         // A guard that registered does not mark its ticket finished, and a
         // later explicit connect is again respected while pending.
         let device = state.get_device("kernel").await.unwrap();
         state.remove_device_if_same("kernel", &device).await;
         let t2 = state.begin_connect("kernel").await;
         let mut attempt = ConnectAttempt::new(state.clone(), "kernel", t2);
-        assert!(
-            !state
-                .add_device_if_absent("kernel".into(), mock("auto"))
-                .await
-        );
+        assert!(state
+            .add_device_if_absent("kernel".into(), mock("auto"))
+            .await
+            .is_err());
         state
             .add_device_if_latest(
                 "kernel".into(),
@@ -1055,11 +1049,10 @@ mod device_identity_tests {
     async fn a_latest_connect_hands_back_the_device_it_replaced() {
         let state = AppState::new();
         let open = AtomicBool::new(false);
-        assert!(
-            state
-                .add_device_if_absent("kernel".into(), mock("auto"))
-                .await
-        );
+        assert!(state
+            .add_device_if_absent("kernel".into(), mock("auto"))
+            .await
+            .is_ok());
         let t = state.begin_connect("kernel").await;
         let replaced = state
             .add_device_if_latest("kernel".into(), mock("explicit"), t, &open)

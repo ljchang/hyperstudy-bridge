@@ -1,3 +1,4 @@
+use crate::bridge::state::{DeviceStatusEvent, DisconnectTarget};
 use crate::bridge::{AppState, BridgeServer};
 use crate::devices::{kernel::KernelDevice, mock::MockDevice, pupil::PupilDevice, ttl::TtlDevice};
 use crate::devices::{Device, DeviceInfo, DeviceStatus};
@@ -198,8 +199,11 @@ pub async fn connect_device(
             {
                 Ok(Some(replaced)) => {
                     attempt.registered();
-                    // Don't leave the replaced device's hardware connection open.
-                    let _ = replaced.write().await.disconnect().await;
+                    // Don't leave the replaced device's hardware connection open;
+                    // done in the background so this response is not delayed.
+                    tokio::spawn(async move {
+                        let _ = replaced.write().await.disconnect().await;
+                    });
                 }
                 Ok(None) => attempt.registered(),
                 Err(mut orphan) => {
@@ -276,12 +280,29 @@ pub async fn disconnect_device(
 ) -> Result<CommandResult<String>, ()> {
     info!("Disconnecting device: {}", device_id);
 
-    if let Some(device_lock) = state.get_device(&device_id).await {
+    // Same discipline as the WebSocket Disconnect handler: select the device
+    // under the registry lock and unregister only that exact device, so a
+    // HyperStudy reconnect that registers a replacement while this disconnect
+    // is in flight is never unregistered by it.
+    let target = state.device_for_disconnect(&device_id, None).await;
+    if let DisconnectTarget::Device(device_lock) = target {
         let mut device = device_lock.write().await;
+        let device_type = device.get_info().device_type;
         match device.disconnect().await {
             Ok(_) => {
                 drop(device);
-                state.remove_device(&device_id).await;
+                if state.remove_device_if_same(&device_id, &device_lock).await {
+                    state.broadcast_device_status(DeviceStatusEvent::disconnected(
+                        device_id.clone(),
+                        device_type,
+                        "disconnected from the Bridge app",
+                    ));
+                } else {
+                    info!(
+                        "{} was re-registered while disconnecting; leaving the newer device",
+                        device_id
+                    );
+                }
 
                 // Emit status update
                 app_handle
@@ -1056,8 +1077,26 @@ pub async fn reset_device(
 ) -> Result<CommandResult<String>, ()> {
     info!("Resetting device: {}", device_id);
 
-    // Remove device from state if it exists
-    state.remove_device(&device_id).await;
+    // Remove the device from state if it exists — closing its hardware
+    // connection first, and only the exact device we closed (see
+    // disconnect_device).
+    if let DisconnectTarget::Device(device_lock) =
+        state.device_for_disconnect(&device_id, None).await
+    {
+        let device_type = {
+            let mut device = device_lock.write().await;
+            let device_type = device.get_info().device_type;
+            let _ = device.disconnect().await;
+            device_type
+        };
+        if state.remove_device_if_same(&device_id, &device_lock).await {
+            state.broadcast_device_status(DeviceStatusEvent::disconnected(
+                device_id.clone(),
+                device_type,
+                "reset from the Bridge app",
+            ));
+        }
+    }
 
     // Clear last error
     state.set_last_error(None).await;

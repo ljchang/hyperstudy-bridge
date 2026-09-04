@@ -843,6 +843,9 @@ impl Device for PupilDevice {
                     // Adopt an already-running recording for event attribution, but
                     // remember we didn't start it: stop/cancel will refuse without
                     // force, and recording_start will report the phone as busy.
+                    // If this bridge DID start it (before a reconnect), the
+                    // WebSocket connect handler restores ownership afterwards via
+                    // `reclaim_pupil_recording` from AppState::owned_recordings.
                     if let Some(rec) = status
                         .recording
                         .as_ref()

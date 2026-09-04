@@ -120,7 +120,24 @@ pub(crate) fn group_neon_streams(
             continue;
         };
         let host = stream.info.hostname.clone();
-        let key = (device_name.clone(), host.clone());
+        // Identity is (name, host). If a stream carries no hostname (should
+        // not happen with liblsl, which always fills it), fall back to its
+        // source_id so two same-named phones still never merge into one entry;
+        // a stream with neither can only be grouped by name.
+        let disambiguator = if !host.is_empty() {
+            host.clone()
+        } else if !stream.info.source_id.is_empty() {
+            warn!(
+                device = "neon",
+                "Neon stream '{}' has no hostname; grouping by source_id '{}'",
+                stream_name,
+                stream.info.source_id
+            );
+            format!("source:{}", stream.info.source_id)
+        } else {
+            String::new()
+        };
+        let key = (device_name.clone(), disambiguator);
 
         let idx = match by_identity.iter().position(|(k, _)| *k == key) {
             Some(i) => i,
@@ -175,14 +192,15 @@ pub(crate) fn group_neon_streams(
     }
 
     let mut device_map: HashMap<String, DiscoveredNeonDevice> = HashMap::new();
-    for ((name, host), mut device) in by_identity {
-        let label = if name_counts.get(&name).copied().unwrap_or(0) > 1 && !host.is_empty() {
+    for ((name, disambiguator), mut device) in by_identity {
+        let label = if name_counts.get(&name).copied().unwrap_or(0) > 1 && !disambiguator.is_empty()
+        {
             warn!(
                 device = "neon",
                 "Several Neon devices are named '{}'; labelling by host so they stay distinct",
                 name
             );
-            format!("{} @ {}", name, host)
+            format!("{} @ {}", name, disambiguator)
         } else {
             name
         };
@@ -316,6 +334,13 @@ impl NeonLslManager {
         // connect just installed for the same stream. Connects and disconnects
         // of gaze streams are therefore strictly serialized. Nothing awaited
         // below takes `discovered_devices`.
+        //
+        // Accepted trade-off: the lock is manager-wide, so a slow connect or a
+        // 2 s teardown join for one phone delays connect/disconnect (not data
+        // flow) of another phone on the SAME bridge. In the dyad setup each
+        // station runs its own bridge with one phone, so this never bites; a
+        // per-uid lock would be the refinement if one bridge ever serves
+        // several phones.
         let mut tasks = self.gaze_tasks.write().await;
 
         // Check if already connected
@@ -931,6 +956,57 @@ mod tests {
             StreamFilter::extract_neon_device_name("SomeOtherStream"),
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod grouping_tests_no_host {
+    use super::*;
+    use crate::devices::lsl::resolver::DiscoveredStream;
+    use crate::devices::lsl::types::{ChannelFormat, StreamInfo, StreamType};
+
+    fn stream(name: &str, source_id: &str, uid: &str) -> DiscoveredStream {
+        DiscoveredStream {
+            info: StreamInfo {
+                name: name.to_string(),
+                stream_type: StreamType::Gaze,
+                channel_count: 3,
+                nominal_srate: 200.0,
+                channel_format: ChannelFormat::Float32,
+                source_id: source_id.to_string(),
+                hostname: String::new(),
+                metadata: HashMap::new(),
+            },
+            discovered_at: std::time::SystemTime::now(),
+            last_seen: std::time::SystemTime::now(),
+            available: true,
+            uid: uid.to_string(),
+            session_id: "default".to_string(),
+            data_loss: 0.0,
+            time_stamps: (),
+        }
+    }
+
+    #[test]
+    fn same_named_phones_without_hostnames_do_not_merge() {
+        let devices = group_neon_streams(
+            vec![
+                stream("Neon Companion_Neon Gaze", "phone-a", "g1"),
+                stream("Neon Companion_Neon Gaze", "phone-b", "g2"),
+            ],
+            std::time::SystemTime::now(),
+        );
+        assert_eq!(
+            devices.len(),
+            2,
+            "two phones must stay two entries: {:?}",
+            devices.keys()
+        );
+        let uids: std::collections::BTreeSet<_> = devices
+            .values()
+            .filter_map(|d| d.gaze_stream_uid.clone())
+            .collect();
+        assert_eq!(uids.len(), 2);
     }
 }
 
