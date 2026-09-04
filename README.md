@@ -40,7 +40,7 @@ HyperStudy Bridge provides a reliable, low-latency communication layer between t
 |--------|------|------------|--------|
 | [hyperstudy-ttl](https://github.com/hyperstudyio/hyperstudy-ttl) | TTL Pulse Generator | USB Serial | Supported |
 | Kernel Flow2 | fNIRS | TCP Socket | Supported |
-| Pupil Labs Neon | Eye Tracker | WebSocket | Supported |
+| Pupil Labs Neon | Eye Tracker | REST API + LSL (mDNS phone discovery) | Supported |
 | EyeLink 1000 Plus | Eye Tracker | Ethernet (TCP) | Supported* |
 | Lab Streaming Layer | Various | LSL Protocol | Supported |
 
@@ -85,6 +85,10 @@ The EyeLink 1000 Plus integration requires the SR Research EyeLink Developers Ki
 2. **Connect Devices**: Click "Connect All" or configure individual devices
 3. **Verify Status**: Ensure all required devices show green status
 4. **Start Experiment**: The bridge will handle all device communication
+
+### Pupil Labs Neon: pin the station to a phone
+
+Every Neon Companion phone advertises its hardware id on the network. In the Pupil configuration dialog, click **Find phones** and **Use this phone** to pin this Bridge to one phone. The Bridge then resolves that phone by id on every connect and refuses a different phone (`wrong_device`), so two stations on the same Wi-Fi can never drive the same phone through `neon.local`. The Bridge also refuses to stop a recording it did not start (`recording_not_owned`) and reports `phone_busy` when the phone is already recording. See the [Pupil Labs Neon guide](https://docs.hyperstudy.io/devices/pupil-neon) for the full workflow.
 
 ## Development
 
