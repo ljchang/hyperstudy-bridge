@@ -39,10 +39,10 @@ HyperStudy Bridge is a unified, high-performance desktop application that serves
 - **Implementation**: Using `tokio::net::TcpStream`
 
 ### 3. Pupil Labs Neon Eye Tracker
-- **Connection**: WebSocket client to device's Real-Time API
-- **Protocol**: JSON messages over WebSocket
-- **Features**: Gaze data streaming, recording control
-- **Implementation**: Using `tokio-tungstenite` crate
+- **Connection**: HTTP client to the Neon Companion REST API (`http://<phone>:8080/api`) for status, recording control and event markers; gaze data via LSL (`devices/lsl/neon.rs`)
+- **Discovery**: DNS-SD `_http._tcp.local.` instances named `PI monitor:<name>:<hardware id>` (`devices/neon_discovery.rs`, `mdns-sd` crate); a connection can be pinned to a hardware id and refuses any other phone (`DeviceError::WrongDevice`)
+- **Safeguards**: recording start waits until the phone reports the recording active; stop/cancel refuse recordings this bridge did not start (`RecordingNotOwned`) unless `force`; `PhoneBusy` when already recording; all checks fail closed if status is unreadable
+- **Implementation**: `reqwest` in `devices/pupil.rs`
 
 ### 4. Lab Streaming Layer (Future)
 - **Connection**: LSL network protocol
