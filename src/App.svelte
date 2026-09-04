@@ -38,7 +38,8 @@
     selectedDevices.map(device => {
       const wsDevice = wsDevices.get(device.id);
       if (wsDevice) {
-        return { ...device, status: wsDevice.status || 'disconnected' };
+        // `info` carries which hardware answered (Neon device_id/IP, recording state)
+        return { ...device, status: wsDevice.status || 'disconnected', info: wsDevice.info ?? device.info };
       }
       return device;
     })

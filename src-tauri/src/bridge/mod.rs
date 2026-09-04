@@ -1,3 +1,4 @@
+pub mod device_queues;
 pub mod message;
 pub mod state;
 pub mod websocket;

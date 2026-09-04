@@ -18,7 +18,7 @@
 //! let devices = manager.discover_neon_devices().await?;
 //!
 //! // Connect to gaze stream
-//! let gaze_rx = manager.connect_gaze_stream("MyNeon").await?;
+//! let (mut gaze_rx, _task_id) = manager.connect_gaze_stream("MyNeon").await?;
 //!
 //! // Receive gaze data
 //! while let Some(gaze) = gaze_rx.recv().await {
@@ -30,7 +30,7 @@ use super::inlet::{InletConfig, InletManager};
 use super::resolver::{StreamFilter, StreamResolver};
 use super::types::{DiscoveredNeonDevice, LslError, NeonEventData, NeonGazeData, SampleData};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, RwLock};
@@ -58,6 +58,8 @@ pub struct NeonLslManager {
     gaze_tasks: Arc<RwLock<HashMap<String, GazeStreamTask>>>,
     /// Active event stream tasks (device_name -> task handle)
     event_tasks: Arc<RwLock<HashMap<String, EventStreamTask>>>,
+    /// Source of unique task ids (see `GazeStreamTask::task_id`).
+    next_task_id: Arc<AtomicU64>,
 }
 
 /// Handle for an active gaze stream task
@@ -66,6 +68,16 @@ struct GazeStreamTask {
     /// The task uses a clone of this sender.
     #[allow(dead_code)]
     sender: mpsc::Sender<NeonGazeData>,
+    /// LSL stream uid this task reads, so the same stream can't be opened
+    /// twice under two device labels (labels change when a same-named phone
+    /// appears and discovery re-keys entries by host).
+    stream_uid: String,
+    /// Unique id of this task, handed to the consumer at connect time. A
+    /// consumer that wants to release "its" stream passes it back
+    /// (`disconnect_gaze_stream_owned`), so a late teardown from an old
+    /// consumer can never take down a stream a newer consumer has since
+    /// opened under the same label.
+    task_id: u64,
     /// Shutdown flag
     shutdown: Arc<AtomicBool>,
     /// Task join handle
@@ -78,10 +90,124 @@ struct EventStreamTask {
     /// The task uses a clone of this sender.
     #[allow(dead_code)]
     sender: mpsc::Sender<NeonEventData>,
+    /// LSL stream uid this task reads (see GazeStreamTask::stream_uid).
+    stream_uid: String,
+    /// Unique id of this task (see GazeStreamTask::task_id).
+    task_id: u64,
     /// Shutdown flag
     shutdown: Arc<AtomicBool>,
     /// Task join handle
     _handle: tokio::task::JoinHandle<()>,
+}
+
+/// Group Neon LSL streams into devices.
+///
+/// Streams are grouped by *(device name, host)*, not by name alone: two phones
+/// both called "Neon Companion" used to collapse into one entry whose hostname
+/// was whichever stream arrived first — so a station could subscribe to the
+/// other participant's gaze. When several devices share a name, each is keyed
+/// and labelled `"<name> @ <host>"` so they stay distinguishable; a unique name
+/// keeps its plain label.
+pub(crate) fn group_neon_streams(
+    streams: Vec<crate::devices::lsl::resolver::DiscoveredStream>,
+    now: std::time::SystemTime,
+) -> HashMap<String, DiscoveredNeonDevice> {
+    let mut by_identity: Vec<((String, String), DiscoveredNeonDevice)> = Vec::new();
+
+    for stream in streams {
+        let stream_name = &stream.info.name;
+        let Some(device_name) = StreamFilter::extract_neon_device_name(stream_name) else {
+            continue;
+        };
+        let host = stream.info.hostname.clone();
+        // Identity is (name, host). If a stream carries no hostname (should
+        // not happen with liblsl, which always fills it), fall back to its
+        // source_id so two same-named phones still never merge into one entry;
+        // a stream with neither can only be grouped by name.
+        let disambiguator = if !host.is_empty() {
+            host.clone()
+        } else if !stream.info.source_id.is_empty() {
+            warn!(
+                device = "neon",
+                "Neon stream '{}' has no hostname; grouping by source_id '{}'",
+                stream_name,
+                stream.info.source_id
+            );
+            format!("source:{}", stream.info.source_id)
+        } else {
+            String::new()
+        };
+        let key = (device_name.clone(), disambiguator);
+
+        let idx = match by_identity.iter().position(|(k, _)| *k == key) {
+            Some(i) => i,
+            None => {
+                by_identity.push((
+                    key,
+                    DiscoveredNeonDevice {
+                        device_name: device_name.clone(),
+                        hostname: if host.is_empty() {
+                            None
+                        } else {
+                            Some(host.clone())
+                        },
+                        has_gaze_stream: false,
+                        has_events_stream: false,
+                        gaze_channel_count: 0,
+                        gaze_stream_uid: None,
+                        events_stream_uid: None,
+                        discovered_at: now,
+                    },
+                ));
+                by_identity.len() - 1
+            }
+        };
+        let entry = &mut by_identity[idx].1;
+
+        if StreamFilter::is_neon_gaze_stream(stream_name) {
+            entry.has_gaze_stream = true;
+            entry.gaze_channel_count = stream.info.channel_count;
+            entry.gaze_stream_uid = Some(stream.uid.clone());
+            debug!(
+                device = "neon",
+                "Found Neon gaze stream: {} ({} channels) on {}",
+                stream_name,
+                stream.info.channel_count,
+                host
+            );
+        } else if StreamFilter::is_neon_events_stream(stream_name) {
+            entry.has_events_stream = true;
+            entry.events_stream_uid = Some(stream.uid.clone());
+            debug!(
+                device = "neon",
+                "Found Neon events stream: {} on {}", stream_name, host
+            );
+        }
+    }
+
+    // Disambiguate labels for devices that share a display name.
+    let mut name_counts: HashMap<String, usize> = HashMap::new();
+    for ((name, _), _) in &by_identity {
+        *name_counts.entry(name.clone()).or_insert(0) += 1;
+    }
+
+    let mut device_map: HashMap<String, DiscoveredNeonDevice> = HashMap::new();
+    for ((name, disambiguator), mut device) in by_identity {
+        let label = if name_counts.get(&name).copied().unwrap_or(0) > 1 && !disambiguator.is_empty()
+        {
+            warn!(
+                device = "neon",
+                "Several Neon devices are named '{}'; labelling by host so they stay distinct",
+                name
+            );
+            format!("{} @ {}", name, disambiguator)
+        } else {
+            name
+        };
+        device.device_name = label.clone();
+        device_map.insert(label, device);
+    }
+    device_map
 }
 
 impl NeonLslManager {
@@ -97,6 +223,7 @@ impl NeonLslManager {
             discovered_devices: Arc::new(RwLock::new(HashMap::new())),
             gaze_tasks: Arc::new(RwLock::new(HashMap::new())),
             event_tasks: Arc::new(RwLock::new(HashMap::new())),
+            next_task_id: Arc::new(AtomicU64::new(1)),
         }
     }
 
@@ -122,50 +249,7 @@ impl NeonLslManager {
             })
             .collect();
 
-        // Group streams by device name
-        let mut device_map: HashMap<String, DiscoveredNeonDevice> = HashMap::new();
-        let now = std::time::SystemTime::now();
-
-        for stream in streams {
-            let stream_name = &stream.info.name;
-
-            if let Some(device_name) = StreamFilter::extract_neon_device_name(stream_name) {
-                let entry =
-                    device_map
-                        .entry(device_name.clone())
-                        .or_insert_with(|| DiscoveredNeonDevice {
-                            device_name: device_name.clone(),
-                            hostname: None,
-                            has_gaze_stream: false,
-                            has_events_stream: false,
-                            gaze_channel_count: 0,
-                            gaze_stream_uid: None,
-                            events_stream_uid: None,
-                            discovered_at: now,
-                        });
-
-                // Capture hostname from LSL stream info (needed for REST API connection)
-                if entry.hostname.is_none() && !stream.info.hostname.is_empty() {
-                    entry.hostname = Some(stream.info.hostname.clone());
-                }
-
-                if StreamFilter::is_neon_gaze_stream(stream_name) {
-                    entry.has_gaze_stream = true;
-                    entry.gaze_channel_count = stream.info.channel_count;
-                    entry.gaze_stream_uid = Some(stream.uid.clone());
-                    debug!(
-                        device = "neon",
-                        "Found Neon gaze stream: {} ({} channels)",
-                        stream_name,
-                        stream.info.channel_count
-                    );
-                } else if StreamFilter::is_neon_events_stream(stream_name) {
-                    entry.has_events_stream = true;
-                    entry.events_stream_uid = Some(stream.uid.clone());
-                    debug!(device = "neon", "Found Neon events stream: {}", stream_name);
-                }
-            }
-        }
+        let device_map = group_neon_streams(streams, std::time::SystemTime::now());
 
         // Update our cache
         {
@@ -194,7 +278,8 @@ impl NeonLslManager {
         Ok(device_list)
     }
 
-    /// Get a previously discovered Neon device by name
+    /// Get a previously discovered Neon device by its display name (the key
+    /// returned by `discover_neon_devices`).
     pub async fn get_device(&self, device_name: &str) -> Option<DiscoveredNeonDevice> {
         let devices = self.discovered_devices.read().await;
         devices.get(device_name).cloned()
@@ -208,29 +293,22 @@ impl NeonLslManager {
 
     /// Connect to a Neon gaze stream
     ///
-    /// Returns a channel receiver that will emit gaze data samples.
-    /// The stream continues until `disconnect_gaze_stream` is called.
+    /// Returns a channel receiver that will emit gaze data samples, plus the
+    /// id of the task that feeds it (pass it to `disconnect_gaze_stream_owned`
+    /// to release exactly this stream). The stream continues until
+    /// `disconnect_gaze_stream` is called.
     pub async fn connect_gaze_stream(
         &self,
         device_name: &str,
-    ) -> Result<mpsc::Receiver<NeonGazeData>, LslError> {
+    ) -> Result<(mpsc::Receiver<NeonGazeData>, u64), LslError> {
         info!(
             device = "neon",
             "Connecting to Neon gaze stream: {}", device_name
         );
 
-        // Check if already connected
-        {
-            let tasks = self.gaze_tasks.read().await;
-            if tasks.contains_key(device_name) {
-                return Err(LslError::LslLibraryError(format!(
-                    "Already connected to gaze stream for device: {}",
-                    device_name
-                )));
-            }
-        }
-
-        // Get the device info
+        // Get the device info. Lock order: `discovered_devices` is never taken
+        // while a task-registry lock is held (get_stats takes them the other
+        // way round), so resolve everything from discovery BEFORE locking.
         let device = self.get_device(device_name).await.ok_or_else(|| {
             LslError::NeonDeviceNotFound(format!(
                 "Device not found: {}. Run discover_neon_devices() first.",
@@ -248,6 +326,41 @@ impl NeonLslManager {
         let gaze_uid = device.gaze_stream_uid.ok_or_else(|| {
             LslError::NeonStreamNotAvailable("Gaze stream UID not found".to_string())
         })?;
+
+        // Hold the task registry lock for the WHOLE connect — duplicate checks,
+        // inlet creation, task registration. Inlets are keyed by stream uid, and
+        // a disconnect closes the inlet by uid after stopping its task; if a
+        // connect could interleave, the disconnect would close the inlet the
+        // connect just installed for the same stream. Connects and disconnects
+        // of gaze streams are therefore strictly serialized. Nothing awaited
+        // below takes `discovered_devices`.
+        //
+        // Accepted trade-off: the lock is manager-wide, so a slow connect or a
+        // 2 s teardown join for one phone delays connect/disconnect (not data
+        // flow) of another phone on the SAME bridge. In the dyad setup each
+        // station runs its own bridge with one phone, so this never bites; a
+        // per-uid lock would be the refinement if one bridge ever serves
+        // several phones.
+        let mut tasks = self.gaze_tasks.write().await;
+
+        // Check if already connected
+        if tasks.contains_key(device_name) {
+            return Err(LslError::LslLibraryError(format!(
+                "Already connected to gaze stream for device: {}",
+                device_name
+            )));
+        }
+
+        // Refuse to open the same LSL stream twice under different labels
+        // (discovery re-keys same-named phones by host, changing the label).
+        if let Some((existing, _)) = tasks.iter().find(|(_, t)| t.stream_uid == gaze_uid) {
+            return Err(LslError::LslLibraryError(format!(
+                "Gaze stream for '{}' is already connected as '{}'",
+                device_name, existing
+            )));
+        }
+        let gaze_uid_for_task = gaze_uid.clone();
+        let task_id = self.next_task_id.fetch_add(1, Ordering::Relaxed);
 
         // Find the stream in the resolver cache
         let stream = self.resolver.get_stream(&gaze_uid).await.ok_or_else(|| {
@@ -340,24 +453,24 @@ impl NeonLslManager {
             );
         });
 
-        // Store the task
-        {
-            let mut tasks = self.gaze_tasks.write().await;
-            tasks.insert(
-                device_name.to_string(),
-                GazeStreamTask {
-                    sender: tx,
-                    shutdown,
-                    _handle: handle,
-                },
-            );
-        }
+        // Store the task (still under the registry lock taken above)
+        tasks.insert(
+            device_name.to_string(),
+            GazeStreamTask {
+                sender: tx,
+                stream_uid: gaze_uid_for_task,
+                task_id,
+                shutdown,
+                _handle: handle,
+            },
+        );
+        drop(tasks);
 
         info!(
             device = "neon",
             "Connected to Neon gaze stream: {}", device_name
         );
-        Ok(rx)
+        Ok((rx, task_id))
     }
 
     /// Connect to a Neon events stream
@@ -367,24 +480,13 @@ impl NeonLslManager {
     pub async fn connect_events_stream(
         &self,
         device_name: &str,
-    ) -> Result<mpsc::Receiver<NeonEventData>, LslError> {
+    ) -> Result<(mpsc::Receiver<NeonEventData>, u64), LslError> {
         info!(
             device = "neon",
             "Connecting to Neon events stream: {}", device_name
         );
 
-        // Check if already connected
-        {
-            let tasks = self.event_tasks.read().await;
-            if tasks.contains_key(device_name) {
-                return Err(LslError::LslLibraryError(format!(
-                    "Already connected to events stream for device: {}",
-                    device_name
-                )));
-            }
-        }
-
-        // Get the device info
+        // Get the device info (before locking — see connect_gaze_stream)
         let device = self.get_device(device_name).await.ok_or_else(|| {
             LslError::NeonDeviceNotFound(format!(
                 "Device not found: {}. Run discover_neon_devices() first.",
@@ -402,6 +504,27 @@ impl NeonLslManager {
         let events_uid = device.events_stream_uid.ok_or_else(|| {
             LslError::NeonStreamNotAvailable("Events stream UID not found".to_string())
         })?;
+
+        // Serialized against disconnects for the whole connect — see
+        // connect_gaze_stream for why.
+        let mut tasks = self.event_tasks.write().await;
+
+        // Check if already connected
+        if tasks.contains_key(device_name) {
+            return Err(LslError::LslLibraryError(format!(
+                "Already connected to events stream for device: {}",
+                device_name
+            )));
+        }
+
+        if let Some((existing, _)) = tasks.iter().find(|(_, t)| t.stream_uid == events_uid) {
+            return Err(LslError::LslLibraryError(format!(
+                "Events stream for '{}' is already connected as '{}'",
+                device_name, existing
+            )));
+        }
+        let events_uid_for_task = events_uid.clone();
+        let task_id = self.next_task_id.fetch_add(1, Ordering::Relaxed);
 
         // Find the stream in the resolver cache
         let stream = self.resolver.get_stream(&events_uid).await.ok_or_else(|| {
@@ -499,52 +622,94 @@ impl NeonLslManager {
             );
         });
 
-        // Store the task
-        {
-            let mut tasks = self.event_tasks.write().await;
-            tasks.insert(
-                device_name.to_string(),
-                EventStreamTask {
-                    sender: tx,
-                    shutdown,
-                    _handle: handle,
-                },
-            );
-        }
+        // Store the task (still under the registry lock taken above)
+        tasks.insert(
+            device_name.to_string(),
+            EventStreamTask {
+                sender: tx,
+                stream_uid: events_uid_for_task,
+                task_id,
+                shutdown,
+                _handle: handle,
+            },
+        );
+        drop(tasks);
 
         info!(
             device = "neon",
             "Connected to Neon events stream: {}", device_name
         );
-        Ok(rx)
+        Ok((rx, task_id))
     }
 
-    /// Disconnect from a Neon gaze stream
+    /// Disconnect from a Neon gaze stream (whoever opened it).
     pub async fn disconnect_gaze_stream(&self, device_name: &str) -> Result<(), LslError> {
+        self.disconnect_gaze_stream_inner(device_name, None).await
+    }
+
+    /// Release the gaze stream under `device_name` only if it is still the
+    /// task `task_id` (as returned by `connect_gaze_stream`). A no-op if a
+    /// newer consumer has since opened the label — that stream is theirs.
+    pub async fn disconnect_gaze_stream_owned(
+        &self,
+        device_name: &str,
+        task_id: u64,
+    ) -> Result<(), LslError> {
+        self.disconnect_gaze_stream_inner(device_name, Some(task_id))
+            .await
+    }
+
+    async fn disconnect_gaze_stream_inner(
+        &self,
+        device_name: &str,
+        owner: Option<u64>,
+    ) -> Result<(), LslError> {
+        // Resolve the discovery fallback before locking (lock order: never
+        // take `discovered_devices` while holding a task-registry lock).
+        let fallback_uid = self
+            .get_device(device_name)
+            .await
+            .and_then(|d| d.gaze_stream_uid);
+        // The registry lock is held across task removal, shutdown AND inlet
+        // close so no connect can install a fresh inlet for the same stream
+        // uid in between (connect holds the same lock for its whole duration).
+        let mut tasks = self.gaze_tasks.write().await;
+        if let Some(owner) = owner {
+            match tasks.get(device_name) {
+                Some(task) if task.task_id == owner => {}
+                _ => {
+                    info!(
+                        device = "neon",
+                        "Gaze stream '{}' is not owned by task {}; leaving it", device_name, owner
+                    );
+                    return Ok(());
+                }
+            }
+        }
         info!(
             device = "neon",
             "Disconnecting Neon gaze stream: {}", device_name
         );
 
-        let task = {
-            let mut tasks = self.gaze_tasks.write().await;
-            tasks.remove(device_name)
-        };
-
-        if let Some(task) = task {
-            // Signal shutdown
-            task.shutdown.store(true, Ordering::Relaxed);
-            // Wait for task to complete (with timeout)
-            let _ = tokio::time::timeout(Duration::from_secs(2), task._handle).await;
-        }
-
-        // Close the inlet
-        if let Some(device) = self.get_device(device_name).await {
-            if let Some(uid) = device.gaze_stream_uid {
-                let _ = self.inlet_manager.close_inlet(&uid).await;
-                let _ = self.inlet_manager.remove_inlet(&uid).await;
+        // Close the inlet the task was actually reading — the discovery label
+        // may have been re-keyed since it started, so never resolve the uid
+        // through the (possibly stale) display name when a task exists.
+        let uid = match tasks.remove(device_name) {
+            Some(task) => {
+                let uid = task.stream_uid.clone();
+                task.shutdown.store(true, Ordering::Relaxed);
+                let _ = tokio::time::timeout(Duration::from_secs(2), task._handle).await;
+                Some(uid)
             }
+            // No task under this label: only close an inlet that no other task
+            // (under a re-keyed label) is still reading.
+            None => fallback_uid.filter(|uid| !tasks.values().any(|t| &t.stream_uid == uid)),
+        };
+        if let Some(uid) = uid {
+            let _ = self.inlet_manager.close_inlet(&uid).await;
+            let _ = self.inlet_manager.remove_inlet(&uid).await;
         }
+        drop(tasks);
 
         info!(
             device = "neon",
@@ -553,32 +718,65 @@ impl NeonLslManager {
         Ok(())
     }
 
-    /// Disconnect from a Neon events stream
+    /// Disconnect from a Neon events stream (whoever opened it).
     pub async fn disconnect_events_stream(&self, device_name: &str) -> Result<(), LslError> {
+        self.disconnect_events_stream_inner(device_name, None).await
+    }
+
+    /// Release the events stream under `device_name` only if it is still the
+    /// task `task_id` (see `disconnect_gaze_stream_owned`).
+    pub async fn disconnect_events_stream_owned(
+        &self,
+        device_name: &str,
+        task_id: u64,
+    ) -> Result<(), LslError> {
+        self.disconnect_events_stream_inner(device_name, Some(task_id))
+            .await
+    }
+
+    async fn disconnect_events_stream_inner(
+        &self,
+        device_name: &str,
+        owner: Option<u64>,
+    ) -> Result<(), LslError> {
+        let fallback_uid = self
+            .get_device(device_name)
+            .await
+            .and_then(|d| d.events_stream_uid);
+        let mut tasks = self.event_tasks.write().await;
+        if let Some(owner) = owner {
+            match tasks.get(device_name) {
+                Some(task) if task.task_id == owner => {}
+                _ => {
+                    info!(
+                        device = "neon",
+                        "Events stream '{}' is not owned by task {}; leaving it",
+                        device_name,
+                        owner
+                    );
+                    return Ok(());
+                }
+            }
+        }
         info!(
             device = "neon",
             "Disconnecting Neon events stream: {}", device_name
         );
 
-        let task = {
-            let mut tasks = self.event_tasks.write().await;
-            tasks.remove(device_name)
-        };
-
-        if let Some(task) = task {
-            // Signal shutdown
-            task.shutdown.store(true, Ordering::Relaxed);
-            // Wait for task to complete (with timeout)
-            let _ = tokio::time::timeout(Duration::from_secs(2), task._handle).await;
-        }
-
-        // Close the inlet
-        if let Some(device) = self.get_device(device_name).await {
-            if let Some(uid) = device.events_stream_uid {
-                let _ = self.inlet_manager.close_inlet(&uid).await;
-                let _ = self.inlet_manager.remove_inlet(&uid).await;
+        let uid = match tasks.remove(device_name) {
+            Some(task) => {
+                let uid = task.stream_uid.clone();
+                task.shutdown.store(true, Ordering::Relaxed);
+                let _ = tokio::time::timeout(Duration::from_secs(2), task._handle).await;
+                Some(uid)
             }
+            None => fallback_uid.filter(|uid| !tasks.values().any(|t| &t.stream_uid == uid)),
+        };
+        if let Some(uid) = uid {
+            let _ = self.inlet_manager.close_inlet(&uid).await;
+            let _ = self.inlet_manager.remove_inlet(&uid).await;
         }
+        drop(tasks);
 
         info!(
             device = "neon",
@@ -596,10 +794,16 @@ impl NeonLslManager {
 
     /// Disconnect all Neon streams
     pub async fn disconnect_all(&self) -> Result<(), LslError> {
-        let device_names: Vec<String> = {
+        // Walk the ACTIVE task labels, not just the current discovery cache:
+        // a re-discovery can re-key devices (e.g. "Neon Companion" becomes
+        // "Neon Companion @ host"), which would otherwise orphan tasks that
+        // were started under the old label.
+        let mut device_names: std::collections::BTreeSet<String> = {
             let devices = self.discovered_devices.read().await;
             devices.keys().cloned().collect()
         };
+        device_names.extend(self.gaze_tasks.read().await.keys().cloned());
+        device_names.extend(self.event_tasks.read().await.keys().cloned());
 
         for device_name in device_names {
             let _ = self.disconnect(&device_name).await;
@@ -752,5 +956,126 @@ mod tests {
             StreamFilter::extract_neon_device_name("SomeOtherStream"),
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod grouping_tests_no_host {
+    use super::*;
+    use crate::devices::lsl::resolver::DiscoveredStream;
+    use crate::devices::lsl::types::{ChannelFormat, StreamInfo, StreamType};
+
+    fn stream(name: &str, source_id: &str, uid: &str) -> DiscoveredStream {
+        DiscoveredStream {
+            info: StreamInfo {
+                name: name.to_string(),
+                stream_type: StreamType::Gaze,
+                channel_count: 3,
+                nominal_srate: 200.0,
+                channel_format: ChannelFormat::Float32,
+                source_id: source_id.to_string(),
+                hostname: String::new(),
+                metadata: HashMap::new(),
+            },
+            discovered_at: std::time::SystemTime::now(),
+            last_seen: std::time::SystemTime::now(),
+            available: true,
+            uid: uid.to_string(),
+            session_id: "default".to_string(),
+            data_loss: 0.0,
+            time_stamps: (),
+        }
+    }
+
+    #[test]
+    fn same_named_phones_without_hostnames_do_not_merge() {
+        let devices = group_neon_streams(
+            vec![
+                stream("Neon Companion_Neon Gaze", "phone-a", "g1"),
+                stream("Neon Companion_Neon Gaze", "phone-b", "g2"),
+            ],
+            std::time::SystemTime::now(),
+        );
+        assert_eq!(
+            devices.len(),
+            2,
+            "two phones must stay two entries: {:?}",
+            devices.keys()
+        );
+        let uids: std::collections::BTreeSet<_> = devices
+            .values()
+            .filter_map(|d| d.gaze_stream_uid.clone())
+            .collect();
+        assert_eq!(uids.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod grouping_tests {
+    use super::*;
+    use crate::devices::lsl::resolver::DiscoveredStream;
+    use crate::devices::lsl::types::{ChannelFormat, StreamInfo, StreamType};
+    use std::time::SystemTime;
+
+    fn stream(name: &str, host: &str, uid: &str) -> DiscoveredStream {
+        let mut info = StreamInfo::new(
+            name.to_string(),
+            StreamType::Gaze,
+            2,
+            200.0,
+            ChannelFormat::Float32,
+            format!("src-{uid}"),
+        );
+        info.hostname = host.to_string();
+        DiscoveredStream {
+            info,
+            discovered_at: SystemTime::now(),
+            last_seen: SystemTime::now(),
+            available: true,
+            uid: uid.to_string(),
+            session_id: "default".to_string(),
+            data_loss: 0.0,
+            time_stamps: (),
+        }
+    }
+
+    #[test]
+    fn unique_name_keeps_plain_label_and_merges_gaze_and_events() {
+        let map = group_neon_streams(
+            vec![
+                stream("Neon P1_Neon Gaze", "phone-a", "g1"),
+                stream("Neon P1_Neon Events", "phone-a", "e1"),
+            ],
+            SystemTime::now(),
+        );
+        assert_eq!(map.len(), 1);
+        let d = &map["Neon P1"];
+        assert!(d.has_gaze_stream && d.has_events_stream);
+        assert_eq!(d.gaze_stream_uid.as_deref(), Some("g1"));
+        assert_eq!(d.hostname.as_deref(), Some("phone-a"));
+    }
+
+    #[test]
+    fn same_name_on_two_hosts_stays_two_devices_labelled_by_host() {
+        let map = group_neon_streams(
+            vec![
+                stream("Neon Companion_Neon Gaze", "phone-a", "g1"),
+                stream("Neon Companion_Neon Gaze", "phone-b", "g2"),
+                stream("Neon Companion_Neon Events", "phone-b", "e2"),
+            ],
+            SystemTime::now(),
+        );
+        assert_eq!(map.len(), 2, "two phones must not collapse into one entry");
+        let a = &map["Neon Companion @ phone-a"];
+        let b = &map["Neon Companion @ phone-b"];
+        assert_eq!(a.gaze_stream_uid.as_deref(), Some("g1"));
+        assert_eq!(b.gaze_stream_uid.as_deref(), Some("g2"));
+        assert!(b.has_events_stream && !a.has_events_stream);
+    }
+
+    #[test]
+    fn non_neon_streams_are_ignored() {
+        let map = group_neon_streams(vec![stream("FRENZ_EEG", "band", "x")], SystemTime::now());
+        assert!(map.is_empty());
     }
 }
