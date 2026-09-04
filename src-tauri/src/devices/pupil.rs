@@ -1439,4 +1439,95 @@ mod tests {
         assert_eq!(cmd.name.unwrap(), "stim");
         assert_eq!(cmd.timestamp.unwrap(), 1700000000_000_000_000);
     }
+
+    /// Minimal HTTP server answering every request with `body` as JSON — enough
+    /// for `PupilDevice::connect()`'s `GET /api/status`.
+    async fn spawn_status_server(body: serde_json::Value) -> std::net::SocketAddr {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let body = body.to_string();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let _ = sock.read(&mut buf).await;
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+        addr
+    }
+
+    fn status_json(device_id: &str, device_name: &str) -> serde_json::Value {
+        serde_json::json!({
+            "message": "success",
+            "result": [
+                {"model": "Phone", "data": {
+                    "ip": "127.0.0.1", "device_id": device_id, "device_name": device_name,
+                    "battery_level": 85, "battery_state": "OK",
+                    "memory": 4000000000_u64, "memory_state": "OK"
+                }},
+                {"model": "Hardware", "data": {
+                    "version": "2.0", "glasses_serial": "GL-001", "world_camera_serial": "WC-001"
+                }}
+            ]
+        })
+    }
+
+    #[tokio::test]
+    async fn test_connect_refuses_a_phone_other_than_the_pinned_one() {
+        // The safety property behind pin-by-hardware-id: when a different phone
+        // answers than the station is pinned to, connect() must refuse — fast,
+        // without retries — so a station can never drive the other
+        // participant's phone.
+        let addr = spawn_status_server(status_json("other-phone", "Neon Companion")).await;
+        let mut device = PupilDevice::new(addr.to_string())
+            .with_expected_device_id(Some("pinned-phone".to_string()));
+        let started = std::time::Instant::now();
+        match device.connect().await {
+            Err(DeviceError::WrongDevice {
+                expected,
+                actual,
+                actual_name,
+            }) => {
+                assert_eq!(expected, "pinned-phone");
+                assert_eq!(actual, "other-phone");
+                assert_eq!(actual_name, "Neon Companion");
+            }
+            other => panic!("expected WrongDevice, got {:?}", other),
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "WrongDevice must fail fast, not burn the retry loop"
+        );
+        assert_eq!(device.get_status(), DeviceStatus::Error);
+        assert!(
+            device.neon_status.is_none(),
+            "no identity adopted from the wrong phone"
+        );
+
+        // The pinned phone itself connects normally.
+        let addr = spawn_status_server(status_json("pinned-phone", "Neon Companion")).await;
+        let mut device = PupilDevice::new(addr.to_string())
+            .with_expected_device_id(Some("pinned-phone".to_string()));
+        device.connect().await.expect("the pinned phone connects");
+        assert_eq!(device.get_status(), DeviceStatus::Connected);
+        assert_eq!(device.get_info().metadata["device_id"], "pinned-phone");
+
+        // Unpinned stations accept whichever phone answers (legacy behaviour).
+        let addr = spawn_status_server(status_json("any-phone", "Neon Companion")).await;
+        let mut device = PupilDevice::new(addr.to_string());
+        device
+            .connect()
+            .await
+            .expect("unpinned connect accepts any phone");
+        assert_eq!(device.get_info().metadata["device_id"], "any-phone");
+    }
 }
