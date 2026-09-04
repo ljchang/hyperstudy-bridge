@@ -2227,7 +2227,7 @@ dependencies = [
  "parking_lot",
  "rand 0.9.5",
  "reqwest 0.12.28",
- "rust-argon2 2.1.0",
+ "rust-argon2 3.0.0",
  "serde",
  "serde_json",
  "serialport",
@@ -4413,6 +4413,18 @@ dependencies = [
  "base64 0.21.7",
  "blake2b_simd",
  "constant_time_eq 0.3.1",
+]
+
+[[package]]
+name = "rust-argon2"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ae76b7506744d254fd0eb2c0ff5c5d108201ccbb083111ac04a44eeda105680"
+dependencies = [
+ "base64 0.22.1",
+ "blake2b_simd",
+ "constant_time_eq 0.4.2",
+ "crossbeam-utils",
 ]
 
 [[package]]
