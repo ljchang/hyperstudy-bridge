@@ -187,7 +187,7 @@ function handleMessage(message) {
   switch (message.type) {
     case 'status':
       // Handle both message.status and message.payload for backwards compatibility
-      updateDeviceStatus(message.device, message.status || message.payload);
+      updateDeviceStatus(message.device, message.status || message.payload, message.info);
       break;
     case 'data':
       handleDeviceData(message.device, message.payload);
@@ -216,7 +216,7 @@ function handleMessage(message) {
   }
 }
 
-function updateDeviceStatus(deviceId, deviceStatus) {
+function updateDeviceStatus(deviceId, deviceStatus, info = undefined) {
   const device = devices.get(deviceId) || {
     id: deviceId,
     name: getDeviceName(deviceId),
@@ -224,6 +224,11 @@ function updateDeviceStatus(deviceId, deviceStatus) {
   };
   // Normalize status to lowercase for consistent UI display
   device.status = typeof deviceStatus === 'string' ? deviceStatus.toLowerCase() : 'disconnected';
+  // Device metadata from the backend (Neon device_id/name/IP, recording state…)
+  // so the card can show *which* hardware is connected, not just that one is.
+  if (info !== undefined) {
+    device.info = info;
+  }
   device.lastUpdate = Date.now();
   devices.set(deviceId, device);
   devices = new Map(devices); // Trigger reactivity
@@ -391,6 +396,48 @@ export async function connectEyeLink(config = {}) {
         reject(new Error('Request timeout for EyeLink'));
       }
     }, CONNECT_TIMEOUT_MS);
+  });
+}
+
+/**
+ * Discover Neon Companion phones on the local network via mDNS.
+ * Resolves to `{ phones: [{ device_name, device_id, ip, port, reachable,
+ * battery_level?, recording_id?, glasses_connected? }], count }`.
+ */
+export async function discoverNeonPhones(timeoutMs = 3000) {
+  return new Promise((resolve, reject) => {
+    const id = generateId();
+    let timeoutId = null;
+
+    requestCallbacks.set(id, (success, message) => {
+      if (timeoutId) clearTimeout(timeoutId);
+      if (success) {
+        resolve(message);
+      } else {
+        reject(new Error(message || 'Failed to discover Neon phones'));
+      }
+    });
+
+    const sent = send({
+      type: 'command',
+      device: 'pupil',
+      action: 'discover_neon_phones',
+      payload: { timeout_ms: timeoutMs },
+      id,
+    });
+
+    if (!sent) {
+      requestCallbacks.delete(id);
+      reject(new Error('Failed to send command'));
+      return;
+    }
+
+    timeoutId = setTimeout(() => {
+      if (requestCallbacks.has(id)) {
+        requestCallbacks.delete(id);
+        reject(new Error('Timed out waiting for Neon phone discovery'));
+      }
+    }, timeoutMs + 10000);
   });
 }
 

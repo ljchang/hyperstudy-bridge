@@ -42,9 +42,10 @@ pub enum CommandAction {
     Status,
     Heartbeat,
     // Neon LSL specific actions
-    DiscoverNeon,      // Discover Neon devices streaming via LSL
-    ConnectNeonGaze,   // Connect to Neon gaze stream
-    ConnectNeonEvents, // Connect to Neon events stream
+    DiscoverNeon,       // Discover Neon devices streaming via LSL
+    DiscoverNeonPhones, // Discover Neon Companion phones via mDNS (name, hardware id, IP)
+    ConnectNeonGaze,    // Connect to Neon gaze stream
+    ConnectNeonEvents,  // Connect to Neon events stream
     ConnectNeonRest, // Connect Neon REST API by device_name (hostname resolved from discovery cache)
     DisconnectNeon,  // Disconnect from Neon streams
     NeonStatus,      // Get Neon LSL manager status

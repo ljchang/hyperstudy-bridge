@@ -243,6 +243,10 @@ pub struct PupilDevice {
     /// when the id was adopted from a recording already running on the phone.
     /// Only owned recordings may be stopped without `force`.
     recording_owned: bool,
+    /// Hardware id this station is pinned to. When set, `connect()` refuses a
+    /// phone whose `device_id` differs (`WrongDevice`) — the guard against
+    /// `neon.local` resolving to another participant's phone.
+    expected_device_id: Option<String>,
     neon_status: Option<NeonStatus>,
     connection_retry_count: u32,
     max_retries: u32,
@@ -268,10 +272,17 @@ impl PupilDevice {
             config: DeviceConfig::default(),
             recording_id: None,
             recording_owned: false,
+            expected_device_id: None,
             neon_status: None,
             connection_retry_count: 0,
             max_retries: 3,
         }
+    }
+
+    /// Pin this device to a phone hardware id (see `expected_device_id`).
+    pub fn with_expected_device_id(mut self, device_id: Option<String>) -> Self {
+        self.expected_device_id = device_id.filter(|s| !s.is_empty());
+        self
     }
 
     /// Parse a host string into (ip, base_url).
@@ -766,6 +777,25 @@ impl Device for PupilDevice {
         loop {
             match timeout(connect_timeout, self.get_neon_status()).await {
                 Ok(Ok(status)) => {
+                    if let Some(expected) = self.expected_device_id.as_deref() {
+                        if status.phone.device_id != expected {
+                            self.status = DeviceStatus::Error;
+                            self.neon_status = None;
+                            error!(
+                                device = "pupil",
+                                expected = %expected,
+                                actual = %status.phone.device_id,
+                                actual_name = %status.phone.device_name,
+                                "A different Neon phone answered than this station is pinned to"
+                            );
+                            return Err(DeviceError::WrongDevice {
+                                expected: expected.to_string(),
+                                actual: status.phone.device_id.clone(),
+                                actual_name: status.phone.device_name.clone(),
+                            });
+                        }
+                    }
+
                     self.neon_status = Some(status.clone());
                     self.status = DeviceStatus::Connected;
                     self.connection_retry_count = 0;
@@ -907,6 +937,7 @@ impl Device for PupilDevice {
             "device_ip": self.device_ip,
             "recording_id": self.recording_id,
             "recording_owned": self.recording_owned,
+            "expected_device_id": self.expected_device_id,
         });
 
         if let Some(ref status) = self.neon_status {
@@ -936,6 +967,10 @@ impl Device for PupilDevice {
         self.config = config;
 
         if let Some(custom) = self.config.custom_settings.as_object() {
+            if let Some(id) = custom.get("expected_device_id").and_then(|v| v.as_str()) {
+                self.expected_device_id = Some(id.to_string()).filter(|s| !s.is_empty());
+            }
+
             // Update device IP/URL if provided
             if let Some(ip) = custom.get("device_ip").and_then(|v| v.as_str()) {
                 let (device_ip, base_url) = Self::parse_host(ip);

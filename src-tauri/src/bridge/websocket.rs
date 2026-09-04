@@ -1,8 +1,8 @@
 use crate::bridge::message::{CommandAction, QueryTarget};
 use crate::bridge::state::DeviceStatusEvent;
 use crate::bridge::{AppState, BridgeCommand, BridgeResponse, MessageHandler};
-use crate::devices::Device;
 use crate::devices::{kernel::KernelDevice, mock::MockDevice, pupil::PupilDevice, ttl::TtlDevice};
+use crate::devices::{Device, DeviceError};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use std::net::SocketAddr;
@@ -470,15 +470,79 @@ async fn handle_device_command(
                     Box::new(KernelDevice::new(ip.to_string()))
                 }
                 "pupil" => {
-                    // Require explicit URL configuration - no unsafe defaults
-                    let url = match config.get("url").and_then(|v| v.as_str()) {
-                        Some(u) if !u.is_empty() => u,
-                        _ => {
+                    // Three ways in, most to least specific:
+                    //   {device_id}             pinned phone, IP resolved over mDNS
+                    //   {url, device_id}        given address, but the answering phone
+                    //                           must have this hardware id
+                    //   {url}                   legacy: trust whatever answers
+                    let url = config
+                        .get("url")
+                        .and_then(|v| v.as_str())
+                        .filter(|u| !u.is_empty())
+                        .map(str::to_string);
+                    let pinned_id = config
+                        .get("device_id")
+                        .or_else(|| config.get("expected_device_id"))
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string);
+
+                    let host = match (url, pinned_id.as_deref()) {
+                        (Some(u), _) => u,
+                        (None, Some(pin)) => {
+                            info!("Resolving pinned Neon {} over mDNS", pin);
+                            match crate::devices::neon_discovery::find_neon_phone(
+                                pin,
+                                Duration::from_secs(5),
+                            )
+                            .await
+                            {
+                                Ok(Some(phone)) => {
+                                    info!(
+                                        "Pinned Neon {} is '{}' at {}",
+                                        pin, phone.device_name, phone.ip
+                                    );
+                                    phone.host()
+                                }
+                                Ok(None) => {
+                                    let err = DeviceError::DeviceNotFound(format!(
+                                        "Neon {} is not advertising on this network — is the Companion app open and the phone on the same Wi-Fi?",
+                                        pin
+                                    ));
+                                    state
+                                        .record_device_error(&device_id, &err.to_string())
+                                        .await;
+                                    send_response(
+                                        tx,
+                                        BridgeResponse::device_error_from(
+                                            device_id.clone(),
+                                            &err,
+                                            id,
+                                        ),
+                                    )
+                                    .await;
+                                    return;
+                                }
+                                Err(e) => {
+                                    send_response(
+                                        tx,
+                                        BridgeResponse::device_error_from(
+                                            device_id.clone(),
+                                            &e,
+                                            id,
+                                        ),
+                                    )
+                                    .await;
+                                    return;
+                                }
+                            }
+                        }
+                        (None, None) => {
                             send_response(
                                 tx,
                                 BridgeResponse::device_error(
                                     device_id.clone(),
-                                    "Pupil device requires 'url' in config (e.g., neon.local:8080)"
+                                    "Pupil device requires 'url' (e.g., 192.168.1.101:8080) or 'device_id' (phone hardware id) in config"
                                         .to_string(),
                                     id,
                                 ),
@@ -487,7 +551,7 @@ async fn handle_device_command(
                             return;
                         }
                     };
-                    Box::new(PupilDevice::new(url.to_string()))
+                    Box::new(PupilDevice::new(host).with_expected_device_id(pinned_id))
                 }
                 "mock" => Box::new(MockDevice::new(
                     format!("mock_{}", Uuid::new_v4()),
@@ -910,6 +974,50 @@ async fn handle_device_command(
                     send_response(
                         tx,
                         BridgeResponse::device_error(device_id, "Device not found".to_string(), id),
+                    )
+                    .await;
+                }
+            }
+        }
+        CommandAction::DiscoverNeonPhones => {
+            // mDNS browse: every Companion phone on the LAN with its hardware id,
+            // independent of LSL. Each is then probed for battery/recording so the
+            // picker can show which phone is which — and whether it is already busy.
+            let timeout_ms = payload
+                .as_ref()
+                .and_then(|p| p.get("timeout_ms"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(3000)
+                .clamp(500, 15_000);
+            info!("Discovering Neon phones via mDNS ({} ms)", timeout_ms);
+
+            match crate::devices::neon_discovery::discover_neon_phones(Duration::from_millis(
+                timeout_ms,
+            ))
+            .await
+            {
+                Ok(phones) => {
+                    let probes = phones.iter().map(describe_neon_phone);
+                    let described = futures_util::future::join_all(probes).await;
+                    send_response(
+                        tx,
+                        BridgeResponse::data(
+                            "pupil".to_string(),
+                            json!({
+                                "type": "phone_discovery",
+                                "phones": described,
+                                "count": phones.len(),
+                            }),
+                            id,
+                        ),
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    warn!("Neon phone discovery failed: {}", e);
+                    send_response(
+                        tx,
+                        BridgeResponse::device_error_from("pupil".to_string(), &e, id),
                     )
                     .await;
                 }
@@ -1914,6 +2022,32 @@ async fn handle_device_command(
             .await;
         }
     }
+}
+
+/// Probe a discovered phone's REST API (2 s cap) so the picker can show battery
+/// and whether it is already recording. Unreachable phones are still listed.
+async fn describe_neon_phone(
+    phone: &crate::devices::neon_discovery::NeonPhone,
+) -> serde_json::Value {
+    let mut value = serde_json::to_value(phone).unwrap_or_else(|_| json!({}));
+    let mut device = PupilDevice::new(phone.host());
+    match tokio::time::timeout(Duration::from_secs(2), device.get_neon_status()).await {
+        Ok(Ok(status)) => {
+            value["reachable"] = json!(true);
+            value["battery_level"] = json!(status.phone.battery_level);
+            value["battery_state"] = json!(status.phone.battery_state);
+            value["recording_id"] = json!(status.recording.as_ref().map(|r| r.id.clone()));
+            value["glasses_connected"] = json!(status
+                .hardware
+                .as_ref()
+                .map(|h| h.glasses_serial.is_some())
+                .unwrap_or(false));
+        }
+        _ => {
+            value["reachable"] = json!(false);
+        }
+    }
+    value
 }
 
 async fn handle_query(

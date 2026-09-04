@@ -1,6 +1,7 @@
 pub mod kernel;
 pub mod lsl;
 pub mod mock;
+pub mod neon_discovery;
 pub mod pupil;
 pub mod ttl;
 
@@ -52,6 +53,18 @@ pub enum DeviceError {
     /// Refusing to stop/cancel a recording this bridge did not start.
     #[error("Recording not owned: {0}")]
     RecordingNotOwned(String),
+
+    /// A different phone answered than the one this station is pinned to.
+    #[error("Wrong device: expected Neon {expected}, but {actual} (\"{actual_name}\") answered — check which phone this station is pinned to")]
+    WrongDevice {
+        expected: String,
+        actual: String,
+        actual_name: String,
+    },
+
+    /// The pinned device is not on the network right now.
+    #[error("Device not found: {0}")]
+    DeviceNotFound(String),
 }
 
 impl DeviceError {
@@ -70,6 +83,8 @@ impl DeviceError {
             DeviceError::Unknown(_) => "unknown",
             DeviceError::PhoneBusy(_) => "phone_busy",
             DeviceError::RecordingNotOwned(_) => "recording_not_owned",
+            DeviceError::WrongDevice { .. } => "wrong_device",
+            DeviceError::DeviceNotFound(_) => "device_not_found",
         }
     }
 }

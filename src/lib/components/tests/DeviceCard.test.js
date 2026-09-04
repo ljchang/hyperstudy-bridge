@@ -97,7 +97,7 @@ describe('DeviceCard', () => {
       expect(screen.getByText('6767')).toBeInTheDocument();
     });
 
-    it('displays auto-discover for Pupil device without URL', () => {
+    it('shows not-configured for a Pupil device with neither URL nor pinned phone', () => {
       const pupilWithoutUrl = {
         ...mockPupilDevice,
         config: {},
@@ -105,7 +105,39 @@ describe('DeviceCard', () => {
       render(DeviceCard, { device: pupilWithoutUrl });
 
       expect(screen.getByText('URL:')).toBeInTheDocument();
-      expect(screen.getByText('Auto-discover')).toBeInTheDocument();
+      expect(screen.getByText('Not configured')).toBeInTheDocument();
+      expect(screen.getByText('Any (not pinned)')).toBeInTheDocument();
+    });
+
+    it('shows the pinned phone id and resolved-address hint for a pinned Pupil device', () => {
+      const pinned = {
+        ...mockPupilDevice,
+        config: { device_id: 'a41fe4fe2bccf6c3' },
+      };
+      render(DeviceCard, { device: pinned });
+
+      expect(screen.getByText('Resolved from pinned phone')).toBeInTheDocument();
+      expect(screen.getByText('a41fe4fe2bccf6c3')).toBeInTheDocument();
+    });
+
+    it('shows which phone answered once a Pupil device is connected', () => {
+      const connected = {
+        ...mockPupilDevice,
+        status: 'connected',
+        config: { url: '192.168.50.220:8080', device_id: 'a41fe4fe2bccf6c3' },
+        info: {
+          device_name: 'Neon P2',
+          device_id: 'a41fe4fe2bccf6c3',
+          device_ip: '192.168.50.220',
+          battery_level: 82,
+          recording_id: '0704e3f9-b284-4fd5-92bd-0d4d65f5e4c9',
+          recording_owned: false,
+        },
+      };
+      render(DeviceCard, { device: connected });
+
+      expect(screen.getByText(/Neon P2 · a41fe4fe2bccf6c3 · 192\.168\.50\.220 · 82%/)).toBeInTheDocument();
+      expect(screen.getByText(/started elsewhere/)).toBeInTheDocument();
     });
 
     it('handles unconfigured device gracefully', () => {
