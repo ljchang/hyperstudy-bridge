@@ -74,10 +74,23 @@ pub struct DeviceStatusEvent {
 
 impl DeviceStatusEvent {
     pub fn disconnected(device_id: String, device_type: DeviceType, reason: &str) -> Self {
+        Self::with_status(device_id, device_type, DeviceStatus::Disconnected, reason)
+    }
+
+    pub fn connected(device_id: String, device_type: DeviceType, reason: &str) -> Self {
+        Self::with_status(device_id, device_type, DeviceStatus::Connected, reason)
+    }
+
+    fn with_status(
+        device_id: String,
+        device_type: DeviceType,
+        status: DeviceStatus,
+        reason: &str,
+    ) -> Self {
         Self {
             device_id,
             device_type,
-            status: DeviceStatus::Disconnected,
+            status,
             reason: reason.to_string(),
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

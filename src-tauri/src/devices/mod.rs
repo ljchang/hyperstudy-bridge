@@ -42,6 +42,36 @@ pub enum DeviceError {
 
     #[error("Unknown error: {0}")]
     Unknown(String),
+
+    /// The phone is already recording something this bridge did not start.
+    /// On a shared lab network this is the tell-tale of two stations having
+    /// resolved the same device.
+    #[error("Phone busy: {0}")]
+    PhoneBusy(String),
+
+    /// Refusing to stop/cancel a recording this bridge did not start.
+    #[error("Recording not owned: {0}")]
+    RecordingNotOwned(String),
+}
+
+impl DeviceError {
+    /// Stable machine-readable code for clients (variant name in snake_case).
+    pub fn code(&self) -> &'static str {
+        match self {
+            DeviceError::ConnectionFailed(_) => "connection_failed",
+            DeviceError::NotConnected => "not_connected",
+            DeviceError::CommunicationError(_) => "communication_error",
+            DeviceError::ConfigurationError(_) => "configuration_error",
+            DeviceError::Timeout => "timeout",
+            DeviceError::InvalidData(_) => "invalid_data",
+            DeviceError::IoError(_) => "io_error",
+            DeviceError::SerialError(_) => "serial_error",
+            DeviceError::WebSocketError(_) => "websocket_error",
+            DeviceError::Unknown(_) => "unknown",
+            DeviceError::PhoneBusy(_) => "phone_busy",
+            DeviceError::RecordingNotOwned(_) => "recording_not_owned",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
