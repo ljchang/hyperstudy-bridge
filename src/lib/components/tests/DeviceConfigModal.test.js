@@ -161,26 +161,16 @@ describe('DeviceConfigModal', () => {
   });
 
   describe('Pupil Device Configuration', () => {
-    it('displays Pupil-specific configuration fields', () => {
+    it('displays the Neon Companion URL field', () => {
       render(DeviceConfigModal, { ...mockProps, device: mockPupilDevice });
 
-      expect(screen.getByText('Device URL')).toBeInTheDocument();
-      expect(screen.getByText('Stream Gaze Data')).toBeInTheDocument();
-      expect(screen.getByText('Stream Video')).toBeInTheDocument();
-      expect(screen.getByText('Gaze Data Format')).toBeInTheDocument();
+      expect(screen.getByText('Neon Companion URL')).toBeInTheDocument();
     });
 
-    it('handles checkbox controls correctly', async () => {
+    it('pre-fills the saved Companion URL', () => {
       render(DeviceConfigModal, { ...mockProps, device: mockPupilDevice });
 
-      const gazeCheckbox = screen.getByLabelText('Stream Gaze Data');
-      const videoCheckbox = screen.getByLabelText('Stream Video');
-
-      expect(gazeCheckbox).toBeChecked();
-      expect(videoCheckbox).not.toBeChecked();
-
-      await user.click(videoCheckbox);
-      expect(videoCheckbox).toBeChecked();
+      expect(screen.getByDisplayValue('neon.local:8080')).toBeInTheDocument();
     });
 
     it('validates Pupil URL format', async () => {

@@ -281,8 +281,32 @@ jobs:
           # Clean up
           rm -f $CERTIFICATE_PATH
 
-      - name: Build Tauri app
+      # tauri.conf.json has createUpdaterArtifacts enabled, so `tauri build`
+      # refuses to run without the updater signing key — which is why every
+      # Build Application job failed since the updater shipped. Two explicit
+      # steps rather than env-string tricks: an empty TAURI_SIGNING_PRIVATE_KEY
+      # is still "a key" to tauri (decode error), and Windows runners use
+      # PowerShell, where bash-style $VAR expansion silently does nothing.
+      - name: Build Tauri app (signed, push)
+        # push to main/develop: sign with the key, exactly like the release workflows.
+        if: github.event_name == 'push'
+        shell: bash
         run: npm run tauri:build -- --target ${{ matrix.target }}
+        env:
+          CI: true
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && secrets.APPLE_SIGNING_IDENTITY || '' }}
+          APPLE_ID: ${{ runner.os == 'macOS' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_ID_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
+
+      - name: Build Tauri app (unsigned, pull request)
+        # Never expose the updater key to PR-authored code: build with updater
+        # artifacts disabled (a CI build artifact, not an update anyone installs).
+        if: github.event_name != 'push'
+        shell: bash
+        run: npm run tauri:build -- --target ${{ matrix.target }} --config '{"bundle":{"createUpdaterArtifacts":false}}'
         env:
           CI: true
           APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && secrets.APPLE_SIGNING_IDENTITY || '' }}
@@ -302,8 +326,9 @@ jobs:
 
   security-audit:
     name: Security Audit
+    # Gating: a high-severity npm advisory or an un-ignored RUSTSEC advisory
+    # fails CI. Moderate npm findings stay informational (|| true below).
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -317,23 +342,30 @@ jobs:
           key: cargo-audit-${{ runner.os }}
 
       - name: Install cargo-audit
+        # 0.20 cannot parse the current advisory-db format (TOML parse error on
+        # RUSTSEC-2026-*), which made every run report "audit failed" without
+        # auditing anything. Track the latest 0.22 line.
         run: |
-          cargo install cargo-audit --version ^0.20 --force
+          cargo install cargo-audit --version ^0.22 --locked --force
 
       - name: Run cargo audit
+        # Ignores live in src-tauri/.cargo/audit.toml so local and CI runs agree.
         run: |
           cd src-tauri
-          cargo audit --ignore RUSTSEC-2020-0071 || echo "Cargo audit failed - may be due to Cargo.lock v4 format"
+          cargo audit
 
       - name: Run npm audit
         run: |
-          npm audit --audit-level=high --omit=dev
+          npm audit --audit-level=high
           npm audit --audit-level=moderate || true
 
   dependency-check:
     name: Dependency Review
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write # comment-summary-in-pr
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -342,4 +374,14 @@ jobs:
         uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: moderate
-          allow-licenses: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD
+          # License policy as a deny-list. The old MIT/Apache-only allow-list
+          # would reject Unicode-3.0, Zlib, MPL-2.0 and ISC/OpenSSL (aws-lc)
+          # crates the Rust tree legitimately contains; what we actually want
+          # to keep out is copyleft and source-available licensing.
+          deny-licenses: GPL-2.0, GPL-3.0, AGPL-3.0, LGPL-2.1, LGPL-3.0, SSPL-1.0, BUSL-1.1
+          # Dual/triple-licensed crates that the action flags because one of
+          # the OR alternatives is copyleft; both are consumed under MIT.
+          #   r-efi:     MIT OR Apache-2.0 OR LGPL-2.1-or-later
+          #   unescaper: GPL-3.0/MIT
+          allow-dependencies-licenses: pkg:cargo/r-efi, pkg:cargo/unescaper
+          comment-summary-in-pr: on-failure
