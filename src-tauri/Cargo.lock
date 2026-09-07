@@ -2237,7 +2237,7 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "parking_lot",
- "rand 0.9.5",
+ "rand 0.10.2",
  "reqwest 0.12.28",
  "rust-argon2 2.1.0",
  "serde",
